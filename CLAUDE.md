@@ -31,5 +31,5 @@ El proyecto anterior (CLI) está en `~/TelegramDownloader`: de ahí se migran el
 
 ## Flujo de Trabajo
 *   La planificación vigente está en `docs/ROADMAP.md`: mantenla al día al cerrar cada hito.
-*   Commits pequeños y descriptivos; **push a `origin/main` al completar cada hito importante**.
+*   Commits pequeños y descriptivos, **solo en local**: Plácido decide cuándo hacer push a GitHub.
 *   Antes de dar algo por terminado: compilar sin warnings y probarlo en la Pi.

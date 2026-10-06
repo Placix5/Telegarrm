@@ -18,14 +18,14 @@ Todo se gestiona desde el navegador, sin SSH ni terminal.
 - **Datos personales** (teléfono, sesión) solo en local; sin telemetría.
 - Hitos pequeños: cada uno compila, se prueba en la Pi, se commitea y se sube a GitHub.
 
-## Fase 1: Motor TDLib (en curso)
+## Fase 1: Motor TDLib (completada)
 - [x] SQLite (`DbManager`), hilos y parada ordenada con SIGINT/SIGTERM.
 - [x] TDLib 1.8 (interfaz JSON) en un hilo propio, con peticiones asíncronas y síncronas.
 - [x] Inicio de sesión desde la web: teléfono, código y contraseña 2FA.
-- [ ] Primer inicio de sesión real con la cuenta de Plácido.
-- [ ] Servicio `systemd` (`EnvironmentFile` con permisos `600` para las credenciales).
+- [x] Primer inicio de sesión real con la cuenta de Plácido.
+- [x] Servicio de usuario `systemd` (`deploy/telegarrm.service`, `EnvironmentFile` con permisos `600`). Falta `loginctl enable-linger` para que arranque sin iniciar sesión.
 
-## Fase 2: Canales y catálogo
+## Fase 2: Canales y catálogo (en curso)
 - **Canales**: listar los chats de la cuenta (`getChats`) para elegir desde la web cuáles vigilar (tabla `channels`).
 - **Sincronización**: recorrer el historial (`getChatHistory` paginado, respetando los `FLOOD_WAIT` de Telegram) y guardar mensajes con fichero: id del mensaje, id remoto del fichero, nombre, tamaño, fecha y texto.
 - **Parser**: adaptar `episode_parser` del proyecto antiguo (SxxEyy, 1x01, calidades, códecs) con tests unitarios (`ctest`) construidos con ejemplos reales del canal. Tabla `media`: tipo, título, año, temporada, episodio, calidad, códec, idioma.

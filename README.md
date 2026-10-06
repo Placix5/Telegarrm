@@ -19,7 +19,7 @@ Telegarrm es un servicio daemon (stack ARR) que utiliza Telegram (TDLib) como fu
 Detalle y tareas en [docs/ROADMAP.md](docs/ROADMAP.md).
 
 - [x] **Fase 0**: Estructura base y servidor HTTP (`cpp-httplib`).
-- [ ] **Fase 1**: Motor TDLib en un hilo propio y SQLite para configuración y estado. *En curso: falta el primer inicio de sesión real y el servicio systemd.*
+- [x] **Fase 1**: Motor TDLib en un hilo propio y SQLite para configuración y estado. *Completada.*
 - [ ] **Fase 2**: Canales y catálogo: lectura del historial de los canales elegidos y catálogo en la web.
 - [ ] **Fase 3**: Descargas: cola, descompresión y renombrado (núcleo antiguo de C++).
 - [ ] **Fase 4**: Tele-ARR: escucha de mensajes nuevos, reemplazo de calidades y auto-descarga de capítulos en seguimiento.
@@ -58,6 +58,15 @@ TELEGARRM_API_ID=123456 TELEGARRM_API_HASH=abcdef... ./build/telegarrm
 Ejecútalo desde la raíz del proyecto: las rutas `db/` y `web/` son relativas al directorio actual. Ctrl+C (SIGINT) o SIGTERM lo detienen de forma ordenada.
 
 La primera vez, abre `http://<ip-de-la-pi>:8080/` e inicia sesión en Telegram (teléfono, código y, si la tienes, contraseña de verificación en dos pasos). La sesión se conserva entre reinicios.
+
+### Como servicio (systemd)
+`deploy/telegarrm.service` es un servicio de usuario: se gestiona sin `sudo` y lee las credenciales de `~/.config/telegarrm/env` (permisos `600`, con las dos variables de [Configuración](#configuración)).
+```bash
+systemctl --user link ~/Telegarrm/deploy/telegarrm.service
+systemctl --user enable --now telegarrm
+sudo loginctl enable-linger $USER   # una vez: arrancar con la Pi sin iniciar sesión
+```
+Logs con `journalctl --user-unit telegarrm -f`; reinicio con `systemctl --user restart telegarrm` (parada ordenada incluida).
 
 > La web aún no tiene autenticación y el inicio de sesión viaja por HTTP sin cifrar: úsala solo dentro de tu red local o a través de la VPN.
 

@@ -1,0 +1,31 @@
+# Servicio de usuario de systemd para Telegarrm.
+#
+# Instalación (sin sudo):
+#   systemctl --user link ~/Telegarrm/deploy/telegarrm.service
+#   systemctl --user enable --now telegarrm
+# Para que arranque con la Pi sin iniciar sesión (una sola vez, con sudo):
+#   sudo loginctl enable-linger $USER
+#
+# Logs:      journalctl --user-unit telegarrm -f
+# Reinicio:  systemctl --user restart telegarrm
+
+[Unit]
+Description=Telegarrm: gestor de descargas desde Telegram
+Documentation=https://github.com/Placix5/Telegarrm
+
+[Service]
+Type=simple
+# Las rutas db/ y web/ son relativas al directorio de trabajo
+WorkingDirectory=%h/Telegarrm
+# TELEGARRM_API_ID y TELEGARRM_API_HASH (fichero con permisos 600)
+EnvironmentFile=%h/.config/telegarrm/env
+ExecStart=%h/Telegarrm/build/telegarrm
+# SIGTERM provoca una parada ordenada (TDLib incluido); TDLib tiene hasta 10 s para cerrar
+KillSignal=SIGTERM
+TimeoutStopSec=30
+Restart=on-failure
+RestartSec=10
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=default.target
