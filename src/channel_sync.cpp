@@ -66,6 +66,11 @@ std::optional<Message> toMessage(std::int64_t chatId, const Json& tdMessage) {
     message.date = tdMessage.value("date", 0);
     message.mediaAlbumId = int64Field(tdMessage, "media_album_id");
     message.contentType = type;
+    // En los grupos con temas: {"@type": "messageTopicForum", "forum_topic_id": 5}
+    const auto topic = tdMessage.find("topic_id");
+    if (topic != tdMessage.end() && typeOf(*topic) == "messageTopicForum") {
+        message.topicId = topic->value("forum_topic_id", std::int64_t{0});
+    }
 
     // Tipo de contenido con fichero -> campo que lo contiene (ej. messageVideo -> "video")
     static const std::pair<const char*, const char*> kFileContents[] = {
@@ -175,6 +180,14 @@ bool ChannelSync::telegramReady() const {
 }
 
 void ChannelSync::run() {
+    // Primer cálculo del catálogo con los mensajes ya guardados
+    for (const DbManager::Channel& channel : db_.listChannels()) {
+        if (stopping()) {
+            return;
+        }
+        onChannelChanged_(channel.id);
+    }
+
     while (!stopping()) {
         const bool ready = telegramReady();
         if (ready) {
@@ -275,6 +288,17 @@ ChannelSync::Result ChannelSync::syncChannel(const DbManager::Channel& channel) 
         onChannelChanged_(chatId);  // El título del canal se usa en el catálogo
     }
 
+    // Grupos con temas (foros): se guarda la lista de temas con sus nombres
+    const Json type = chat->value("type", Json::object());
+    if (typeOf(type) == "chatTypeSupergroup") {
+        const auto group = telegram_.request(
+            {{"@type", "getSupergroup"}, {"supergroup_id", type.value("supergroup_id", std::int64_t{0})}}, kRequestTimeout);
+        if (group && typeOf(*group) == "supergroup" && group->value("is_forum", false) &&
+            syncTopics(chatId) == Result::Stopped) {
+            return Result::Stopped;
+        }
+    }
+
     DbManager::SyncCursor cursor{channel.newestMessageId, channel.oldestMessageId, channel.historyComplete};
 
     // 1) Mensajes nuevos: desde el más reciente hacia atrás hasta llegar a lo ya guardado
@@ -352,6 +376,67 @@ ChannelSync::Result ChannelSync::syncChannel(const DbManager::Channel& channel) 
                 return Result::Stopped;
             }
         }
+    }
+    return Result::Ok;
+}
+
+ChannelSync::Result ChannelSync::syncTopics(std::int64_t chatId) {
+    std::vector<DbManager::Topic> topics;
+    Json request = {{"@type", "getForumTopics"}, {"chat_id", chatId},       {"query", ""},
+                    {"offset_date", 0},          {"offset_message_id", 0}, {"offset_forum_topic_id", 0},
+                    {"limit", 100}};
+    // Paginación por fecha, mensaje y tema; el límite de páginas evita un bucle si Telegram repite la página
+    for (int page = 0; page < 50; ++page) {
+        const auto response = telegram_.request(request, kRequestTimeout);
+        if (stopping()) {
+            return Result::Stopped;
+        }
+        if (!response || typeOf(*response) == "error") {
+            // No es grave: los mensajes se sincronizan igual, solo faltarán los nombres de los temas
+            std::cerr << "[Sync] No se pudieron leer los temas del chat " << chatId << ": "
+                      << (response ? response->value("message", "desconocido") : std::string("sin respuesta")) << std::endl;
+            return Result::Failed;
+        }
+        const Json pageTopics = response->value("topics", Json::array());
+        for (const Json& topic : pageTopics) {
+            const Json info = topic.value("info", Json::object());
+            const std::int64_t id = info.value("forum_topic_id", std::int64_t{0});
+            // Las páginas pueden solaparse: cada tema se guarda una sola vez
+            const bool seen = std::any_of(topics.begin(), topics.end(),
+                                          [id](const DbManager::Topic& known) { return known.id == id; });
+            if (!seen) {
+                topics.push_back({id, info.value("name", ""), 0});
+            }
+        }
+        const auto nextDate = response->value("next_offset_date", 0);
+        const auto nextMessage = response->value("next_offset_message_id", std::int64_t{0});
+        const auto nextTopic = response->value("next_offset_forum_topic_id", 0);
+        if (pageTopics.empty() || (nextDate == 0 && nextMessage == 0 && nextTopic == 0)) {
+            break;
+        }
+        request["offset_date"] = nextDate;
+        request["offset_message_id"] = nextMessage;
+        request["offset_forum_topic_id"] = nextTopic;
+    }
+
+    // Solo se escribe (y se avisa al catálogo) si la lista ha cambiado
+    std::vector<DbManager::Topic> stored = db_.listTopics(chatId);
+    const auto sameTopics = [&] {
+        if (stored.size() != topics.size()) {
+            return false;
+        }
+        for (const DbManager::Topic& topic : topics) {
+            const auto it = std::find_if(stored.begin(), stored.end(),
+                                         [&](const DbManager::Topic& s) { return s.id == topic.id; });
+            if (it == stored.end() || it->name != topic.name) {
+                return false;
+            }
+        }
+        return true;
+    };
+    if (!sameTopics() && db_.replaceTopics(chatId, topics)) {
+        std::cout << "[Sync] Chat " << chatId << ": " << topics.size() << " temas" << std::endl;
+        onChannelChanged_(chatId);
     }
     return Result::Ok;
 }

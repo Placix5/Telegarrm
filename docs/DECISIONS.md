@@ -26,10 +26,15 @@ Formato: **Contexto** (qué problema había), **Decisión**, **Alternativas desc
 | [D-018](#d-018-sin-comandos-de-shell-montados-con-cadenas) | Sin comandos de shell montados con cadenas | Vigente |
 | [D-019](#d-019-localización-y-datos-personales) | Localización y datos personales | Vigente |
 | [D-020](#d-020-catálogo-en-memoria-derivado-de-los-mensajes) | Catálogo en memoria derivado de los mensajes | Vigente |
-| [D-021](#d-021-las-fichas-separan-los-elementos-del-catálogo) | Las fichas separan los elementos del catálogo | Vigente |
+| [D-021](#d-021-las-fichas-separan-los-elementos-del-catálogo) | Las fichas separan los elementos del catálogo | Sustituida por D-026 |
 | [D-022](#d-022-tests-con-ctest-sin-framework-externo) | Tests con CTest, sin framework externo | Vigente |
 | [D-023](#d-023-portadas-descargadas-bajo-demanda-con-tdlib) | Portadas descargadas bajo demanda con TDLib | Vigente |
 | [D-024](#d-024-búsqueda-y-navegación-en-el-navegador) | Búsqueda y navegación en el navegador | Vigente |
+| [D-025](#d-025-temas-de-los-foros) | Temas de los foros | Vigente |
+| [D-026](#d-026-obras-versiones-y-partes) | Obras, versiones y partes | Vigente |
+| [D-027](#d-027-qué-archivos-pertenecen-a-una-ficha) | Qué archivos pertenecen a una ficha | Vigente |
+| [D-028](#d-028-compilación-optimizada-por-defecto-y-caché-del-análisis) | Compilación optimizada y caché del análisis | Vigente |
+| [D-029](#d-029-metadatos-de-themoviedb-tmdb) | Metadatos de TheMovieDB (TMDB) | Propuesta |
 
 ---
 
@@ -203,7 +208,7 @@ Formato: **Contexto** (qué problema había), **Decisión**, **Alternativas desc
 - **Consecuencias**: mejorar el parser solo requiere reiniciar el servicio. Calcular un canal de 100 mensajes es instantáneo; con miles habrá que medirlo. Los elementos se identifican por `(chat_id, id del mensaje de la ficha)`, un identificador estable que podrán usar las descargas (Fase 3) y el seguimiento (Fase 4). Esos datos sí se guardarán en tablas.
 
 ## D-021: Las fichas separan los elementos del catálogo
-*06/10/2026*
+*06/10/2026 · **Sustituida por [D-026](#d-026-obras-versiones-y-partes)***
 
 - **Contexto**: en los canales reales (`Ultimate Spider-Man`, `Generator Rex`) cada serie empieza con una foto con pie (la "ficha": título, año, calidad, géneros e idioma), seguida de los vídeos. Hay fotos sin pie que son portadas de temporada, y textos sueltos de cierre, créditos o enlaces. Cada autor usa un formato distinto.
 - **Decisión**:
@@ -234,3 +239,70 @@ Formato: **Contexto** (qué problema había), **Decisión**, **Alternativas desc
 - **Decisión**: `/api/catalog` devuelve el resumen de todos los elementos, y la web filtra y ordena en el navegador (sin distinguir mayúsculas ni acentos, ordenando con las reglas del español). La navegación usa rutas con `#` (`#/catalogo`, `#/catalogo/{chat}/{ficha}`, `#/canales`, `#/estado`). Sin sesión de Telegram solo se muestra *Estado*.
 - **Alternativas descartadas**: búsqueda en el servidor, innecesaria para un catálogo de decenas o cientos de títulos.
 - **Consecuencias**: búsqueda instantánea y sin peticiones. Si el catálogo llega a miles de títulos, habrá que paginar en la API.
+
+## D-025: Temas de los foros
+*06/10/2026*
+
+- **Contexto**: el canal principal de Plácido ("Las Cositas 3", unos 33 000 mensajes) es un supergrupo con temas: *Películas*, *Películas 4K*, *Series*, *Series en emisión*, *Índices y colecciones*, *Avisos importantes* y *General*. Los mensajes de los distintos temas se publican intercalados en el tiempo.
+- **Decisión**:
+  - Cada mensaje guarda su tema (`messages.topic_id`, migración v3) y cada sincronización guarda la lista de temas con sus nombres (`getForumTopics`, tabla `topics`).
+  - Las fichas se agrupan **dentro de cada tema**.
+  - El nombre del tema orienta el tipo: "Películas…" → película, "Series…" → serie (los marcadores de episodio mandan).
+  - Una obra presente en un tema "…en emisión" se marca como *en emisión*.
+- **Alternativas descartadas**: agrupar por canal, que mezclaría archivos de un tema con la ficha de otro.
+- **Consecuencias**: la migración v3 reinició los cursores para releer el historial una vez y rellenar el tema de los mensajes ya guardados (antes se hizo copia de la BD). La Fase 4 vigilará el tema "Series en emisión" para las descargas automáticas.
+
+## D-026: Obras, versiones y partes
+*06/10/2026 · Sustituye a D-021*
+
+- **Contexto**: en el canal grande cada ficha es una temporada, un episodio en emisión (una ficha por episodio) o una versión de una película (1080p en *Películas* y 4K en *Películas 4K*). Además, los archivos grandes van troceados (`.zip.001`…, `.part01.rar`, `_part06.rar`). Plácido quiere elegir qué versión descargar.
+- **Decisión**:
+  - **Release** (archivo lógico): un vídeo, o todas las partes de un comprimido troceado, ordenadas por número aunque se publiquen desordenadas. Lleva calidad, HDR, etiquetas de versión (REMUX, Open Matte, SDR, IMAX, Extendida, Rotulado en castellano/inglés…), temporada y episodio.
+  - **Item** (obra): une los bloques del mismo tipo con la misma clave de título o título alternativo, aunque estén en temas o canales distintos. Las películas homónimas con años distintos se separan (*La guerra de los mundos* de 2005 y de 2025).
+  - El identificador de la obra es su ficha más antigua; `find()` acepta cualquiera de sus fichas, así que los enlaces no se rompen.
+- **Consecuencias**:
+  - El catálogo del canal grande pasa de unas 3200 fichas a unas 2200 obras: 294 películas con varias calidades y 9 series en emisión unidas a sus temporadas completas (*Outlander*: 8 temporadas y 93 episodios en una sola obra).
+  - La Fase 3 descargará *Releases* concretos.
+  - Las películas sin año en ninguna ficha pueden unirse por error con un *remake* (*Vaiana* de 2016 y de 2026). Se resolverá con TMDB (D-029).
+
+## D-027: Qué archivos pertenecen a una ficha
+*06/10/2026*
+
+- **Contexto**: en *Películas 4K* muchas películas se suben sin ficha justo detrás de la ficha de otra. Con "todo lo que sigue a una ficha es suyo", la ficha de *Hokum* acabó con 53 películas.
+- **Decisión**: un archivo pertenece al bloque abierto si:
+  - es otra parte de un archivo troceado ya visto (mismo nombre base), o
+  - es el primer archivo tras la ficha (aunque se llame distinto: "The Crow" para "El Cuervo"; su nombre pasa a valer para los siguientes), o
+  - su nombre encaja con el título: igual, o uno contiene al otro (`vigilantes` en `myheroacademiavigilantes`; con claves de menos de 4 letras, solo como prefijo).
+
+  Si no, abre un bloque sin ficha, que después se une con su ficha por título.
+- **Alternativas descartadas**: usar el álbum de Telegram. Se probó y encadenaba obras, porque un mismo álbum puede llevar las últimas partes de una película y las primeras de la siguiente.
+- **Títulos alternativos**: solo con contenido real (al menos 3 caracteres, sin conjunciones ni artículos). De `Hokum (1080p y 1080p REMUX)` quedaba "y", que unía cientos de películas. Las etiquetas técnicas (`Open Matte`, `REMUX`, `SDR`…) tampoco cuentan: `(Open Matte 1080p)` unía *Sonic* con *No es país para viejos*.
+- **Otros errores reales corregidos**, todos con test de regresión:
+  - El año ya no se toma de la sinopsis.
+  - `…_2_0x264` ya no se interpreta como el episodio 0x264.
+  - Los corchetes al principio son parte del nombre (`[REC] 2`).
+  - `icase` de `std::regex` no convierte las mayúsculas acentuadas (`INGLÉS`), así que los patrones las incluyen.
+
+## D-028: Compilación optimizada por defecto y caché del análisis
+*06/10/2026*
+
+- **Contexto**: reconstruir el catálogo del canal grande tardaba 25,5 s en cada arranque y bloqueaba la sincronización. La causa principal: CMake sin tipo de compilación no optimiza (`-O0`), y con `std::regex` eso lo hace entre 5,5 y 7 veces más lento (medido con los 29 816 nombres de fichero reales).
+- **Decisión**:
+  - `CMAKE_BUILD_TYPE=RelWithDebInfo` por defecto (`-O2` y con símbolos, para diagnosticar fallos).
+  - Caché del análisis por mensaje, compartida entre las partes de un mismo archivo troceado.
+  - Filtro previo por palabras clave antes de las expresiones de etiquetas.
+  - El primer cálculo del catálogo lo hace el hilo de sincronización al arrancar, para no retrasar la web.
+- **Consecuencias**: arranque en frío en 2,1 s (12 veces menos) y reconstrucciones incrementales por debajo de 1 s. Si el catálogo crece mucho más, el siguiente paso sería sustituir las expresiones más usadas por código a mano o por una biblioteca de expresiones más rápida.
+
+## D-029: Metadatos de TheMovieDB (TMDB)
+*06/10/2026 · **Propuesta**, pendiente de que Plácido cree la credencial*
+
+- **Contexto**: Plácido quiere títulos de episodios, descripciones y datos fiables de cada serie y película, y propuso TheTVDB o TheMovieDB.
+- **Decisión propuesta**: TMDB.
+  - Gratuito para uso **no comercial**, con atribución: logo de TMDB y el aviso *"This product uses the TMDB API but is not endorsed or certified by TMDB"* en una sección de créditos de la web.
+  - Cubre series y películas, tiene datos en español (`es-ES`): títulos, sinopsis, episodios y carátulas.
+  - 220 obras ya traen su identificador de TMDB en el nombre de los archivos (`tmdbid_8078`), lo que da una coincidencia exacta.
+  - La credencial irá en `TELEGARRM_TMDB_TOKEN`, en el mismo fichero de entorno (D-006).
+  - Las respuestas se guardarán en una caché en SQLite, para no repetir consultas.
+- **Alternativas descartadas**: TheTVDB, porque su API v4 exige que cada usuario de un proyecto personal tenga un PIN de suscriptor de pago, y solo cubre series.
+- **Consecuencias**: solo se envían a TMDB títulos y años, nunca datos personales. Si el proyecto llegara a tener uso comercial, habría que pedir licencia a TMDB.

@@ -19,10 +19,22 @@ struct EpisodeInfo {
 
 struct Ficha {
     std::string title;
+    std::vector<std::string> alternateTitles;  // "Hijack (Secuestro en el aire)" -> {"Secuestro en el aire"}
     std::optional<int> year;
     std::string quality;                 // Ej. "1080p"; vacío si no consta
+    bool hdr = false;
+    int season = 0;                      // "Serie - Temporada 4"; 0 = no consta o son varias
+    int episode = 0;                     // Línea "Episodio 8" (fichas de series en emisión)
+    int episodeEnd = 0;                  // "Episodios 2 y 3"
     std::vector<std::string> genres;     // De los hashtags: #Acción -> "Acción"
     std::vector<std::string> languages;  // Ej. "Castellano", "Latino", "Inglés", "VOSE"
+    std::string synopsis;                // Párrafo tras "SINOPSIS:"
+};
+
+// Fichero troceado: "Peli.zip.003" -> {"Peli.zip", 3}; "Serie.part2.rar" -> {"Serie.rar", 2}
+struct PartInfo {
+    std::string base;  // Nombre común a todas las partes (el propio nombre si no es una parte)
+    int number = 0;    // 0 = no es una parte
 };
 
 // Busca un marcador de episodio: S01E01, 1x01, #01x01, 1x01-02, T1E3, "Temporada 1 Capítulo 3"
@@ -37,6 +49,14 @@ std::string cleanTitle(const std::string& raw);
 
 // "2160p", "1080p", "720p"...; 4K y UHD se normalizan a "2160p". Vacío si no hay.
 std::string detectQuality(const std::string& text);
+// Orden de calidades para elegir la mejor versión: 2160p > 1080p > 720p > ... > desconocida
+int qualityRank(const std::string& quality);
+bool detectHdr(const std::string& text);
+// Etiquetas que distinguen versiones de una misma calidad: "REMUX", "Open Matte", "IMAX", "SDR"...
+std::vector<std::string> detectTags(const std::string& text);
+// Identificador de TheMovieDB que algunos nombres de fichero incluyen ("tmdbid_8078", "[tmdbid-10664]")
+std::optional<long> detectTmdbId(const std::string& text);
+PartInfo splitParts(const std::string& fileName);
 std::optional<int> detectYear(const std::string& text);
 // Por banderas (🇪🇸, 🇪🇦, 🇲🇽...) y palabras (castellano, latino, VOSE...), sin repetir
 std::vector<std::string> detectLanguages(const std::string& text);

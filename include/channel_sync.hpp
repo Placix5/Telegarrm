@@ -51,6 +51,8 @@ private:
     void run();
     bool telegramReady() const;
     Result syncChannel(const DbManager::Channel& channel);
+    // Lista de temas de un grupo con temas (getForumTopics, paginado)
+    Result syncTopics(std::int64_t chatId);
     // getChatHistory con reintentos tras FLOOD_WAIT; devuelve mensajes con id < fromMessageId
     Result fetchHistory(std::int64_t chatId, std::int64_t fromMessageId, HistoryPage& page);
     // Espera interrumpible; false si se ha pedido parar

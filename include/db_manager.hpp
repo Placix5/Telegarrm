@@ -38,6 +38,14 @@ public:
         std::optional<std::string> fileName;
         std::optional<std::int64_t> fileSize; // Bytes
         std::optional<std::string> mimeType;
+        std::int64_t topicId = 0;         // Tema del foro (0 = el chat no tiene temas)
+    };
+
+    // Tema de un grupo con temas (foro)
+    struct Topic {
+        std::int64_t id = 0;
+        std::string name;
+        std::int64_t messageCount = 0;    // Solo al listar
     };
 
     // Cursor de sincronización que se guarda junto con un lote de mensajes
@@ -76,6 +84,10 @@ public:
     std::vector<Message> listMessages(std::int64_t chatId, int limit, int offset);
     // Todos los mensajes de un canal en orden cronológico (para construir el catálogo)
     std::vector<Message> channelMessages(std::int64_t chatId);
+
+    // Sustituye la lista de temas de un chat (se lee entera de Telegram en cada sincronización)
+    bool replaceTopics(std::int64_t chatId, const std::vector<Topic>& topics);
+    std::vector<Topic> listTopics(std::int64_t chatId);
 
 private:
     struct Closer {

@@ -32,20 +32,23 @@ Todo se gestiona desde el navegador, sin SSH ni terminal.
 - [x] **Catálogo**: en memoria, con las fichas como separador (D-020, D-021). El diseño cambió respecto al plan inicial: sin tabla `media`.
 - [x] **API**: `GET /api/catalog`, `GET /api/catalog/{chat}/{ficha}` y la portada.
 - [x] **Web**: catálogo en tarjetas con portada, búsqueda y filtro por tipo; ficha con temporadas y episodios.
-- [ ] Validar con más canales de Plácido y con películas reales (el formato de las películas aún no se ha visto).
+- [x] Canal grande de Plácido (grupo con temas, ~33 000 mensajes): temas (D-025), obras con versiones y partes (D-026), asignación de archivos a fichas (D-027) y rendimiento (D-028).
+- [ ] **Metadatos de TMDB** (D-029): títulos de episodio, sinopsis, carátulas y desambiguar *remakes*. Pendiente de la credencial `TELEGARRM_TMDB_TOKEN`.
+- [ ] Créditos de TMDB en la web (requisito de su licencia).
 
 Formato real visto: canales de una serie con una ficha (foto + pie con título, año, calidad, géneros e idioma), portadas de temporada sin pie, episodios `1x01 - Serie.mkv` o `Serie #01x01 - Título.mp4` y textos de cierre.
 
 ## Fase 3: Descargas
 - **Rutas** de la biblioteca (series, películas, buffer temporal) configurables desde la web (`settings`).
+- **Elegir versión**: la web ofrece las versiones de cada película o episodio (`Release`: 4K HDR, 1080p, REMUX…) y se descarga solo la elegida.
 - **Cola persistente** (tabla `downloads`) con un trabajador: `downloadFile` + `updateFile` para el progreso, reintentos y reanudación tras reiniciar.
-- **Postproceso** migrado del núcleo antiguo: descompresión (7z, multiparte `.001`/`.partN.rar`), limpieza de nombres y colocación en `Serie/Temporada 01/Serie - S01E01.mkv`.
+- **Postproceso** migrado del núcleo antiguo: descompresión (7z, zip troceado `.zip.001`, multiparte `.partN.rar`), limpieza de nombres y colocación en `Serie/Temporada 01/Serie - S01E01.mkv`.
 - **API**: `POST /api/downloads`, `GET /api/downloads` (progreso), `DELETE /api/downloads/{id}`.
 - **Web**: botón "Almacenar en disco" y progreso en tiempo real.
 
 ## Fase 4: Seguimiento (Tele-ARR)
 - Marcar series y películas como "en seguimiento".
-- Escuchar `updateNewMessage` en los canales vigilados y parsear cada mensaje nuevo:
+- Escuchar `updateNewMessage` en los canales vigilados (en especial el tema "Series en emisión", donde se publica un episodio por ficha) y parsear cada mensaje nuevo:
   - Episodio nuevo de algo en seguimiento: se descarga.
   - Versión nueva de algo ya descargado: se compara (resolución, códec, audio, tamaño) y, si es mejor, se reemplaza. El fichero antiguo se conserva hasta verificar el nuevo.
 - Historial de reemplazos visible en la web.

@@ -142,7 +142,8 @@ Json messageJson(const DbManager::Message& message) {
             {"text", message.text},
             {"file_name", message.fileName ? Json(*message.fileName) : Json(nullptr)},
             {"file_size", message.fileSize ? Json(*message.fileSize) : Json(nullptr)},
-            {"mime_type", message.mimeType ? Json(*message.mimeType) : Json(nullptr)}};
+            {"mime_type", message.mimeType ? Json(*message.mimeType) : Json(nullptr)},
+            {"topic_id", message.topicId}};
 }
 
 void registerStatusRoutes(httplib::Server& server, DbManager& db, TelegramClient& telegram) {
@@ -210,38 +211,60 @@ Json nullable(const std::string& value) {
 }
 
 Json itemSummaryJson(const Catalog::Item& item) {
+    const bool hdr = std::any_of(item.releases.begin(), item.releases.end(),
+                                 [](const Catalog::Release& release) { return release.hdr; });
     return {{"chat_id", item.chatId},
             {"anchor_id", item.anchorMessageId},
             {"kind", item.kind},
             {"title", item.title},
+            {"alternate_titles", item.alternateTitles},
             {"year", item.year ? Json(*item.year) : Json(nullptr)},
-            {"quality", nullable(item.quality)},
+            {"tmdb_id", item.tmdbId ? Json(item.tmdbId) : Json(nullptr)},
+            {"qualities", item.qualities},
+            {"hdr", hdr},
             {"languages", item.languages},
             {"genres", item.genres},
+            {"topics", item.topics},
+            {"airing", item.airing},
             {"channel_title", item.channelTitle},
             {"has_poster", item.posterMessageId != 0},
             {"seasons", item.seasonCount},
             {"episodes", item.episodeCount},
-            {"file_count", item.files.size()},
-            {"total_size", item.totalSize}};
+            {"release_count", item.releases.size()},
+            {"total_size", item.totalSize},
+            {"updated_at", item.updatedAt}};
 }
 
 Json itemDetailJson(const Catalog::Item& item) {
     Json detail = itemSummaryJson(item);
+    detail["synopsis"] = item.synopsis;
     detail["description"] = item.description;
-    Json files = Json::array();
-    for (const Catalog::File& file : item.files) {
-        files.push_back({{"message_id", file.messageId},
-                         {"file_name", file.fileName},
-                         {"size", file.size},
-                         {"season", file.episode > 0 ? Json(file.season) : Json(nullptr)},
-                         {"episode", file.episode > 0 ? Json(file.episode) : Json(nullptr)},
-                         {"episode_end", file.episodeEnd > 0 ? Json(file.episodeEnd) : Json(nullptr)},
-                         {"episode_title", nullable(file.episodeTitle)},
-                         {"quality", nullable(file.quality)},
-                         {"archive", file.archive}});
+    Json releases = Json::array();
+    for (const Catalog::Release& release : item.releases) {
+        Json parts = Json::array();
+        for (const Catalog::Part& part : release.parts) {
+            parts.push_back({{"message_id", part.messageId},
+                             {"file_name", part.fileName},
+                             {"size", part.size},
+                             {"number", part.number}});
+        }
+        const bool isEpisode = release.episode > 0;
+        releases.push_back({{"chat_id", release.chatId},
+                            {"name", release.name},
+                            {"quality", nullable(release.quality)},
+                            {"hdr", release.hdr},
+                            {"tags", release.tags},
+                            {"size", release.size},
+                            {"archive", release.archive},
+                            {"season", isEpisode ? Json(release.season) : Json(nullptr)},
+                            {"episode", isEpisode ? Json(release.episode) : Json(nullptr)},
+                            {"episode_end", release.episodeEnd > 0 ? Json(release.episodeEnd) : Json(nullptr)},
+                            {"episode_title", nullable(release.episodeTitle)},
+                            {"date", release.date},
+                            {"topic_id", release.topicId},
+                            {"parts", parts}});
     }
-    detail["files"] = files;
+    detail["releases"] = releases;
     return detail;
 }
 
@@ -303,7 +326,8 @@ void registerCatalogRoutes(httplib::Server& server, TelegramClient& telegram, Ca
         }
 
         const auto message = telegram.request(
-            {{"@type", "getMessage"}, {"chat_id", item->chatId}, {"message_id", item->posterMessageId}}, kTelegramTimeout);
+            {{"@type", "getMessage"}, {"chat_id", item->posterChatId}, {"message_id", item->posterMessageId}},
+            kTelegramTimeout);
         if (isError(message)) {
             sendError(res, 502, "No se pudo leer la ficha: " + errorMessage(message));
             return;
@@ -453,6 +477,20 @@ void registerChannelRoutes(httplib::Server& server, DbManager& db, TelegramClien
         }
         sync.requestSync();
         sendJson(res, 202, {{"ok", true}});
+    });
+
+    // Temas de un grupo con temas (foro), con cuántos mensajes guardados tiene cada uno
+    server.Get(R"(/api/channels/(-?\d+)/topics)", [&db](const httplib::Request& req, httplib::Response& res) {
+        const auto chatId = parseId(req.matches[1].str());
+        if (!chatId || !db.getChannel(*chatId)) {
+            sendError(res, 404, "Canal no encontrado");
+            return;
+        }
+        Json result = Json::array();
+        for (const DbManager::Topic& topic : db.listTopics(*chatId)) {
+            result.push_back({{"id", topic.id}, {"name", topic.name}, {"message_count", topic.messageCount}});
+        }
+        sendJson(res, 200, result);
     });
 
     // Mensajes guardados de un canal, del más reciente al más antiguo (?limit=50&offset=0)

@@ -67,9 +67,9 @@ int main() {
     // Registrar la versión en ejecución; /api/status la lee después desde SQLite
     db.setSetting("version", TELEGARRM_VERSION);
 
-    // Catálogo en memoria, derivado de los mensajes ya guardados
+    // Catálogo en memoria, derivado de los mensajes guardados. Lo calcula el hilo de
+    // sincronización al arrancar, para no retrasar la web (con miles de mensajes tarda segundos).
     Catalog catalog(db);
-    catalog.rebuildAll();
 
     TelegramClient telegram(std::move(*telegramConfig));
     // Cada cambio en los mensajes de un canal recalcula su parte del catálogo

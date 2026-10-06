@@ -190,22 +190,32 @@ function posterElement(item) {
   return box;
 }
 
+// "2160p" se muestra como "4K", que es como lo llaman los canales
+const qualityLabel = (quality) => (quality === "2160p" ? "4K" : quality || "Calidad desconocida");
+
+// Etiqueta de una versión: "4K HDR · REMUX"
+function versionLabel(release) {
+  return [qualityLabel(release.quality) + (release.hdr ? " HDR" : ""), ...(release.tags || [])].join(" · ");
+}
+
 function itemMeta(item) {
   const parts = [];
   if (item.year) parts.push(item.year);
   parts.push(KIND_LABEL[item.kind] || item.kind);
   if (item.kind === "series") parts.push(plural(item.seasons, "temporada", "temporadas"));
-  if (item.quality) parts.push(item.quality);
+  if (item.qualities.length) parts.push(item.qualities.map(qualityLabel).join(" · "));
   return parts.join(" · ");
 }
 
 function renderCatalog() {
   const query = normalize($("catalog-search").value.trim());
   const kind = $("catalog-kind").value;
+  const byTitle = (a, b) => a.title.localeCompare(b.title, "es", { sensitivity: "base" });
+  const sort = $("catalog-sort").value === "recent" ? (a, b) => b.updated_at - a.updated_at || byTitle(a, b) : byTitle;
   const visible = catalogItems
-    .filter((item) => !kind || item.kind === kind)
-    .filter((item) => !query || normalize([item.title, item.channel_title, ...item.genres].join(" ")).includes(query))
-    .sort((a, b) => a.title.localeCompare(b.title, "es", { sensitivity: "base" }));
+    .filter((item) => !kind || (kind === "airing" ? item.airing : item.kind === kind))
+    .filter((item) => !query || normalize([item.title, ...item.alternate_titles, item.channel_title, ...item.genres].join(" ")).includes(query))
+    .sort(sort);
 
   const grid = $("catalog-grid");
   grid.replaceChildren();
@@ -214,7 +224,9 @@ function renderCatalog() {
     card.href = `#/catalogo/${itemPath(item)}`;
     const body = el("div", "card-body");
     body.append(el("div", "card-title", item.title), el("div", "card-meta", itemMeta(item)));
-    card.append(posterElement(item), body);
+    const poster = posterElement(item);
+    if (item.airing) poster.append(el("span", "ribbon", "En emisión"));
+    card.append(poster, body);
     grid.append(card);
   }
 
@@ -242,29 +254,67 @@ async function loadCatalog() {
 
 $("catalog-search").addEventListener("input", renderCatalog);
 $("catalog-kind").addEventListener("change", renderCatalog);
+$("catalog-sort").addEventListener("change", renderCatalog);
 
-function episodeLabel(file) {
-  const episode = String(file.episode).padStart(2, "0");
-  const end = file.episode_end ? `-${String(file.episode_end).padStart(2, "0")}` : "";
-  return `${file.season}x${episode}${end}`;
+function episodeLabel(release) {
+  const episode = String(release.episode).padStart(2, "0");
+  const end = release.episode_end ? `-${String(release.episode_end).padStart(2, "0")}` : "";
+  return `${release.season}x${episode}${end}`;
 }
 
-function filesTable(files, withEpisodes) {
-  const table = el("table");
-  const head = el("tr");
-  if (withEpisodes) head.append(el("th", "", "Episodio"));
-  head.append(el("th", "", withEpisodes ? "Título" : "Archivo"), el("th", "num", "Tamaño"));
-  table.append(head);
-  for (const file of files) {
-    const row = el("tr");
-    if (withEpisodes) row.append(el("td", "episode", episodeLabel(file)));
-    const name = withEpisodes ? (file.episode_title || "") : file.file_name;
-    const nameCell = el("td", "", name);
-    nameCell.title = file.file_name;  // El nombre original, al pasar el ratón
-    row.append(nameCell, el("td", "num", formatSize(file.size)));
-    table.append(row);
+// Versiones de un episodio o película: "1080p · 1,2 GB" (con el nombre del archivo al pasar el ratón)
+function versionsElement(releases) {
+  const box = el("div", "versions");
+  for (const release of releases) {
+    const chip = el("span", "version");
+    chip.append(el("strong", "", versionLabel(release)), document.createTextNode(` · ${formatSize(release.size)}`));
+    const parts = release.parts.length > 1 ? ` (${release.parts.length} partes)` : "";
+    chip.title = `${release.name}${parts}`;
+    box.append(chip);
   }
-  return table;
+  return box;
+}
+
+function table(headers) {
+  const node = el("table");
+  const head = el("tr");
+  for (const [text, cls] of headers) head.append(el("th", cls || "", text));
+  node.append(head);
+  return node;
+}
+
+// Series: una fila por episodio con todas sus versiones
+function episodesTable(releases) {
+  const node = table([["Episodio"], ["Título"], ["Versiones"]]);
+  const byEpisode = new Map();
+  for (const release of releases) {
+    const key = episodeLabel(release);
+    byEpisode.set(key, [...(byEpisode.get(key) || []), release]);
+  }
+  for (const [label, versions] of byEpisode) {
+    const row = el("tr");
+    const title = versions.map((release) => release.episode_title).find(Boolean) || "";
+    const cell = el("td");
+    cell.append(versionsElement(versions));
+    row.append(el("td", "episode", label), el("td", "", title), cell);
+    node.append(row);
+  }
+  return node;
+}
+
+// Películas y archivos sueltos: una fila por versión
+function versionsTable(releases) {
+  const node = table([["Versión"], ["Archivo"], ["Publicado"], ["Tamaño", "num"]]);
+  for (const release of releases) {
+    const row = el("tr");
+    const name = el("td", "", release.name);
+    name.title = release.parts.map((part) => part.file_name).join("\n");
+    const parts = release.parts.length > 1 ? ` · ${release.parts.length} partes` : "";
+    row.append(el("td", "", versionLabel(release)), name, el("td", "", formatDate(release.date).split(",")[0]),
+      el("td", "num", formatSize(release.size) + parts));
+    node.append(row);
+  }
+  return node;
 }
 
 async function loadDetail(chatId, anchorId) {
@@ -281,16 +331,25 @@ async function loadDetail(chatId, anchorId) {
   const info = el("div");
   const title = el("h2", "", item.title);
   const badges = el("div", "badges");
-  for (const text of [KIND_LABEL[item.kind], item.year, item.quality, ...item.languages, ...item.genres]) {
+  if (item.airing) badges.append(el("span", "badge airing", "En emisión"));
+  for (const text of [KIND_LABEL[item.kind], item.year, ...item.qualities.map(qualityLabel), item.hdr ? "HDR" : null,
+    ...item.languages, ...item.genres]) {
     if (text) badges.append(el("span", "badge", String(text)));
   }
+  info.append(title, badges);
+  if (item.alternate_titles.length) {
+    info.append(el("p", "hint", `También: ${item.alternate_titles.join(" · ")}`));
+  }
+  if (item.synopsis) info.append(el("p", "synopsis", item.synopsis));
+
   const parts = item.kind === "series"
     ? [plural(item.seasons, "temporada", "temporadas"), plural(item.episodes, "episodio", "episodios")]
-    : [plural(item.file_count, "archivo", "archivos")];
+    : [plural(item.release_count, "versión", "versiones")];
   parts.push(formatSize(item.total_size));
-  const summary = el("p", "", parts.join(" · "));
-  const channel = el("p", "hint", `Canal: ${item.channel_title}`);
-  info.append(title, badges, summary, channel);
+  info.append(el("p", "", parts.join(" · ")));
+  const origin = [`Canal: ${item.channel_title}`];
+  if (item.topics.length) origin.push(`Temas: ${item.topics.join(", ")}`);
+  info.append(el("p", "hint", origin.join(" · ")));
 
   if (item.description) {
     const details = el("details");
@@ -305,18 +364,19 @@ async function loadDetail(chatId, anchorId) {
   if (item.kind === "series") {
     const bySeason = new Map();
     const loose = [];
-    for (const file of item.files) {
-      if (file.episode === null) loose.push(file);
-      else bySeason.set(file.season, [...(bySeason.get(file.season) || []), file]);
+    for (const release of item.releases) {
+      if (release.episode === null) loose.push(release);
+      else bySeason.set(release.season, [...(bySeason.get(release.season) || []), release]);
     }
-    for (const [season, seasonFiles] of bySeason) {
-      const size = seasonFiles.reduce((sum, file) => sum + file.size, 0);
-      files.append(el("h3", "", `Temporada ${season} · ${plural(seasonFiles.length, "archivo", "archivos")} · ${formatSize(size)}`),
-        filesTable(seasonFiles, true));
+    for (const [season, releases] of bySeason) {
+      const episodes = new Set(releases.map(episodeLabel)).size;
+      const size = releases.reduce((sum, release) => sum + release.size, 0);
+      files.append(el("h3", "", `Temporada ${season} · ${plural(episodes, "episodio", "episodios")} · ${formatSize(size)}`),
+        episodesTable(releases));
     }
-    if (loose.length) files.append(el("h3", "", "Otros archivos"), filesTable(loose, false));
+    if (loose.length) files.append(el("h3", "", "Otros archivos"), versionsTable(loose));
   } else {
-    files.append(el("h3", "", "Archivos"), filesTable(item.files, false));
+    files.append(el("h3", "", "Versiones"), versionsTable(item.releases));
   }
 
   container.replaceChildren(detail, files);

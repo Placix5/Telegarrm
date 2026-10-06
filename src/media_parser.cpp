@@ -90,6 +90,14 @@ std::string trimSeparators(const std::string& text) {
     return text.substr(first, last - first + 1);
 }
 
+std::string trimSpaces(const std::string& text) {
+    const auto first = text.find_first_not_of(" \t\r\n");
+    if (first == std::string::npos) {
+        return "";
+    }
+    return text.substr(first, text.find_last_not_of(" \t\r\n") - first + 1);
+}
+
 std::string collapseSpaces(const std::string& text) {
     static const std::regex kSpaces(R"(\s+)");
     return std::regex_replace(text, kSpaces, " ");
@@ -222,10 +230,10 @@ std::vector<std::string> detectLanguages(const std::string& text) {
     }
 
     static const std::pair<std::regex, const char*> kWords[] = {
-        {std::regex(R"(castellano|espa(?:ñ|n)ol|spanish)", kIcase), "Castellano"},
+        {std::regex(R"(castellano|espa(?:ñ|Ñ|n)ol|spanish)", kIcase), "Castellano"},
         {std::regex(R"(latino)", kIcase), "Latino"},
-        {std::regex(R"(ingl(?:é|e)s|english)", kIcase), "Inglés"},
-        {std::regex(R"(japon(?:é|e)s|japanese)", kIcase), "Japonés"},
+        {std::regex(R"(ingl(?:é|É|e)s|english)", kIcase), "Inglés"},
+        {std::regex(R"(japon(?:é|É|e)s|japanese)", kIcase), "Japonés"},
         {std::regex(R"(\bvose\b|\bvos\b|subtitulad)", kIcase), "VOSE"},
     };
     for (const auto& [pattern, language] : kWords) {
@@ -252,20 +260,97 @@ std::string cleanTitle(const std::string& raw) {
         std::replace(text.begin(), text.end(), '_', ' ');
     }
 
+    // Unos corchetes al principio son parte del nombre ("[REC] 2"); en otro sitio, etiquetas
+    static const std::regex kLeadingBrackets(R"(^\s*\[([^\]]*)\])");
+    text = std::regex_replace(text, kLeadingBrackets, "$1");
+
     static const std::regex kNoise[] = {
         std::regex(R"(\[[^\]]*\]|\([^)]*\)|\{[^}]*\})"),                                  // [Etiquetas] (2010) {x}
-        std::regex(R"((cr(?:é|e)ditos?|credits?)\b.*$)", kIcase),                        // Créditos y lo que siga
+        std::regex(R"(\btmdb[-_ ]?id[-_= ]?\d+)", kIcase),                                     // tmdbid_8078
+        std::regex(R"((cr(?:é|É|e)ditos?|credits?)\b.*$)", kIcase),                        // Créditos y lo que siga
         std::regex(R"(@\S+|https?://\S+|t\.me/\S+)", kIcase),                            // Usuarios y enlaces
         std::regex(R"(\b(?:temporadas?|seasons?)\s*\d+(?:\s*(?:-|a|al|y|&)\s*\d+)*)", kIcase),
         std::regex(R"(\b(?:serie\s+)?complet[ao]\b|\bfin de serie\b)", kIcase),
         std::regex(R"(\b(?:2160p|4k|uhd|1080[pi]|720p|576p|480p|360p)\b)", kIcase),
-        std::regex(R"(\b(?:x26[45]|h\.?26[45]|hevc|avc|10 ?bits?|web-?dl|web-?rip|blu-?ray|bdrip|brrip|hdrip|dvdrip|hdtv|remux|aac|ac3|e?ac-?3|dts|ddp?\s?5\.1|5\.1|2\.0)\b)", kIcase),
-        std::regex(R"(\b(?:castellano|espa(?:ñ|n)ol|latino|ingl(?:é|e)s|english|dual|multi|vose|vos|subtitulad[oa]s?|audio)\b)", kIcase),
+        std::regex(R"(\b(?:hdr(?:10)?\+?|dolby ?vision|x26[45]|h\.?26[45]|hevc|avc|10 ?bits?|web-?dl|web-?rip|blu-?ray|bdrip|brrip|hdrip|dvdrip|hdtv|remux|aac|ac3|e?ac-?3|dts|ddp?\s?5\.1|5\.1|2\.0)\b)", kIcase),
+        std::regex(R"(\b(?:castellano|espa(?:ñ|Ñ|n)ol|latino|ingl(?:é|É|e)s|english|dual|multi|vose|vos|subtitulad[oa]s?|audio)\b)", kIcase),
+        std::regex(R"(\brotulado\b|\bv\. ?ext\b|\b(?:open ?matte|imax|sdr|3d|extended|extendida|versi(?:ó|Ó|o)n extendida|director'?s cut|montaje del director|remaster(?:ed|izad[ao])?|unrated|sin censura|special edition|edici(?:ó|Ó|o)n (?:especial|coleccionista))\b)", kIcase),
+        std::regex(R"(\bson \d+ partes(?: en (?:zip|rar|7z))?)", kIcase),
     };
     for (const std::regex& noise : kNoise) {
         text = std::regex_replace(text, noise, " ");
     }
     return trimSeparators(collapseSpaces(text));
+}
+
+int qualityRank(const std::string& quality) {
+    static const char* const kOrder[] = {"360p", "480p", "576p", "720p", "1080p", "2160p"};
+    for (int i = 0; i < 6; ++i) {
+        if (quality == kOrder[i]) {
+            return i + 1;
+        }
+    }
+    return 0;
+}
+
+bool detectHdr(const std::string& text) {
+    static const std::regex kHdr(R"((?:^|[^0-9a-z])(?:hdr(?:10)?\+?|dolby ?vision)(?![0-9a-z]))", kIcase);
+    return std::regex_search(text, kHdr);
+}
+
+std::vector<std::string> detectTags(const std::string& text) {
+    // Filtro previo: casi ningún nombre lleva etiquetas y las 10 expresiones son caras
+    static const char* const kHints[] = {"remux",    "matte",    "imax",    "sdr",     "3d",    "extend", "v. ext",
+                                         "director", "remaster", "unrated", "censura", "edition", "edici", "rotulado"};
+    const std::string lower = toLowerAscii(text);
+    if (std::none_of(std::begin(kHints), std::end(kHints),
+                     [&lower](const char* hint) { return lower.find(hint) != std::string::npos; })) {
+        return {};
+    }
+    static const std::pair<std::regex, const char*> kTags[] = {
+        {std::regex(R"(\bremux\b)", kIcase), "REMUX"},
+        {std::regex(R"(\bopen ?matte\b)", kIcase), "Open Matte"},
+        {std::regex(R"(\bimax\b)", kIcase), "IMAX"},
+        {std::regex(R"(\bsdr\b)", kIcase), "SDR"},
+        {std::regex(R"(\b3d\b)", kIcase), "3D"},
+        {std::regex(R"(\b(?:extended|extendida)\b|\bv\. ?ext\b)", kIcase), "Extendida"},
+        {std::regex(R"(rotulado (?:en )?castellano)", kIcase), "Rotulado en castellano"},
+        {std::regex(R"(rotulado (?:en )?ingl(?:é|É|e)s)", kIcase), "Rotulado en inglés"},
+        {std::regex(R"(director'?s cut|montaje del director)", kIcase), "Montaje del director"},
+        {std::regex(R"(\bremaster(?:ed|izad[ao])?\b)", kIcase), "Remasterizada"},
+        {std::regex(R"(\bunrated\b|sin censura)", kIcase), "Sin censura"},
+        {std::regex(R"(special edition|edici(?:ó|Ó|o)n (?:especial|coleccionista))", kIcase), "Edición especial"},
+    };
+    std::vector<std::string> tags;
+    for (const auto& [pattern, tag] : kTags) {
+        if (std::regex_search(text, pattern)) {
+            tags.push_back(tag);
+        }
+    }
+    return tags;
+}
+
+std::optional<long> detectTmdbId(const std::string& text) {
+    static const std::regex kTmdb(R"(tmdb[-_ ]?id[-_= ]?(\d{1,9}))", kIcase);
+    std::smatch match;
+    if (std::regex_search(text, match, kTmdb)) {
+        return std::stol(match[1].str());
+    }
+    return std::nullopt;
+}
+
+PartInfo splitParts(const std::string& fileName) {
+    // ".part2.rar" y también "_part06.rar"
+    static const std::regex kRarPart(R"(^(.*)[._ -]part0*(\d+)\.rar$)", kIcase);
+    static const std::regex kNumbered(R"(^(.*)\.(\d{3})$)");
+    std::smatch match;
+    if (std::regex_match(fileName, match, kRarPart)) {
+        return {match[1].str() + ".rar", std::stoi(match[2].str())};
+    }
+    if (std::regex_match(fileName, match, kNumbered)) {
+        return {match[1].str(), std::stoi(match[2].str())};
+    }
+    return {fileName, 0};
 }
 
 std::optional<EpisodeInfo> parseEpisode(const std::string& text) {
@@ -274,9 +359,9 @@ std::optional<EpisodeInfo> parseEpisode(const std::string& text) {
     // Cada patrón captura temporada, episodio y, opcionalmente, el último episodio de un rango
     static const std::regex kPatterns[] = {
         std::regex(R"((?:^|[^0-9A-Za-z])S(\d{1,2})[ ._-]?E(\d{1,3})(?:[ ._-]?-?[ ._-]?E(\d{1,3}))?(?![0-9]))", kIcase),
-        std::regex(R"((?:^|[^0-9A-Za-z])#?(\d{1,2})x(\d{1,3})(?:-(\d{1,3}))?(?![0-9]))", kIcase),
+        std::regex(R"((?:^|[^0-9A-Za-z])#?(0?[1-9]|[1-9]\d)x(?!26[45](?![0-9]))(\d{1,3})(?:-(\d{1,3}))?(?![0-9]))", kIcase),
         std::regex(R"((?:^|[^0-9A-Za-z])T(\d{1,2})[ ._-]?E(\d{1,3})()(?![0-9]))", kIcase),
-        std::regex(R"(temporada\s*(\d{1,2})\D{0,20}?cap(?:(?:i|í)tulo|\.)?\s*(\d{1,3})()(?![0-9]))", kIcase),
+        std::regex(R"(temporada\s*(\d{1,2})\D{0,20}?cap(?:(?:i|í|Í)tulo|\.)?\s*(\d{1,3})()(?![0-9]))", kIcase),
     };
 
     for (const std::regex& pattern : kPatterns) {
@@ -300,7 +385,7 @@ std::optional<EpisodeInfo> parseEpisode(const std::string& text) {
 
 Ficha parseFicha(const std::string& caption) {
     Ficha ficha;
-    static const std::regex kMetadataLine(R"(^(?:#|@|https?:|t\.me|cr(?:é|e)ditos?)|^(?:19|20)\d{2}$|^\d{3,4}p$)", kIcase);
+    static const std::regex kMetadataLine(R"(^(?:#|@|https?:|t\.me|cr(?:é|É|e)ditos?)|^(?:19|20)\d{2}$|^\d{3,4}p$)", kIcase);
     static const std::string kCalendar = "\xF0\x9F\x93\x85";  // 📅
 
     std::string titleLine;
@@ -319,23 +404,93 @@ Ficha parseFicha(const std::string& caption) {
     }
 
     ficha.title = cleanTitle(titleLine);
-    if (!ficha.year) {
-        // El año suele ir en su propia línea; el del título solo cuenta entre paréntesis
-        std::string rest = caption;
-        const auto pos = rest.find(titleLine);
-        if (!titleLine.empty() && pos != std::string::npos) {
-            rest.erase(pos, titleLine.size());
+
+    // "Ted Lasso - Temporada 4 (1080p)": una sola temporada en el título
+    static const std::regex kSeason(R"(\btemporada\s*(\d{1,2})(?!\s*(?:-|a|al|y)\s*\d))", kIcase);
+    std::smatch seasonMatch;
+    if (std::regex_search(titleLine, seasonMatch, kSeason)) {
+        ficha.season = std::stoi(seasonMatch[1].str());
+    }
+
+    // Paréntesis del título que no son año, calidad ni idioma: "Hijack (Secuestro en el aire)".
+    // Lo que queda de "(1080p y 1080p REMUX)" es "y": un alternativo así uniría obras distintas.
+    static const std::regex kParens(R"(\(([^)]*)\))");
+    static const std::regex kOnlyYear(R"(^(?:19|20)\d{2}$)");
+    static const std::string kStopwords[] = {"and", "the", "del", "las", "los", "con", "por", "para"};
+    for (auto it = std::sregex_iterator(titleLine.begin(), titleLine.end(), kParens); it != std::sregex_iterator(); ++it) {
+        const std::string alternate = cleanTitle((*it)[1].str());
+        const std::string key = titleKey(alternate);
+        const bool meaningful = key.size() >= 3 && std::find(std::begin(kStopwords), std::end(kStopwords), key) ==
+                                                       std::end(kStopwords);
+        if (meaningful && !std::regex_match(alternate, kOnlyYear) && key != titleKey(ficha.title)) {
+            addUnique(ficha.alternateTitles, alternate);
         }
-        ficha.year = detectYear(rest);
-        if (!ficha.year) {
-            static const std::regex kYearInParens(R"(\(((?:19|20)\d{2})\))");
-            std::smatch match;
-            if (std::regex_search(titleLine, match, kYearInParens)) {
-                ficha.year = std::stoi(match[1].str());
+    }
+
+    // Línea "Episodio 8" o "Episodios 2 y 3" (no la lista "Episodios: [Episodio 1] [...]")
+    static const std::regex kEpisodeLine(R"(^episodios?\s*(\d{1,3})(?:\s*(?:y|-|al|a)\s*(\d{1,3}))?$)", kIcase);
+    // "SINOPSIS:" seguido (tras líneas vacías) del párrafo de la sinopsis
+    static const std::regex kSynopsisHeader(R"(^sinopsis\s*:?$)", kIcase);
+    bool inSynopsis = false;
+    for (const std::string& line : splitLines(caption)) {
+        const std::string value = trimSeparators(stripSymbols(line));
+        std::smatch match;
+        if (inSynopsis) {
+            if (value.empty()) {
+                if (!ficha.synopsis.empty()) {
+                    inSynopsis = false;
+                }
+                continue;
+            }
+            // La sinopsis conserva su puntuación: solo se recortan espacios
+            ficha.synopsis += (ficha.synopsis.empty() ? "" : " ") + trimSpaces(stripSymbols(line));
+            continue;
+        }
+        if (std::regex_match(value, kSynopsisHeader)) {
+            inSynopsis = ficha.synopsis.empty();
+        } else if (!ficha.episode && std::regex_match(value, match, kEpisodeLine)) {
+            ficha.episode = std::stoi(match[1].str());
+            if (match[2].matched) {
+                const int end = std::stoi(match[2].str());
+                ficha.episodeEnd = end > ficha.episode ? end : 0;
             }
         }
     }
-    ficha.quality = detectQuality(caption);
+
+    // Año: línea con 📅 > paréntesis del título > línea que solo tiene el año ("2015", "Año: 2015").
+    // Nunca de la sinopsis, que suele mencionar otros años.
+    if (!ficha.year) {
+        static const std::regex kYearInParens(R"(\(((?:19|20)\d{2})\))");
+        std::smatch match;
+        if (std::regex_search(titleLine, match, kYearInParens)) {
+            ficha.year = std::stoi(match[1].str());
+        }
+    }
+    if (!ficha.year) {
+        static const std::regex kYearLine(R"(^(?:a(?:ñ|Ñ|n)o|year|estreno)?\s*:?\s*((?:19|20)\d{2})$)", kIcase);
+        // Cada segmento de una línea de metadatos: "2020 | 720p" -> "2020", "720p"
+        static const std::regex kSegmentSeparator(R"(\s*(?:\||·|•)\s*)");
+        for (const std::string& line : splitLines(caption)) {
+            const std::string value = stripSymbols(line);
+            for (auto it = std::sregex_token_iterator(value.begin(), value.end(), kSegmentSeparator, -1);
+                 it != std::sregex_token_iterator() && !ficha.year; ++it) {
+                std::smatch match;
+                const std::string segment = trimSeparators(it->str());
+                if (std::regex_match(segment, match, kYearLine)) {
+                    ficha.year = std::stoi(match[1].str());
+                }
+            }
+            if (ficha.year) {
+                break;
+            }
+        }
+    }
+    // La versión (calidad, HDR) se declara en la primera línea; más abajo se mencionan otras
+    ficha.quality = detectQuality(titleLine);
+    if (ficha.quality.empty()) {
+        ficha.quality = detectQuality(caption);
+    }
+    ficha.hdr = detectHdr(titleLine);
     ficha.languages = detectLanguages(caption);
 
     static const std::regex kHashtag(R"(#([^\s#,.;]+))");

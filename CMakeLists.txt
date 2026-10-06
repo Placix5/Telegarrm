@@ -8,6 +8,12 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 option(TELEGARRM_BUILD_TESTS "Compilar los tests (ctest)" ON)
 
+# Sin tipo de compilación, CMake no optimiza (-O0) y el parser es entre 5 y 7 veces más lento.
+# RelWithDebInfo: -O2 y con símbolos, para poder diagnosticar fallos en la Pi.
+if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
+    set(CMAKE_BUILD_TYPE RelWithDebInfo CACHE STRING "Tipo de compilación" FORCE)
+endif()
+
 # Dependencias
 find_package(Threads REQUIRED)   # cpp-httplib y los hilos de Telegram y sincronización
 find_package(SQLite3 REQUIRED)   # Módulo FindSQLite3 (CMake >= 3.14)

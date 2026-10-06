@@ -88,9 +88,10 @@ Desplegar una versión nueva del programa no necesita `sudo`: `cmake --build bui
 | `POST /api/channels` | `{"chat_id": -100...}`: vigilar un canal o grupo; empieza a sincronizarse al momento |
 | `DELETE /api/channels/{id}` | Dejar de vigilarlo (borra sus mensajes guardados, no los de Telegram) |
 | `POST /api/channels/{id}/sync` | Buscar mensajes nuevos ya, sin esperar a la ronda periódica (cada 15 min) |
-| `GET /api/channels/{id}/messages?limit=50&offset=0` | Mensajes guardados, del más reciente al más antiguo |
-| `GET /api/catalog` | Series y películas de todos los canales (resumen: título, año, calidad, idiomas, géneros, temporadas, episodios, tamaño en bytes) |
-| `GET /api/catalog/{chat}/{ficha}` | Ficha completa con sus archivos (temporada, episodio, título, tamaño) |
+| `GET /api/channels/{id}/messages?limit=50&offset=0` | Mensajes guardados, del más reciente al más antiguo (con su `topic_id`) |
+| `GET /api/channels/{id}/topics` | Temas de un grupo con temas, con cuántos mensajes tiene cada uno |
+| `GET /api/catalog` | Obras (series y películas) de todos los canales: título, títulos alternativos, año, versiones disponibles (`qualities`, `hdr`), idiomas, géneros, temas, `airing` (en emisión), temporadas, episodios, tamaño en bytes, `tmdb_id` si los archivos lo traen |
+| `GET /api/catalog/{chat}/{ficha}` | Obra completa: sinopsis, ficha original y sus archivos lógicos (`releases`) con calidad, HDR, etiquetas de versión, temporada y episodio, y sus partes. Vale cualquier ficha de la obra |
 | `GET /api/catalog/{chat}/{ficha}/poster` | Portada (JPEG), descargada de Telegram la primera vez |
 
 Ejemplo de `/api/status`:
@@ -103,6 +104,9 @@ Los pasos del inicio de sesión responden `{"ok": true}`, o `{"error": "..."}` c
 
 ## Historial de cambios
 ### Fase 2 (en curso): canales, sincronización y catálogo
+- Grupos con temas (foros): cada mensaje guarda su tema y las fichas se agrupan dentro de cada tema (migración v3, que relee el historial una vez).
+- Obras con versiones: las temporadas, los episodios en emisión y las versiones 1080p/4K de una misma obra se unen por título; las partes de los archivos troceados (`.zip.001`, `.part01.rar`, `_part06.rar`) forman un único archivo. La web muestra las versiones de cada episodio o película y las series en emisión.
+- Compilación optimizada por defecto (`RelWithDebInfo`) y caché del análisis: el catálogo de 33 000 mensajes se calcula en unos 2 s.
 - Catálogo en memoria (`Catalog`): cada foto con pie (la "ficha") abre una serie o película y los vídeos siguientes le pertenecen. El parser (`media_parser`) reconoce `1x01`, `#01x01`, `S01E01`, `T1E3` y `Temporada 1 Capítulo 3`, y extrae de la ficha título, año, calidad, géneros e idioma (banderas incluidas). Tiene 103 comprobaciones con casos reales en `tests/`.
 - Web con pestañas (Catálogo, Canales, Estado): cuadrícula con portadas, búsqueda sin acentos, filtro por tipo y ficha con los episodios por temporada.
 - Esquema de BD versionado con migraciones (`PRAGMA user_version`); WAL para escribir menos en la tarjeta SD.

@@ -74,6 +74,15 @@ form > button { margin-top: 0.8rem; }
 .card-body { padding: 0.6rem 0.7rem 0.75rem; }
 .card-title { font-weight: 600; line-height: 1.3; overflow-wrap: anywhere; }
 .card-meta { color: var(--muted); font-size: 0.85rem; margin-top: 0.2rem; }
+.card .poster { position: relative; }
+.ribbon { position: absolute; top: 0.5rem; left: 0.5rem; padding: 0.1rem 0.5rem; border-radius: 1rem;
+          background: var(--accent); color: #fff; font-size: 0.75rem; font-weight: 600; }
+.badge.airing { background: var(--accent); color: #fff; }
+.synopsis { margin: 0.6rem 0 0.8rem; }
+.versions { display: flex; flex-wrap: wrap; gap: 0.35rem; }
+.version { padding: 0.1rem 0.55rem; border: 1px solid var(--border); border-radius: 0.4rem; font-size: 0.85rem;
+           white-space: nowrap; font-variant-numeric: tabular-nums; }
+.version strong { font-weight: 600; }
 
 /* Ficha */
 .back { text-decoration: none; }

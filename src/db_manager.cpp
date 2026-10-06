@@ -47,6 +47,18 @@ constexpr Migration kMigrations[] = {
             PRIMARY KEY (chat_id, message_id)
         ) WITHOUT ROWID;
     )SQL"},
+    {3, R"SQL(
+        ALTER TABLE messages ADD COLUMN topic_id INTEGER NOT NULL DEFAULT 0;
+        CREATE TABLE topics (
+            chat_id  INTEGER NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
+            topic_id INTEGER NOT NULL,
+            name     TEXT    NOT NULL,
+            PRIMARY KEY (chat_id, topic_id)
+        ) WITHOUT ROWID;
+        -- Los mensajes guardados hasta ahora no tienen tema: se vuelve a leer el historial una vez
+        -- (INSERT OR REPLACE completa las filas existentes sin duplicarlas)
+        UPDATE channels SET newest_message_id = 0, oldest_message_id = 0, history_complete = 0;
+    )SQL"},
 };
 
 // Finaliza automáticamente las sentencias preparadas.
@@ -419,8 +431,8 @@ bool DbManager::saveSyncBatch(std::int64_t chatId, const std::vector<Message>& m
 
     StmtPtr insert = prepare(db_.get(), R"SQL(
         INSERT OR REPLACE INTO messages
-            (chat_id, message_id, date, media_album_id, content_type, text, file_name, file_size, mime_type)
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9);
+            (chat_id, message_id, date, media_album_id, content_type, text, file_name, file_size, mime_type, topic_id)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10);
     )SQL");
     if (!insert) {
         return false;
@@ -436,6 +448,7 @@ bool DbManager::saveSyncBatch(std::int64_t chatId, const std::vector<Message>& m
         bindOptionalText(insert.get(), 7, message.fileName);
         bindOptionalInt64(insert.get(), 8, message.fileSize);
         bindOptionalText(insert.get(), 9, message.mimeType);
+        sqlite3_bind_int64(insert.get(), 10, message.topicId);
         if (sqlite3_step(insert.get()) != SQLITE_DONE) {
             logError(db_.get(), "guardar un mensaje");
             return false;
@@ -466,7 +479,7 @@ std::vector<DbManager::Message> DbManager::queryMessages(std::int64_t chatId, co
     }
 
     const std::string sql = std::string(R"SQL(
-        SELECT message_id, date, media_album_id, content_type, text, file_name, file_size, mime_type
+        SELECT message_id, date, media_album_id, content_type, text, file_name, file_size, mime_type, topic_id
         FROM messages WHERE chat_id = ?1 )SQL") + orderAndLimit + ";";
     StmtPtr stmt = prepare(db_.get(), sql.c_str());
     if (!stmt) {
@@ -491,10 +504,68 @@ std::vector<DbManager::Message> DbManager::queryMessages(std::int64_t chatId, co
         message.fileName = columnOptionalText(stmt.get(), 5);
         message.fileSize = columnOptionalInt64(stmt.get(), 6);
         message.mimeType = columnOptionalText(stmt.get(), 7);
+        message.topicId = sqlite3_column_int64(stmt.get(), 8);
         messages.push_back(std::move(message));
     }
     if (rc != SQLITE_DONE) {
         logError(db_.get(), "listar los mensajes");
     }
     return messages;
+}
+
+bool DbManager::replaceTopics(std::int64_t chatId, const std::vector<Topic>& topics) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!db_) {
+        return false;
+    }
+
+    Transaction tx(db_.get());
+    StmtPtr remove = prepare(db_.get(), "DELETE FROM topics WHERE chat_id = ?1;");
+    StmtPtr insert = prepare(db_.get(), "INSERT INTO topics (chat_id, topic_id, name) VALUES (?1, ?2, ?3);");
+    if (!tx.ok() || !remove || !insert) {
+        return false;
+    }
+    sqlite3_bind_int64(remove.get(), 1, chatId);
+    if (sqlite3_step(remove.get()) != SQLITE_DONE) {
+        logError(db_.get(), "borrar los temas");
+        return false;
+    }
+    for (const Topic& topic : topics) {
+        sqlite3_reset(insert.get());
+        sqlite3_bind_int64(insert.get(), 1, chatId);
+        sqlite3_bind_int64(insert.get(), 2, topic.id);
+        bindText(insert.get(), 3, topic.name);
+        if (sqlite3_step(insert.get()) != SQLITE_DONE) {
+            logError(db_.get(), "guardar un tema");
+            return false;
+        }
+    }
+    return tx.commit();
+}
+
+std::vector<DbManager::Topic> DbManager::listTopics(std::int64_t chatId) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    std::vector<Topic> topics;
+    if (!db_) {
+        return topics;
+    }
+
+    StmtPtr stmt = prepare(db_.get(), R"SQL(
+        SELECT t.topic_id, t.name,
+               (SELECT COUNT(*) FROM messages m WHERE m.chat_id = t.chat_id AND m.topic_id = t.topic_id)
+        FROM topics t WHERE t.chat_id = ?1 ORDER BY t.topic_id;
+    )SQL");
+    if (!stmt) {
+        return topics;
+    }
+    sqlite3_bind_int64(stmt.get(), 1, chatId);
+    int rc;
+    while ((rc = sqlite3_step(stmt.get())) == SQLITE_ROW) {
+        topics.push_back({sqlite3_column_int64(stmt.get(), 0), columnText(stmt.get(), 1),
+                          sqlite3_column_int64(stmt.get(), 2)});
+    }
+    if (rc != SQLITE_DONE) {
+        logError(db_.get(), "listar los temas");
+    }
+    return topics;
 }
