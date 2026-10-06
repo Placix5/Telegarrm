@@ -14,6 +14,7 @@
       <a href="#/catalogo" data-view="catalog">Catálogo</a>
       <a href="#/descargas" data-view="downloads">Descargas <span class="count" id="downloads-count" hidden></span></a>
       <a href="#/canales" data-view="channels">Canales</a>
+      <a href="#/ajustes" data-view="settings">Ajustes</a>
       <a href="#/estado" data-view="status">Estado</a>
     </nav>
   </div>
@@ -69,6 +70,50 @@
           <button type="submit" id="add-submit" disabled>Añadir</button>
         </div>
         <p id="add-error" class="err error-box" role="alert" hidden></p>
+      </form>
+    </section>
+  </div>
+
+  <!-- Ajustes -->
+  <div class="view" id="view-settings" hidden>
+    <section aria-labelledby="ajustes">
+      <h2 id="ajustes">Ajustes</h2>
+      <p class="warn" id="settings-warning" hidden></p>
+      <div class="notice" id="restart-notice" hidden>
+        <p>El búfer de descargas nuevo se aplicará al reiniciar Telegarrm (tarda unos segundos; las descargas en curso continúan después).</p>
+        <button type="button" id="restart-button">Reiniciar ahora</button>
+      </div>
+
+      <form id="settings-form" autocomplete="off">
+        <h3>Almacenamiento</h3>
+        <div class="field">
+          <label for="set-download_dir">Búfer de descargas</label>
+          <input id="set-download_dir" spellcheck="false" placeholder="db/tdlib (predeterminado)">
+          <p class="hint">Donde Telegram descarga los archivos (también los trozos a medio bajar) antes de llevarlos a la biblioteca. Ponlo en el mismo disco que la biblioteca: así pasarlos es instantáneo y no se escriben dos veces.</p>
+          <p class="field-status" id="status-download_dir"></p>
+        </div>
+        <div class="field">
+          <label for="set-movies_dir">Biblioteca de películas</label>
+          <input id="set-movies_dir" spellcheck="false" placeholder="/srv/media/peliculas">
+          <p class="field-status" id="status-movies_dir"></p>
+        </div>
+        <div class="field">
+          <label for="set-series_dir">Biblioteca de series</label>
+          <input id="set-series_dir" spellcheck="false" placeholder="/srv/media/series">
+          <p class="field-status" id="status-series_dir"></p>
+        </div>
+        <p class="hint" id="settings-filesystem" hidden></p>
+
+        <h3>Descargas</h3>
+        <div class="field">
+          <label for="set-min_free_gb">Espacio libre mínimo (GB)</label>
+          <input id="set-min_free_gb" type="number" min="0" step="1" class="short">
+          <p class="hint">Una descarga no empieza si, al terminar, quedaría menos espacio libre que esto en el disco del búfer.</p>
+          <p class="field-status" id="status-min_free_gb"></p>
+        </div>
+
+        <button type="submit" id="settings-save">Guardar</button>
+        <p id="settings-message" class="error-box" role="status" hidden></p>
       </form>
     </section>
   </div>

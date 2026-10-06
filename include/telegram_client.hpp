@@ -30,6 +30,8 @@ public:
         std::string apiHash;
         // Carpeta de la sesión de TDLib. Da acceso completo a la cuenta: se crea con permisos 0700.
         std::string databaseDir;
+        // Búfer de descargas (files_directory). Vacío = dentro de databaseDir.
+        std::string filesDir;
     };
 
     explicit TelegramClient(Config config);

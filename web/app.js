@@ -129,6 +129,7 @@ function currentRoute() {
   const parts = location.hash.replace(/^#\/?/, "").split("/").filter(Boolean);
   if (parts[0] === "canales") return { view: "channels" };
   if (parts[0] === "descargas") return { view: "downloads" };
+  if (parts[0] === "ajustes") return { view: "settings" };
   if (parts[0] === "estado") return { view: "status" };
   if (parts[0] === "catalogo" && parts.length === 3) return { view: "detail", chatId: parts[1], anchorId: parts[2] };
   return { view: "catalog" };
@@ -140,7 +141,7 @@ function showRoute() {
   // Sin sesión de Telegram solo tiene sentido la pantalla de estado (inicio de sesión)
   if (!telegramReady && route.view !== "status") route = { view: "status" };
 
-  for (const view of ["catalog", "detail", "downloads", "channels", "status"]) {
+  for (const view of ["catalog", "detail", "downloads", "channels", "settings", "status"]) {
     $(`view-${view}`).hidden = view !== route.view;
   }
   const navView = route.view === "detail" ? "catalog" : route.view;
@@ -153,6 +154,7 @@ function showRoute() {
   if (route.view === "catalog") loadCatalog();
   if (route.view === "detail") loadDetail(route.chatId, route.anchorId);
   if (route.view === "downloads") renderDownloads();
+  if (route.view === "settings") loadSettings();
   if (route.view === "channels") {
     refreshChannels();
     if (!chatsLoaded) {
@@ -270,7 +272,7 @@ function versionsElement(releases) {
   const box = el("div", "versions");
   for (const release of releases) {
     const chip = el("span", "version");
-    chip.append(el("strong", "", versionLabel(release)), document.createTextNode(` · ${formatSize(release.size)}`),
+    chip.append(el("strong", "", versionLabel(release)), el("span", "", formatSize(release.size)),
       downloadButton(release, true));
     const parts = release.parts.length > 1 ? ` (${release.parts.length} partes)` : "";
     chip.title = `${release.name}${parts}`;
@@ -475,7 +477,7 @@ function activeDownload(release) {
 
 // Botón de descarga de un archivo lógico; su texto sigue el estado de la cola
 function downloadButton(release, compact) {
-  const button = el("button", "small", "");
+  const button = el("button", compact ? "download" : "download wide", "");
   button.dataset.chat = release.chat_id;
   button.dataset.message = release.message_id;
   button.dataset.compact = compact ? "1" : "";
@@ -500,7 +502,11 @@ function applyButtonState(button) {
   if (download && download.status === "failed") text = "Reintentar";
   button.textContent = text;
   button.disabled = disabled;
-  button.className = `small ${disabled ? "secondary" : ""}`;
+  button.className = `download${compact ? "" : " wide"}${disabled ? " secondary" : ""}`;
+  // Mientras descarga, el propio botón muestra el progreso
+  button.style.background = download && download.status === "downloading"
+    ? `linear-gradient(to right, var(--accent-soft) ${percent(download)}%, transparent ${percent(download)}%)`
+    : "";
 }
 
 function updateDownloadButtons() {
@@ -599,6 +605,106 @@ async function refreshDownloads() {
   if (currentRoute().view === "downloads") renderDownloads();
   updateDownloadButtons();
 }
+
+// ---------------------------------------------------------------------------
+// Ajustes
+// ---------------------------------------------------------------------------
+
+const PATH_FIELDS = ["download_dir", "movies_dir", "series_dir"];
+
+function setFieldStatus(field, text, cls) {
+  const node = $(`status-${field}`);
+  node.textContent = text || "";
+  node.className = `field-status ${cls || ""}`;
+}
+
+function renderSettings(data) {
+  for (const field of PATH_FIELDS) $(`set-${field}`).value = data[field] || "";
+  $("set-download_dir").placeholder = `${data.default_download_dir} (predeterminado)`;
+  $("set-min_free_gb").value = Math.round(data.min_free_bytes / 1e9);
+
+  for (const field of PATH_FIELDS) {
+    const check = data.checks[field];
+    if (!check) setFieldStatus(field, "Sin definir: el postproceso no moverá nada aquí hasta que la elijas.", "hint");
+    else if (check.ok) setFieldStatus(field, `✓ Se puede escribir · ${formatSize(check.free_bytes)} libres`, "ok");
+    else setFieldStatus(field, check.error, "err");
+  }
+  setFieldStatus("min_free_gb", "");
+
+  const fs = $("settings-filesystem");
+  fs.hidden = data.same_filesystem === null;
+  fs.className = data.same_filesystem ? "hint ok" : "hint warn";
+  fs.textContent = data.same_filesystem
+    ? "✓ El búfer y las bibliotecas están en el mismo disco: llevar lo descargado a la biblioteca será instantáneo."
+    : "⚠ El búfer y las bibliotecas están en discos distintos: cada archivo se copiará (se escribirá dos veces).";
+
+  $("settings-warning").textContent = data.warning || "";
+  $("settings-warning").hidden = !data.warning;
+  $("restart-notice").hidden = !data.restart_required;
+}
+
+async function loadSettings() {
+  try {
+    renderSettings(await api("/api/settings"));
+  } catch (e) {
+    $("settings-warning").textContent = `No se pudieron cargar los ajustes: ${e.message}`;
+    $("settings-warning").hidden = false;
+  }
+}
+
+$("settings-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const message = $("settings-message");
+  const button = $("settings-save");
+  const body = { min_free_gb: Number($("set-min_free_gb").value) };
+  for (const field of PATH_FIELDS) body[field] = $(`set-${field}`).value.trim();
+
+  button.disabled = true;
+  message.hidden = true;
+  try {
+    const res = await fetch("/api/settings", {
+      method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      for (const [field, error] of Object.entries(data.fields || {})) setFieldStatus(field, error, "err");
+      throw new Error(data.error || `Error HTTP ${res.status}`);
+    }
+    renderSettings(data);
+    message.textContent = "Ajustes guardados.";
+    message.className = "error-box ok";
+  } catch (e) {
+    message.textContent = e.message;
+    message.className = "error-box err";
+  } finally {
+    message.hidden = false;
+    button.disabled = false;
+  }
+});
+
+$("restart-button").addEventListener("click", async () => {
+  const button = $("restart-button");
+  button.disabled = true;
+  button.textContent = "Reiniciando…";
+  try {
+    await api("/api/restart", { method: "POST" });
+  } catch (e) {
+    // Si el servidor se cierra antes de responder, también vale
+  }
+  // Esperar a que el servicio vuelva (systemd lo arranca de nuevo en unos segundos)
+  for (let attempt = 0; attempt < 60; attempt++) {
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+    try {
+      await api("/api/status");
+      break;
+    } catch (e) {
+      // Aún no ha vuelto
+    }
+  }
+  button.disabled = false;
+  button.textContent = "Reiniciar ahora";
+  loadSettings();
+});
 
 // ---------------------------------------------------------------------------
 // Inicio de sesión

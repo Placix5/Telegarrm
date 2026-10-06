@@ -45,6 +45,7 @@ add_library(telegarrm_core STATIC
     src/download_manager.cpp
     src/media_parser.cpp
     src/metadata.cpp
+    src/settings.cpp
     src/tmdb_client.cpp
     src/signal_watcher.cpp
     src/telegram_client.cpp

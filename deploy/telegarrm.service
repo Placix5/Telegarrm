@@ -26,15 +26,20 @@ ExecStart=/home/plax/Telegarrm/build/telegarrm
 KillSignal=SIGTERM
 TimeoutStopSec=30
 Restart=on-failure
-RestartSec=10
+RestartSec=3
+# Código 75: reinicio pedido desde la web (Ajustes) para aplicar el búfer de descargas (D-032)
+SuccessExitStatus=75
+RestartForceExitStatus=75
 # Ficheros nuevos sin permisos para "otros"; la sesión de TDLib se crea aparte con 0700
 UMask=0027
 
 # --- Aislamiento ---
-# Solo puede escribir en db/. Cuando haya descargas (Fase 3), añadir aquí la biblioteca.
+# Solo puede escribir en db/ y en /srv/media (búfer y bibliotecas, D-033; el "-" la ignora si no
+# existe). Otras rutas: "sudo ./deploy/install-service.sh /ruta" (las añade en telegarrm.service.d/).
 ProtectSystem=strict
 ProtectHome=read-only
 ReadWritePaths=/home/plax/Telegarrm/db
+ReadWritePaths=-/srv/media
 PrivateTmp=yes
 PrivateDevices=yes
 NoNewPrivileges=yes

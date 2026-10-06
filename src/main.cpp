@@ -1,4 +1,5 @@
 #include <cerrno>
+#include <atomic>
 #include <cstdint>
 #include <climits>
 #include <cstdlib>
@@ -13,6 +14,7 @@
 #include "download_manager.hpp"
 #include "httplib.h"
 #include "metadata.hpp"
+#include "settings.hpp"
 #include "signal_watcher.hpp"
 #include "telegram_client.hpp"
 #include "tmdb_client.hpp"
@@ -23,6 +25,8 @@ constexpr const char* kDbPath = "db/telegarrm.db";
 constexpr const char* kTdlibDir = "db/tdlib";
 constexpr const char* kTmdbImageDir = "db/tmdb/images";
 constexpr int kPort = 8080;
+// Código de salida para pedir a systemd que reinicie el servicio (RestartForceExitStatus=75)
+constexpr int kRestartExitCode = 75;
 
 // Credenciales de la API de Telegram (https://my.telegram.org), leídas del entorno
 std::optional<TelegramClient::Config> telegramConfigFromEnv() {
@@ -71,6 +75,23 @@ int main() {
     // Registrar la versión en ejecución; /api/status la lee después desde SQLite
     db.setSetting("version", TELEGARRM_VERSION);
 
+    // Búfer de descargas de los ajustes. Si no se puede usar (ej. el disco no está montado o el
+    // servicio no tiene permiso), se arranca con el predeterminado y la web lo avisa.
+    const AppSettings settings = loadSettings(db);
+    std::string downloadDir = kTdlibDir;
+    std::string downloadDirWarning;
+    if (!settings.downloadDir.empty()) {
+        const PathCheck check = checkPath(settings.downloadDir);
+        if (check.ok) {
+            downloadDir = settings.downloadDir;
+            telegramConfig->filesDir = settings.downloadDir;
+        } else {
+            downloadDirWarning = "No se pudo usar " + settings.downloadDir + " (" + check.error + "); se usa " + kTdlibDir;
+            std::cerr << "Advertencia: " << downloadDirWarning << std::endl;
+        }
+    }
+    std::cout << "Búfer de descargas: " << downloadDir << std::endl;
+
     // Catálogo en memoria, derivado de los mensajes guardados. Lo calcula el hilo de
     // sincronización al arrancar, para no retrasar la web (con miles de mensajes tarda segundos).
     Catalog catalog(db);
@@ -86,12 +107,17 @@ int main() {
         catalog.rebuildChannel(chatId);
         metadata.requestRun();
     });
-    // Cola de descargas; TDLib guarda los archivos dentro de su carpeta
-    DownloadManager downloads(db, telegram, kTdlibDir);
+    // Cola de descargas; TDLib guarda los archivos en el búfer
+    DownloadManager downloads(db, telegram, downloadDir);
 
     // Inicializar el servidor HTTP
     httplib::Server svr;
-    registerApiRoutes(svr, {db, telegram, sync, catalog, metadata, tmdb, downloads});
+    std::atomic<bool> restartRequested{false};
+    registerApiRoutes(svr, {db, telegram, sync, catalog, metadata, tmdb, downloads, downloadDir, downloadDirWarning,
+                            [&svr, &restartRequested] {
+                                restartRequested = true;
+                                svr.stop();  // Termina listen_after_bind() tras responder a la petición
+                            }});
 
     // Configurar la carpeta web estática
     if (!svr.set_mount_point("/", "./web")) {
@@ -138,6 +164,10 @@ int main() {
     metadata.stop();
     sync.stop();
     telegram.stop();
+    if (restartRequested) {
+        std::cout << "Telegarrm detenido para reiniciarse." << std::endl;
+        return kRestartExitCode;
+    }
     std::cout << "Telegarrm detenido." << std::endl;
     return 0;
 }

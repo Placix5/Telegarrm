@@ -1,5 +1,8 @@
 #pragma once
 
+#include <functional>
+#include <string>
+
 namespace httplib {
 class Server;
 }
@@ -20,6 +23,12 @@ struct ApiServices {
     MetadataService& metadata;
     TmdbClient& tmdb;
     DownloadManager& downloads;
+    // Búfer de descargas con el que arrancó TDLib (para saber si un cambio exige reiniciar)
+    std::string activeDownloadDir;
+    // Aviso si la carpeta configurada no se pudo usar al arrancar (vacío = sin aviso)
+    std::string downloadDirWarning;
+    // Parada ordenada seguida de reinicio (código de salida 75, ver deploy/telegarrm.service)
+    std::function<void()> requestRestart;
 };
 
 // Registra los endpoints REST (/api/...)

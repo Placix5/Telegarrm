@@ -8,6 +8,7 @@
 #include <utility>
 #include <vector>
 
+#include "settings.hpp"
 #include "telegram_client.hpp"
 
 namespace {
@@ -22,8 +23,6 @@ constexpr auto kNotReadyWait = std::chrono::seconds(5);  // Sin sesión de Teleg
 constexpr auto kRequestTimeout = std::chrono::seconds(20);
 constexpr auto kStallTimeout = std::chrono::minutes(15);
 constexpr auto kSpeedWindow = std::chrono::seconds(5);
-// Espacio que debe quedar libre después de la descarga (la tarjeta SD no debe llenarse)
-constexpr std::int64_t kSafetyMargin = 2'000'000'000;
 constexpr int kPriority = 16;      // TDLib: 1 (baja) a 32 (alta)
 constexpr int kMaxRestarts = 5;    // Reintentos de una parte que se detiene sin terminar
 constexpr int kInactivePolls = 3;  // Sondeos seguidos sin actividad antes de reintentar
@@ -195,13 +194,15 @@ void DownloadManager::run() {
 }
 
 DownloadManager::Outcome DownloadManager::process(DbManager::Download& download, std::string& error) {
-    // 1) Espacio libre: lo que falta por bajar más el margen de seguridad
+    // 1) Espacio libre: lo que falta por bajar más el margen de los ajustes (se lee en cada descarga,
+    //    así que cambiarlo no exige reiniciar)
     std::error_code ec;
+    const std::int64_t margin = loadSettings(db_).minFreeBytes;
     const auto space = std::filesystem::space(filesDir_, ec);
     const std::int64_t remaining = std::max<std::int64_t>(0, download.totalSize - download.downloadedSize);
-    if (!ec && static_cast<std::int64_t>(space.available) < remaining + kSafetyMargin) {
-        error = "Espacio insuficiente en el disco: hacen falta " + formatSize(remaining + kSafetyMargin) +
-                " (con 2 GB de margen) y quedan " + formatSize(static_cast<std::int64_t>(space.available));
+    if (!ec && static_cast<std::int64_t>(space.available) < remaining + margin) {
+        error = "Espacio insuficiente en " + filesDir_ + ": hacen falta " + formatSize(remaining + margin) + " (con " +
+                formatSize(margin) + " de margen) y quedan " + formatSize(static_cast<std::int64_t>(space.available));
         return Outcome::Failed;
     }
 

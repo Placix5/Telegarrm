@@ -37,6 +37,8 @@ Formato: **Contexto** (qué problema había), **Decisión**, **Alternativas desc
 | [D-029](#d-029-metadatos-de-themoviedb-tmdb) | Metadatos de TheMovieDB (TMDB) | Vigente |
 | [D-030](#d-030-cómo-se-integra-tmdb) | Cómo se integra TMDB | Vigente |
 | [D-031](#d-031-cola-de-descargas) | Cola de descargas | Vigente |
+| [D-032](#d-032-ajustes-desde-la-web-y-reinicio-con-el-código-75) | Ajustes desde la web y reinicio con el código 75 | Vigente |
+| [D-033](#d-033-estructura-de-carpetas-srvmedia-y-jellyfin) | Estructura de carpetas `/srv/media` y Jellyfin | Propuesta |
 
 ---
 
@@ -359,3 +361,42 @@ Formato: **Contexto** (qué problema había), **Decisión**, **Alternativas desc
     - Pestaña *Descargas* con progreso, velocidad, tiempo restante y acciones (cancelar, reintentar, quitar).
 - **Alternativas descartadas**: descargar varios archivos a la vez, porque TDLib ya reparte cada archivo en varias conexiones (llegó a unos 19 MB/s) y una cola secuencial es más predecible en una Raspberry Pi.
 - **Consecuencias**: probado con archivos reales de 20 MB (unos 2 s) y 251 MB (cancelado y reintentado), más tests de la cola sobre una BD temporal. Siguiente paso de la Fase 3: mover y descomprimir lo descargado en la biblioteca (D-018: sin shell) y liberar la caché de TDLib. Para eso hay que definir la ruta de la biblioteca y añadirla a `ReadWritePaths` del servicio (D-013).
+
+## D-032: Ajustes desde la web y reinicio con el código 75
+*07/10/2026 · A petición de Plácido*
+
+- **Contexto**: el búfer de descargas debe poder estar en otro disco (en el servidor, el RAID), no en la tarjeta SD ni en el SSD del sistema. En TDLib es `files_directory`, que solo se fija al arrancar el cliente.
+- **Decisión**:
+  - **Pestaña *Ajustes***, con los valores en la tabla `settings`: búfer de descargas, bibliotecas de películas y de series, y espacio libre mínimo.
+  - **Validación al guardar**: cada ruta debe ser absoluta, existir, ser una carpeta y admitir escritura. La escritura se comprueba creando y borrando un fichero de prueba, porque con el aislamiento de systemd los permisos no bastan. Si la bloquea el aislamiento (`EROFS`), el mensaje indica el comando que la permite.
+  - **Avisos útiles**: la web muestra el espacio libre de cada ruta y avisa si el búfer y las bibliotecas están en discos distintos, porque entonces cada archivo se escribiría dos veces.
+  - **Aplicar el búfer**: hace falta reiniciar. "Reiniciar ahora" (`POST /api/restart`) hace la parada ordenada y sale con el código 75. La unidad lo marca como salida correcta y fuerza el reinicio (`SuccessExitStatus=75`, `RestartForceExitStatus=75`, `RestartSec=3`).
+  - **Si el búfer configurado no se puede usar** al arrancar (disco sin montar, sin permiso), se arranca con el predeterminado (`db/tdlib`) y la web lo avisa, en lugar de fallar.
+  - El margen de espacio libre se lee en cada descarga, así que cambiarlo no exige reiniciar.
+- **Alternativas descartadas**: recrear el cliente de TDLib en caliente. Es más complejo (descargas en curso, sincronización) y un reinicio ordenado de unos segundos lo resuelve todo.
+- **Permisos de escritura**: la unidad permite escribir en `db/` y en `/srv/media` (opcional, D-033). Otras rutas se añaden con `sudo ./deploy/install-service.sh /ruta…`, que las guarda en `/etc/systemd/system/telegarrm.service.d/rutas.conf` (solo rutas absolutas con caracteres seguros).
+- **Verificación**: las validaciones dan los mensajes esperados (ruta relativa, inexistente, de solo lectura por el aislamiento, margen negativo). Un búfer de prueba se aplicó con "Reiniciar ahora" y una descarga real cayó en él; después se restauró el predeterminado.
+
+## D-033: Estructura de carpetas `/srv/media` y Jellyfin
+*07/10/2026 · **Propuesta** a Plácido*
+
+- **Contexto**:
+  - El destino final es un servidor con un SSD para el sistema y un RAID para los datos.
+  - Plácido quiere que todas las escrituras grandes ocurran en el RAID.
+  - Jellyfin irá en Docker; sus imágenes y datos están en `/opt/docker`.
+- **Propuesta**: montar el RAID en `/srv/media`. Según el estándar de jerarquía de ficheros (FHS), `/srv` es para los datos que sirve el sistema. `/opt/docker` se queda para la configuración de los contenedores, en el SSD.
+  ```
+  /srv/media/               <- RAID
+  ├── descargas/            <- búfer de TDLib (Ajustes → Búfer de descargas)
+  ├── peliculas/            <- biblioteca de películas (Jellyfin)
+  └── series/               <- biblioteca de series (Jellyfin)
+  ```
+  - **Mismo sistema de archivos para todo**: pasar lo descargado a la biblioteca es un renombrado instantáneo, sin escribir los datos otra vez. Solo los comprimidos se escriben una segunda vez, al extraerlos.
+  - **Lo pequeño se queda en el SSD**: la base de datos de Telegarrm, la sesión de TDLib y la caché de TMDB (`db/`).
+  - **Jellyfin** monta solo las bibliotecas, en solo lectura (`/srv/media/peliculas:/media/peliculas:ro`), y no ve el búfer. Se ejecuta con el usuario de Telegarrm (`user: "1000:1000"`) o con un grupo compartido. Telegarrm crea los ficheros con `UMask=0027`, así que el grupo puede leerlos.
+- **Para el postproceso** (siguiente paso de la Fase 3), nombres que Jellyfin reconoce sin ambigüedad, con el identificador de TMDB que ya tenemos (D-030):
+  - `peliculas/Título (Año) [tmdbid-N]/Título (Año).mkv`
+  - `series/Serie (Año) [tmdbid-N]/Season 01/Serie S01E01.mkv`
+  
+  Se usa `Season`, no `Temporada`, porque es lo que Jellyfin detecta con seguridad.
+- **En la Pi** (solo tiene la tarjeta SD), la misma estructura en la SD sirve para probar el flujo completo. En el servidor, al montar el RAID en `/srv/media`, no hay que cambiar ningún ajuste.

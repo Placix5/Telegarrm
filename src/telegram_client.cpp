@@ -230,7 +230,7 @@ void TelegramClient::onAuthorizationState(const Json& state) {
         send({{"@type", "setTdlibParameters"},
               {"use_test_dc", false},
               {"database_directory", config_.databaseDir},
-              {"files_directory", ""},  // Por defecto, dentro de database_directory
+              {"files_directory", config_.filesDir},  // Vacío = dentro de database_directory
               {"database_encryption_key", ""},
               {"use_file_database", true},
               {"use_chat_info_database", true},

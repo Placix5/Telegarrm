@@ -40,11 +40,12 @@ Todo se gestiona desde el navegador, sin SSH ni terminal.
 Formato real visto: canales de una serie con una ficha (foto + pie con título, año, calidad, géneros e idioma), portadas de temporada sin pie, episodios `1x01 - Serie.mkv` o `Serie #01x01 - Título.mp4` y textos de cierre.
 
 ## Fase 3: Descargas (en curso)
-- [ ] **Rutas** de la biblioteca (series, películas, buffer temporal) configurables desde la web (`settings`).
+- [x] **Rutas** de la biblioteca y del búfer configurables desde la web (`settings`).
 - [x] **Elegir versión**: la web ofrece las versiones de cada película o episodio (4K HDR, 1080p, REMUX…) y, en las series, la temporada completa en una versión.
 - [x] **Cola persistente** (tablas `downloads` y `download_parts`) con un trabajador: progreso, reintentos, reanudación tras reiniciar, cancelación y comprobación de espacio libre (D-031). Los archivos quedan en la caché de TDLib.
-- [ ] **Biblioteca**: definir con Plácido el disco y las carpetas de series y películas, y añadirlos a `ReadWritePaths` del servicio.
-- [ ] **Postproceso** migrado del núcleo antiguo: descompresión (7z, zip troceado `.zip.001`, multiparte `.partN.rar`), limpieza de nombres y colocación en `Serie/Temporada 01/Serie - S01E01.mkv`.
+- [x] **Ajustes** en la web: búfer de descargas de TDLib, bibliotecas y espacio libre mínimo (D-032).
+- [ ] **Biblioteca**: estructura propuesta `/srv/media/{descargas,peliculas,series}` en el RAID (D-033), pendiente de que Plácido la confirme y la cree.
+- [ ] **Postproceso** con nombres para Jellyfin (`Título (Año) [tmdbid-N]`, `Season 01`), migrado del núcleo antiguo: descompresión (7z, zip troceado `.zip.001`, multiparte `.partN.rar`), limpieza de nombres y colocación en `Serie/Temporada 01/Serie - S01E01.mkv`.
 - [x] **API**: `POST /api/downloads`, `GET /api/downloads` (progreso), cancelar, reintentar y quitar.
 - [x] **Web**: botón "Almacenar en disco" y pestaña *Descargas* con el progreso.
 

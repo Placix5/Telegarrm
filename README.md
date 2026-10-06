@@ -53,7 +53,9 @@ Las credenciales de la API de Telegram se obtienen en <https://my.telegram.org> 
 | `TELEGARRM_API_HASH` | `api_hash` de la aplicación |
 | `TELEGARRM_TMDB_TOKEN` | Opcional. "API Read Access Token" de [TMDB](https://www.themoviedb.org/settings/api) para títulos de episodio, sinopsis y carátulas. Sin él, el catálogo usa solo las fichas de Telegram (y lo ya consultado). |
 
-Sin ellas, el servicio no arranca. La sesión de Telegram se guarda en `db/tdlib/` (permisos `0700`): da acceso completo a la cuenta, así que no la copies ni la subas a ningún sitio.
+Sin ellas, el servicio no arranca.
+
+El resto se configura desde la pestaña **Ajustes** de la web: búfer de descargas (dónde descarga TDLib; se aplica con "Reiniciar ahora"), bibliotecas de películas y series, y espacio libre mínimo. Estructura recomendada en [D-033](docs/DECISIONS.md#d-033-estructura-de-carpetas-srvmedia-y-jellyfin): todo en el mismo disco (`/srv/media/descargas`, `/srv/media/peliculas`, `/srv/media/series`) para que llevar lo descargado a la biblioteca sea instantáneo. La sesión de Telegram se guarda en `db/tdlib/` (permisos `0700`): da acceso completo a la cuenta, así que no la copies ni la subas a ningún sitio.
 
 ## Compilación y ejecución
 ```bash
@@ -68,6 +70,8 @@ La primera vez, abre `http://<ip-de-la-pi>:8080/` e inicia sesión en Telegram (
 
 ### Como servicio (systemd)
 `deploy/telegarrm.service` es un servicio de sistema que corre como `plax`, aislado (solo puede escribir en `db/`), y lee las credenciales de `~/.config/telegarrm/env` (permisos `600`, con las dos variables de [Configuración](#configuración)). La regla de polkit `deploy/50-telegarrm.rules` permite a `plax` arrancarlo, pararlo y reiniciarlo sin `sudo`. Motivos en [docs/DECISIONS.md](docs/DECISIONS.md) (D-013).
+
+El servicio solo puede escribir en `db/` y en `/srv/media`; para otra carpeta (ej. un RAID montado en otro sitio), pásala al script: `sudo ./deploy/install-service.sh /mnt/raid`.
 
 Instalación con `sudo`, una vez y cada vez que cambie algo en `deploy/`. El script **copia** la unidad y la regla a `/etc` como ficheros de root; no las enlaza, porque las leen systemd y polkit con privilegios.
 ```bash
@@ -99,6 +103,9 @@ Desplegar una versión nueva del programa no necesita `sudo`: `cmake --build bui
 | `POST /api/downloads/{id}/cancel` | Cancelar (borra lo descargado a medias) |
 | `POST /api/downloads/{id}/retry` | Reintentar una descarga fallida o cancelada |
 | `DELETE /api/downloads/{id}` | Quitar de la lista una descarga terminada, fallida o cancelada |
+| `GET /api/settings` | Ajustes, con la comprobación de cada ruta (escritura, espacio libre), si búfer y bibliotecas comparten disco y si hace falta reiniciar |
+| `PUT /api/settings` | `{"download_dir", "movies_dir", "series_dir", "min_free_gb"}`: valida antes de guardar (400 con el motivo por campo) |
+| `POST /api/restart` | Parada ordenada y reinicio (código 75; systemd lo vuelve a arrancar) |
 
 Ejemplo de `/api/status`:
 ```json
@@ -110,6 +117,8 @@ Los pasos del inicio de sesión responden `{"ok": true}`, o `{"error": "..."}` c
 
 ## Historial de cambios
 ### Fase 3 (en curso): descargas
+- Pestaña *Ajustes*: búfer de descargas de TDLib (aplicado con un reinicio ordenado desde la web), bibliotecas y espacio libre mínimo, con validación real de cada ruta (D-032). La unidad admite `/srv/media` y rutas adicionales vía `install-service.sh`.
+- Arreglos de la web: flecha propia en los desplegables y botones de descarga de ancho fijo que muestran el progreso.
 - Cola de descargas persistente: botón "Almacenar en disco" por versión o por temporada, pestaña *Descargas* con progreso, velocidad y tiempo restante, cancelación (borra lo parcial), reintento, reanudación tras reiniciar y comprobación de espacio libre. Los archivos quedan, de momento, en la caché de TDLib (D-031).
 
 ### Fase 2: canales, sincronización y catálogo

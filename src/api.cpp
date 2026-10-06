@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdint>
+#include <filesystem>
 #include <fstream>
 #include <iterator>
 #include <optional>
@@ -17,6 +18,7 @@
 #include "download_manager.hpp"
 #include "httplib.h"
 #include "metadata.hpp"
+#include "settings.hpp"
 #include "telegram_client.hpp"
 #include "tmdb_client.hpp"
 
@@ -30,6 +32,8 @@ constexpr auto kTelegramTimeout = std::chrono::seconds(30);
 constexpr int kMaxMessagesPerPage = 500;
 // Las portadas se sirven con la menor resolución que tenga al menos este ancho (px)
 constexpr int kPosterMinWidth = 600;
+// Búfer de descargas si no se configura otro: TDLib guarda los archivos junto a su base de datos
+constexpr const char* kDefaultDownloadDir = "db/tdlib";
 // Las portadas no cambian: el navegador puede guardarlas una semana
 constexpr const char* kPosterCacheControl = "max-age=604800";
 
@@ -711,10 +715,122 @@ void registerChannelRoutes(httplib::Server& server, DbManager& db, TelegramClien
 
 }  // namespace
 
+// Ruta sin barras finales ni "." o ".." intermedios ("/srv/media/" -> "/srv/media")
+std::string normalizePath(const std::string& path) {
+    if (path.empty()) {
+        return path;
+    }
+    std::string normal = std::filesystem::path(path).lexically_normal().string();
+    while (normal.size() > 1 && normal.back() == '/') {
+        normal.pop_back();
+    }
+    return normal;
+}
+
+Json pathCheckJson(const PathCheck& check) {
+    return {{"ok", check.ok}, {"error", nullable(check.error)}, {"free_bytes", check.freeBytes}};
+}
+
+Json settingsJson(DbManager& db, const ApiServices& services) {
+    const AppSettings settings = loadSettings(db);
+    const std::string configuredDownloadDir = settings.downloadDir.empty() ? kDefaultDownloadDir : settings.downloadDir;
+    const PathCheck download = checkPath(std::filesystem::absolute(configuredDownloadDir).string());
+
+    Json checks = {{"download_dir", pathCheckJson(download)}};
+    Json sameFilesystem = nullptr;  // ¿Mover del búfer a la biblioteca será un simple renombrado?
+    for (const auto& [field, path] : {std::pair<const char*, std::string>{"movies_dir", settings.moviesDir},
+                                      std::pair<const char*, std::string>{"series_dir", settings.seriesDir}}) {
+        if (path.empty()) {
+            checks[field] = nullptr;
+            continue;
+        }
+        const PathCheck library = checkPath(path);
+        checks[field] = pathCheckJson(library);
+        if (download.device && library.device) {
+            const bool same = *download.device == *library.device;
+            sameFilesystem = sameFilesystem.is_null() ? Json(same) : Json(sameFilesystem.get<bool>() && same);
+        }
+    }
+
+    return {{"download_dir", settings.downloadDir},
+            {"movies_dir", settings.moviesDir},
+            {"series_dir", settings.seriesDir},
+            {"min_free_bytes", settings.minFreeBytes},
+            {"default_download_dir", kDefaultDownloadDir},
+            {"active_download_dir", services.activeDownloadDir},
+            {"restart_required", configuredDownloadDir != services.activeDownloadDir && download.ok},
+            {"warning", nullable(services.downloadDirWarning)},
+            {"checks", checks},
+            {"same_filesystem", sameFilesystem}};
+}
+
+void registerSettingsRoutes(httplib::Server& server, DbManager& db, const ApiServices& services) {
+    // services se copia en las lambdas: sus referencias apuntan a objetos que viven en main()
+    server.Get("/api/settings", [&db, services](const httplib::Request&, httplib::Response& res) {
+        sendJson(res, 200, settingsJson(db, services));
+    });
+
+    // {"download_dir": "/srv/media/.telegarrm/descargas", "movies_dir": "...", "series_dir": "...",
+    //  "min_free_gb": 2}. Una ruta vacía vuelve al valor predeterminado (o deja la biblioteca sin definir).
+    server.Put("/api/settings", [&db, services](const httplib::Request& req, httplib::Response& res) {
+        const Json body = Json::parse(req.body, nullptr, false);
+        if (!body.is_object()) {
+            sendError(res, 400, "El cuerpo debe ser un objeto JSON");
+            return;
+        }
+        AppSettings settings = loadSettings(db);
+        Json fieldErrors = Json::object();
+        for (const auto& [field, target] : {std::pair<const char*, std::string*>{"download_dir", &settings.downloadDir},
+                                            std::pair<const char*, std::string*>{"movies_dir", &settings.moviesDir},
+                                            std::pair<const char*, std::string*>{"series_dir", &settings.seriesDir}}) {
+            if (!body.contains(field)) {
+                continue;
+            }
+            if (!body[field].is_string()) {
+                fieldErrors[field] = "Debe ser texto";
+                continue;
+            }
+            const std::string path = normalizePath(body[field].get<std::string>());
+            if (!path.empty()) {
+                const PathCheck check = checkPath(path);
+                if (!check.ok) {
+                    fieldErrors[field] = check.error;
+                    continue;
+                }
+            }
+            *target = path;
+        }
+        if (body.contains("min_free_gb")) {
+            const Json& value = body["min_free_gb"];
+            if (!value.is_number() || value.get<double>() < 0 || value.get<double>() > 100'000) {
+                fieldErrors["min_free_gb"] = "Debe ser un número de GB entre 0 y 100 000";
+            } else {
+                settings.minFreeBytes = static_cast<std::int64_t>(value.get<double>() * 1e9);
+            }
+        }
+        if (!fieldErrors.empty()) {
+            sendJson(res, 400, {{"error", "Hay ajustes que no se pueden usar"}, {"fields", fieldErrors}});
+            return;
+        }
+        if (!saveSettings(db, settings)) {
+            sendError(res, 500, "No se pudieron guardar los ajustes");
+            return;
+        }
+        sendJson(res, 200, settingsJson(db, services));
+    });
+
+    // Reinicio ordenado (para aplicar el búfer de descargas). systemd vuelve a arrancar el servicio.
+    server.Post("/api/restart", [services](const httplib::Request&, httplib::Response& res) {
+        sendJson(res, 202, {{"ok", true}});
+        services.requestRestart();
+    });
+}
+
 void registerApiRoutes(httplib::Server& server, const ApiServices& services) {
     registerStatusRoutes(server, services.db, services.telegram, services.metadata);
     registerAuthRoutes(server, services.telegram);
     registerChannelRoutes(server, services.db, services.telegram, services.sync, services.catalog);
     registerCatalogRoutes(server, services.telegram, services.catalog, services.metadata, services.tmdb);
     registerDownloadRoutes(server, services.db, services.catalog, services.downloads);
+    registerSettingsRoutes(server, services.db, services);
 }
