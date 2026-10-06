@@ -17,6 +17,7 @@ find_package(SQLite3 REQUIRED)   # Módulo FindSQLite3 (CMake >= 3.14)
 add_executable(telegarrm
     src/main.cpp
     src/db_manager.cpp
+    src/signal_watcher.cpp
     src/telegram_client.cpp
 )
 

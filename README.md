@@ -32,7 +32,7 @@ cmake -S . -B build
 cmake --build build
 ./build/telegarrm
 ```
-Ejecútalo desde la raíz del proyecto: las rutas `db/` y `web/` son relativas al directorio actual.
+Ejecútalo desde la raíz del proyecto: las rutas `db/` y `web/` son relativas al directorio actual. Ctrl+C (SIGINT) o SIGTERM lo detienen de forma ordenada.
 
 El servidor arrancará en `http://localhost:8080/api/status`, que devuelve el estado y la versión leída de la tabla `settings` de SQLite:
 ```json
@@ -51,4 +51,5 @@ Si la lectura de la base de datos falla, `database.status` vale `"error"` y la r
 - `DbManager` crea `db/telegarrm.db` con las tablas `settings (key, value)` y `channels (id, name)`. Es seguro entre hilos (mutex interno) y gestiona los recursos de SQLite con `std::unique_ptr`.
 - `/api/status` lee la clave `version` de `settings`, que se guarda en cada arranque.
 - `TelegramClient::start()` lanza un hilo que imprime "Hilo TDLib simulado corriendo..." cada 5 s mientras el servidor HTTP atiende en el hilo principal. `stop()` (y el destructor) lo detiene sin esperar al siguiente ciclo.
+- `SignalWatcher` atiende SIGINT/SIGTERM con `sigwait` en un hilo dedicado: detiene el servidor HTTP y el hilo de Telegram y cierra la BD antes de salir con código 0 (en Windows no hace nada).
 - El servidor ya no usa `SO_REUSEPORT` (activado por defecto en cpp-httplib): una segunda instancia en el mismo puerto ahora falla en lugar de repartirse las peticiones con la primera.

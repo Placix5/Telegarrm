@@ -4,6 +4,7 @@
 
 #include "db_manager.hpp"
 #include "httplib.h"
+#include "signal_watcher.hpp"
 #include "telegram_client.hpp"
 
 namespace {
@@ -38,6 +39,9 @@ std::string jsonEscape(const std::string& in) {
 }  // namespace
 
 int main() {
+    // Debe ir antes de crear cualquier hilo (ver signal_watcher.hpp)
+    SignalWatcher signals;
+
     std::cout << "Iniciando Telegarrm " TELEGARRM_VERSION " (Fase 1)..." << std::endl;
 
     // Base de datos: crea db/telegarrm.db y sus tablas si no existen
@@ -88,9 +92,15 @@ int main() {
     }
     std::cout << "Servidor web escuchando en http://localhost:" << kPort << std::endl;
 
-    // listen_after_bind() bloquea el hilo principal, actuando como bucle del daemon.
-    // Al salir de main, los destructores detienen el hilo de Telegram y cierran la BD.
+    // SIGINT/SIGTERM detienen el servidor, lo que hace volver a listen_after_bind()
+    signals.start([&svr] { svr.stop(); });
+
+    // listen_after_bind() bloquea el hilo principal, actuando como bucle del daemon
     svr.listen_after_bind();
 
+    // El vigilante usa svr: hay que pararlo antes de que se destruya. La BD se cierra en su destructor.
+    signals.stop();
+    telegram.stop();
+    std::cout << "Telegarrm detenido." << std::endl;
     return 0;
 }
