@@ -5,6 +5,7 @@
 #include <optional>
 #include <regex>
 #include <string>
+#include <utility>
 
 #include "telegram_client.hpp"
 
@@ -121,7 +122,8 @@ std::optional<int> floodWaitSeconds(const Json& error) {
 
 }  // namespace
 
-ChannelSync::ChannelSync(DbManager& db, TelegramClient& telegram) : db_(db), telegram_(telegram) {}
+ChannelSync::ChannelSync(DbManager& db, TelegramClient& telegram, ChangeListener onChannelChanged)
+    : db_(db), telegram_(telegram), onChannelChanged_(std::move(onChannelChanged)) {}
 
 ChannelSync::~ChannelSync() {
     stop();
@@ -269,8 +271,8 @@ ChannelSync::Result ChannelSync::syncChannel(const DbManager::Channel& channel) 
         return Result::Failed;
     }
     const std::string title = chat->value("title", "");
-    if (!title.empty() && title != channel.title) {
-        db_.updateChannelTitle(chatId, title);
+    if (!title.empty() && title != channel.title && db_.updateChannelTitle(chatId, title)) {
+        onChannelChanged_(chatId);  // El título del canal se usa en el catálogo
     }
 
     DbManager::SyncCursor cursor{channel.newestMessageId, channel.oldestMessageId, channel.historyComplete};
@@ -309,6 +311,7 @@ ChannelSync::Result ChannelSync::syncChannel(const DbManager::Channel& channel) 
         }
         if (!fresh.empty()) {
             std::cout << "[Sync] " << title << ": " << fresh.size() << " mensajes nuevos" << std::endl;
+            onChannelChanged_(chatId);
         }
     }
 
@@ -338,9 +341,12 @@ ChannelSync::Result ChannelSync::syncChannel(const DbManager::Channel& channel) 
         if (cursor.historyComplete) {
             std::cout << "[Sync] " << title << ": historial completo (" << read << " mensajes leídos en esta pasada)"
                       << std::endl;
+            onChannelChanged_(chatId);
         } else {
+            // En historiales largos el catálogo se actualiza por tramos, sin esperar al final
             if (read / kProgressEvery != before / kProgressEvery) {
                 std::cout << "[Sync] " << title << ": " << read << " mensajes leídos..." << std::endl;
+                onChannelChanged_(chatId);
             }
             if (!sleepFor(kBatchDelay)) {
                 return Result::Stopped;

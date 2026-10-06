@@ -4,6 +4,7 @@
 #include <chrono>
 #include <condition_variable>
 #include <cstdint>
+#include <functional>
 #include <mutex>
 #include <thread>
 #include <vector>
@@ -19,7 +20,10 @@ class TelegramClient;
 // - Después solo trae los mensajes nuevos. Se repite periódicamente o al pedirlo.
 class ChannelSync {
 public:
-    ChannelSync(DbManager& db, TelegramClient& telegram);
+    // Se llama (desde el hilo de sincronización) cuando cambian los mensajes guardados de un canal
+    using ChangeListener = std::function<void(std::int64_t chatId)>;
+
+    ChannelSync(DbManager& db, TelegramClient& telegram, ChangeListener onChannelChanged);
     ~ChannelSync();
 
     ChannelSync(const ChannelSync&) = delete;
@@ -55,6 +59,7 @@ private:
 
     DbManager& db_;
     TelegramClient& telegram_;
+    const ChangeListener onChannelChanged_;
     std::thread worker_;
     std::mutex mutex_;  // Protege stopRequested_ y syncRequested_
     std::condition_variable cv_;

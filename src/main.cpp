@@ -1,4 +1,5 @@
 #include <cerrno>
+#include <cstdint>
 #include <climits>
 #include <cstdlib>
 #include <iostream>
@@ -6,6 +7,7 @@
 #include <utility>
 
 #include "api.hpp"
+#include "catalog.hpp"
 #include "channel_sync.hpp"
 #include "db_manager.hpp"
 #include "httplib.h"
@@ -65,12 +67,17 @@ int main() {
     // Registrar la versión en ejecución; /api/status la lee después desde SQLite
     db.setSetting("version", TELEGARRM_VERSION);
 
+    // Catálogo en memoria, derivado de los mensajes ya guardados
+    Catalog catalog(db);
+    catalog.rebuildAll();
+
     TelegramClient telegram(std::move(*telegramConfig));
-    ChannelSync sync(db, telegram);
+    // Cada cambio en los mensajes de un canal recalcula su parte del catálogo
+    ChannelSync sync(db, telegram, [&catalog](std::int64_t chatId) { catalog.rebuildChannel(chatId); });
 
     // Inicializar el servidor HTTP
     httplib::Server svr;
-    registerApiRoutes(svr, db, telegram, sync);
+    registerApiRoutes(svr, db, telegram, sync, catalog);
 
     // Configurar la carpeta web estática
     if (!svr.set_mount_point("/", "./web")) {

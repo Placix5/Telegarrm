@@ -450,23 +450,34 @@ bool DbManager::saveSyncBatch(std::int64_t chatId, const std::vector<Message>& m
 }
 
 std::vector<DbManager::Message> DbManager::listMessages(std::int64_t chatId, int limit, int offset) {
+    return queryMessages(chatId, "ORDER BY message_id DESC LIMIT ?2 OFFSET ?3", limit, offset);
+}
+
+std::vector<DbManager::Message> DbManager::channelMessages(std::int64_t chatId) {
+    return queryMessages(chatId, "ORDER BY message_id ASC", -1, 0);
+}
+
+std::vector<DbManager::Message> DbManager::queryMessages(std::int64_t chatId, const char* orderAndLimit, int limit,
+                                                         int offset) {
     std::lock_guard<std::mutex> lock(mutex_);
     std::vector<Message> messages;
     if (!db_) {
         return messages;
     }
 
-    StmtPtr stmt = prepare(db_.get(), R"SQL(
+    const std::string sql = std::string(R"SQL(
         SELECT message_id, date, media_album_id, content_type, text, file_name, file_size, mime_type
-        FROM messages WHERE chat_id = ?1
-        ORDER BY message_id DESC LIMIT ?2 OFFSET ?3;
-    )SQL");
+        FROM messages WHERE chat_id = ?1 )SQL") + orderAndLimit + ";";
+    StmtPtr stmt = prepare(db_.get(), sql.c_str());
     if (!stmt) {
         return messages;
     }
     sqlite3_bind_int64(stmt.get(), 1, chatId);
-    sqlite3_bind_int(stmt.get(), 2, limit);
-    sqlite3_bind_int(stmt.get(), 3, offset);
+    // Los parámetros que la consulta no usa se ignoran
+    if (sqlite3_bind_parameter_count(stmt.get()) >= 3) {
+        sqlite3_bind_int(stmt.get(), 2, limit);
+        sqlite3_bind_int(stmt.get(), 3, offset);
+    }
 
     int rc;
     while ((rc = sqlite3_step(stmt.get())) == SQLITE_ROW) {

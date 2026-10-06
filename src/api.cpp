@@ -3,12 +3,15 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdint>
+#include <fstream>
+#include <iterator>
 #include <optional>
 #include <set>
 #include <string>
 
 #include <nlohmann/json.hpp>
 
+#include "catalog.hpp"
 #include "channel_sync.hpp"
 #include "db_manager.hpp"
 #include "httplib.h"
@@ -22,6 +25,10 @@ using Json = nlohmann::json;
 constexpr auto kTelegramTimeout = std::chrono::seconds(30);
 // Límite de mensajes por página en /api/channels/{id}/messages
 constexpr int kMaxMessagesPerPage = 500;
+// Las portadas se sirven con la menor resolución que tenga al menos este ancho (px)
+constexpr int kPosterMinWidth = 600;
+// Las portadas no cambian: el navegador puede guardarlas una semana
+constexpr const char* kPosterCacheControl = "max-age=604800";
 
 // Paso del inicio de sesión: estado que debe tener TDLib, petición que se le envía
 // y campo del cuerpo JSON (se llama igual en la API y en TDLib)
@@ -198,7 +205,149 @@ void registerAuthRoutes(httplib::Server& server, TelegramClient& telegram) {
     }
 }
 
-void registerChannelRoutes(httplib::Server& server, DbManager& db, TelegramClient& telegram, ChannelSync& sync) {
+Json nullable(const std::string& value) {
+    return value.empty() ? Json(nullptr) : Json(value);
+}
+
+Json itemSummaryJson(const Catalog::Item& item) {
+    return {{"chat_id", item.chatId},
+            {"anchor_id", item.anchorMessageId},
+            {"kind", item.kind},
+            {"title", item.title},
+            {"year", item.year ? Json(*item.year) : Json(nullptr)},
+            {"quality", nullable(item.quality)},
+            {"languages", item.languages},
+            {"genres", item.genres},
+            {"channel_title", item.channelTitle},
+            {"has_poster", item.posterMessageId != 0},
+            {"seasons", item.seasonCount},
+            {"episodes", item.episodeCount},
+            {"file_count", item.files.size()},
+            {"total_size", item.totalSize}};
+}
+
+Json itemDetailJson(const Catalog::Item& item) {
+    Json detail = itemSummaryJson(item);
+    detail["description"] = item.description;
+    Json files = Json::array();
+    for (const Catalog::File& file : item.files) {
+        files.push_back({{"message_id", file.messageId},
+                         {"file_name", file.fileName},
+                         {"size", file.size},
+                         {"season", file.episode > 0 ? Json(file.season) : Json(nullptr)},
+                         {"episode", file.episode > 0 ? Json(file.episode) : Json(nullptr)},
+                         {"episode_end", file.episodeEnd > 0 ? Json(file.episodeEnd) : Json(nullptr)},
+                         {"episode_title", nullable(file.episodeTitle)},
+                         {"quality", nullable(file.quality)},
+                         {"archive", file.archive}});
+    }
+    detail["files"] = files;
+    return detail;
+}
+
+// Elige el tamaño de foto más pequeño con al menos kPosterMinWidth de ancho (o el mayor si no hay)
+const Json* choosePhotoSize(const Json& photo) {
+    const auto sizes = photo.find("sizes");
+    if (sizes == photo.end() || !sizes->is_array() || sizes->empty()) {
+        return nullptr;
+    }
+    const Json* best = nullptr;
+    for (const Json& size : *sizes) {
+        const int width = size.value("width", 0);
+        if (!best) {
+            best = &size;
+            continue;
+        }
+        const int bestWidth = best->value("width", 0);
+        const bool fits = width >= kPosterMinWidth;
+        const bool bestFits = bestWidth >= kPosterMinWidth;
+        if ((fits && (!bestFits || width < bestWidth)) || (!fits && !bestFits && width > bestWidth)) {
+            best = &size;
+        }
+    }
+    return best;
+}
+
+void registerCatalogRoutes(httplib::Server& server, TelegramClient& telegram, Catalog& catalog) {
+    server.Get("/api/catalog", [&catalog](const httplib::Request&, httplib::Response& res) {
+        Json result = Json::array();
+        for (const Catalog::ItemPtr& item : catalog.items()) {
+            result.push_back(itemSummaryJson(*item));
+        }
+        sendJson(res, 200, result);
+    });
+
+    server.Get(R"(/api/catalog/(-?\d+)/(\d+))", [&catalog](const httplib::Request& req, httplib::Response& res) {
+        const auto chatId = parseId(req.matches[1].str());
+        const auto anchorId = parseId(req.matches[2].str());
+        const auto item = (chatId && anchorId) ? catalog.find(*chatId, *anchorId) : nullptr;
+        if (!item) {
+            sendError(res, 404, "Elemento no encontrado en el catálogo");
+            return;
+        }
+        sendJson(res, 200, itemDetailJson(*item));
+    });
+
+    // Portada: la foto de la ficha. TDLib la descarga la primera vez y la guarda en su caché.
+    server.Get(R"(/api/catalog/(-?\d+)/(\d+)/poster)", [&catalog, &telegram](const httplib::Request& req,
+                                                                              httplib::Response& res) {
+        const auto chatId = parseId(req.matches[1].str());
+        const auto anchorId = parseId(req.matches[2].str());
+        const auto item = (chatId && anchorId) ? catalog.find(*chatId, *anchorId) : nullptr;
+        if (!item || item->posterMessageId == 0) {
+            sendError(res, 404, "Este elemento no tiene portada");
+            return;
+        }
+        if (!requireTelegramReady(telegram, res)) {
+            return;
+        }
+
+        const auto message = telegram.request(
+            {{"@type", "getMessage"}, {"chat_id", item->chatId}, {"message_id", item->posterMessageId}}, kTelegramTimeout);
+        if (isError(message)) {
+            sendError(res, 502, "No se pudo leer la ficha: " + errorMessage(message));
+            return;
+        }
+        // photo debe vivir mientras se use size, que apunta dentro de él
+        const Json content = message->value("content", Json::object());
+        const Json photo = content.value("photo", Json::object());
+        const Json* size = typeOf(content) == "messagePhoto" ? choosePhotoSize(photo) : nullptr;
+        if (!size || !size->contains("photo")) {
+            sendError(res, 404, "La ficha no tiene foto");
+            return;
+        }
+
+        Json file = size->at("photo");
+        const Json local = file.value("local", Json::object());
+        if (!local.value("is_downloading_completed", false)) {
+            const auto downloaded = telegram.request({{"@type", "downloadFile"},
+                                                      {"file_id", file.value("id", 0)},
+                                                      {"priority", 16},
+                                                      {"offset", 0},
+                                                      {"limit", 0},
+                                                      {"synchronous", true}},
+                                                     kTelegramTimeout);
+            if (isError(downloaded)) {
+                sendError(res, 502, "No se pudo descargar la portada: " + errorMessage(downloaded));
+                return;
+            }
+            file = *downloaded;
+        }
+
+        const std::string path = file.value("local", Json::object()).value("path", "");
+        std::ifstream in(path, std::ios::binary);
+        if (path.empty() || !in) {
+            sendError(res, 502, "La portada descargada no está disponible");
+            return;
+        }
+        const std::string data((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        res.set_header("Cache-Control", kPosterCacheControl);
+        res.set_content(data, "image/jpeg");  // Telegram guarda las fotos en JPEG
+    });
+}
+
+void registerChannelRoutes(httplib::Server& server, DbManager& db, TelegramClient& telegram, ChannelSync& sync,
+                           Catalog& catalog) {
     // Canales y grupos de la cuenta (lista principal y archivados), para elegir cuáles vigilar
     server.Get("/api/telegram/chats", [&db, &telegram](const httplib::Request&, httplib::Response& res) {
         if (!requireTelegramReady(telegram, res)) {
@@ -285,12 +434,13 @@ void registerChannelRoutes(httplib::Server& server, DbManager& db, TelegramClien
         sendJson(res, 201, channel ? channelJson(*channel, sync.syncingChatId()) : Json{{"id", chatId}});
     });
 
-    server.Delete(R"(/api/channels/(-?\d+))", [&db](const httplib::Request& req, httplib::Response& res) {
+    server.Delete(R"(/api/channels/(-?\d+))", [&db, &catalog](const httplib::Request& req, httplib::Response& res) {
         const auto chatId = parseId(req.matches[1].str());
         if (!chatId || !db.removeChannel(*chatId)) {
             sendError(res, 404, "Canal no encontrado");
             return;
         }
+        catalog.removeChannel(*chatId);
         sendJson(res, 200, {{"ok", true}});
     });
 
@@ -331,8 +481,10 @@ void registerChannelRoutes(httplib::Server& server, DbManager& db, TelegramClien
 
 }  // namespace
 
-void registerApiRoutes(httplib::Server& server, DbManager& db, TelegramClient& telegram, ChannelSync& sync) {
+void registerApiRoutes(httplib::Server& server, DbManager& db, TelegramClient& telegram, ChannelSync& sync,
+                       Catalog& catalog) {
     registerStatusRoutes(server, db, telegram);
     registerAuthRoutes(server, telegram);
-    registerChannelRoutes(server, db, telegram, sync);
+    registerChannelRoutes(server, db, telegram, sync, catalog);
+    registerCatalogRoutes(server, telegram, catalog);
 }

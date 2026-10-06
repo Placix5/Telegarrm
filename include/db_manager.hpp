@@ -74,6 +74,8 @@ public:
 
     // Mensajes más recientes de un canal (para inspeccionar y diseñar el catálogo)
     std::vector<Message> listMessages(std::int64_t chatId, int limit, int offset);
+    // Todos los mensajes de un canal en orden cronológico (para construir el catálogo)
+    std::vector<Message> channelMessages(std::int64_t chatId);
 
 private:
     struct Closer {
@@ -81,6 +83,8 @@ private:
     };
 
     bool migrate();
+    // orderAndLimit: cláusulas ORDER BY / LIMIT ?2 OFFSET ?3 (fragmento fijo, nunca datos de usuario)
+    std::vector<Message> queryMessages(std::int64_t chatId, const char* orderAndLimit, int limit, int offset);
 
     std::string path_;
     std::unique_ptr<sqlite3, Closer> db_;

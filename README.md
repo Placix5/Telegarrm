@@ -7,10 +7,13 @@ Telegarrm es un servicio daemon (stack ARR) que utiliza Telegram (TDLib) como fu
   - `main.cpp`: arranque del daemon y servidor HTTP
   - `api.cpp`: endpoints REST (`/api/...`)
   - `channel_sync.cpp`: copia el historial de los canales vigilados en SQLite (clase `ChannelSync`)
+  - `media_parser.cpp`: interpreta nombres de fichero y fichas (episodios, título, año, calidad, idioma)
+  - `catalog.cpp`: agrupa los mensajes de cada canal en series y películas (clase `Catalog`)
   - `db_manager.cpp`: acceso a SQLite (clase `DbManager`)
   - `telegram_client.cpp`: cliente de TDLib en su propio hilo (clase `TelegramClient`)
   - `signal_watcher.cpp`: parada ordenada con SIGINT/SIGTERM (clase `SignalWatcher`)
 - `include/`: Cabeceras y dependencias de un solo archivo (`httplib.h`, `nlohmann/json.hpp`)
+- `tests/`: Tests del parser y del catálogo con ejemplos reales (`ctest`)
 - `web/`: Interfaz web (`index.html`, `style.css`, `app.js`, sin dependencias)
 - `deploy/`: Servicio de systemd, regla de polkit y script de instalación
 - `db/`: Datos generados al ejecutar: `telegarrm.db` (SQLite) y `tdlib/` (sesión de Telegram)
@@ -22,7 +25,7 @@ Detalle y tareas en [docs/ROADMAP.md](docs/ROADMAP.md).
 
 - [x] **Fase 0**: Estructura base y servidor HTTP (`cpp-httplib`).
 - [x] **Fase 1**: Motor TDLib en un hilo propio y SQLite para configuración y estado. *Completada.*
-- [ ] **Fase 2**: Canales y catálogo: lectura del historial de los canales elegidos y catálogo en la web. *En curso: selección de canales y sincronización listas; falta el catálogo.*
+- [ ] **Fase 2**: Canales y catálogo: lectura del historial de los canales elegidos y catálogo en la web. *En curso: canales, sincronización y catálogo con portadas listos; falta validarlo con más canales y con películas.*
 - [ ] **Fase 3**: Descargas: cola, descompresión y renombrado (núcleo antiguo de C++).
 - [ ] **Fase 4**: Tele-ARR: escucha de mensajes nuevos, reemplazo de calidades y auto-descarga de capítulos en seguimiento.
 
@@ -55,6 +58,7 @@ Sin ellas, el servicio no arranca. La sesión de Telegram se guarda en `db/tdlib
 ```bash
 cmake -S . -B build
 cmake --build build
+ctest --test-dir build
 TELEGARRM_API_ID=123456 TELEGARRM_API_HASH=abcdef... ./build/telegarrm
 ```
 Ejecútalo desde la raíz del proyecto: las rutas `db/` y `web/` son relativas al directorio actual. Ctrl+C (SIGINT) o SIGTERM lo detienen de forma ordenada.
@@ -85,6 +89,9 @@ Desplegar una versión nueva del programa no necesita `sudo`: `cmake --build bui
 | `DELETE /api/channels/{id}` | Dejar de vigilarlo (borra sus mensajes guardados, no los de Telegram) |
 | `POST /api/channels/{id}/sync` | Buscar mensajes nuevos ya, sin esperar a la ronda periódica (cada 15 min) |
 | `GET /api/channels/{id}/messages?limit=50&offset=0` | Mensajes guardados, del más reciente al más antiguo |
+| `GET /api/catalog` | Series y películas de todos los canales (resumen: título, año, calidad, idiomas, géneros, temporadas, episodios, tamaño en bytes) |
+| `GET /api/catalog/{chat}/{ficha}` | Ficha completa con sus archivos (temporada, episodio, título, tamaño) |
+| `GET /api/catalog/{chat}/{ficha}/poster` | Portada (JPEG), descargada de Telegram la primera vez |
 
 Ejemplo de `/api/status`:
 ```json
@@ -95,7 +102,9 @@ Ejemplo de `/api/status`:
 Los pasos del inicio de sesión responden `{"ok": true}`, o `{"error": "..."}` con HTTP 400 (dato incorrecto, ej. `PHONE_CODE_INVALID`), 409 (Telegram no espera ese dato ahora) o 504 (Telegram no responde).
 
 ## Historial de cambios
-### Fase 2 (en curso): canales y sincronización
+### Fase 2 (en curso): canales, sincronización y catálogo
+- Catálogo en memoria (`Catalog`): cada foto con pie (la "ficha") abre una serie o película y los vídeos siguientes le pertenecen. El parser (`media_parser`) reconoce `1x01`, `#01x01`, `S01E01`, `T1E3` y `Temporada 1 Capítulo 3`, y extrae de la ficha título, año, calidad, géneros e idioma (banderas incluidas). Tiene 103 comprobaciones con casos reales en `tests/`.
+- Web con pestañas (Catálogo, Canales, Estado): cuadrícula con portadas, búsqueda sin acentos, filtro por tipo y ficha con los episodios por temporada.
 - Esquema de BD versionado con migraciones (`PRAGMA user_version`); WAL para escribir menos en la tarjeta SD.
 - `ChannelSync` copia el historial de los canales vigilados en la tabla `messages` (texto, nombre, tamaño y tipo de fichero), por lotes de 100. El cursor se guarda en la misma transacción que cada lote, así que tras un reinicio continúa donde lo dejó. Respeta los `FLOOD_WAIT` de Telegram y después busca mensajes nuevos cada 15 min.
 - La web permite elegir los canales vigilados entre los chats de la cuenta, sincronizarlos a mano y quitarlos.

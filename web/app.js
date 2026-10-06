@@ -1,13 +1,23 @@
 "use strict";
 
-const POLL_MS = 2000;
+const STATUS_POLL_MS = 2000;
+const CATALOG_POLL_MS = 15000;
 
-// Fechas y números con formato español y hora peninsular
+// Fechas, números y tamaños con formato español, hora peninsular y unidades del SI (base 1000)
 const DATE_FORMAT = new Intl.DateTimeFormat("es-ES", {
   timeZone: "Europe/Madrid", day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit",
 });
+const SIZE_FORMAT = new Intl.NumberFormat("es-ES", { maximumFractionDigits: 1 });
 const formatDate = (unixSeconds) => DATE_FORMAT.format(new Date(unixSeconds * 1000));
 const formatNumber = (n) => n.toLocaleString("es-ES");
+function formatSize(bytes) {
+  const units = [["TB", 1e12], ["GB", 1e9], ["MB", 1e6], ["kB", 1e3]];
+  for (const [unit, factor] of units) {
+    if (bytes >= factor) return `${SIZE_FORMAT.format(bytes / factor)} ${unit}`;
+  }
+  return `${bytes} B`;
+}
+const plural = (n, one, many) => `${formatNumber(n)} ${n === 1 ? one : many}`;
 
 // Textos de la conexión con Telegram (connectionState* de TDLib)
 const CONNECTION = {
@@ -54,6 +64,8 @@ const CHAT_GROUPS = [
   ["group", "Grupos"],
 ];
 
+const KIND_LABEL = { series: "Serie", movie: "Película" };
+
 // Errores habituales de Telegram traducidos
 function translateError(message) {
   const known = {
@@ -72,10 +84,18 @@ function translateError(message) {
 
 const $ = (id) => document.getElementById(id);
 
+// Crea un elemento con clase y texto (el contenido de Telegram nunca pasa por innerHTML)
+function el(tag, className, text) {
+  const node = document.createElement(tag);
+  if (className) node.className = className;
+  if (text !== undefined) node.textContent = text;
+  return node;
+}
+
 function setStatus(id, text, cls) {
-  const el = $(id);
-  el.textContent = text;
-  el.className = cls || "";
+  const node = $(id);
+  node.textContent = text;
+  node.className = cls || "";
 }
 
 function showError(id, message) {
@@ -93,6 +113,214 @@ async function api(path, options = {}) {
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.error || `Error HTTP ${res.status}`);
   return data;
+}
+
+// Para buscar sin distinguir mayúsculas ni acentos
+const normalize = (text) => (text || "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
+
+// ---------------------------------------------------------------------------
+// Navegación: #/catalogo, #/catalogo/<chat>/<ficha>, #/canales, #/estado
+// ---------------------------------------------------------------------------
+
+let telegramReady = false;
+let routeShown = false;
+
+function currentRoute() {
+  const parts = location.hash.replace(/^#\/?/, "").split("/").filter(Boolean);
+  if (parts[0] === "canales") return { view: "channels" };
+  if (parts[0] === "estado") return { view: "status" };
+  if (parts[0] === "catalogo" && parts.length === 3) return { view: "detail", chatId: parts[1], anchorId: parts[2] };
+  return { view: "catalog" };
+}
+
+function showRoute() {
+  routeShown = true;
+  let route = currentRoute();
+  // Sin sesión de Telegram solo tiene sentido la pantalla de estado (inicio de sesión)
+  if (!telegramReady && route.view !== "status") route = { view: "status" };
+
+  for (const view of ["catalog", "detail", "channels", "status"]) {
+    $(`view-${view}`).hidden = view !== route.view;
+  }
+  const navView = route.view === "detail" ? "catalog" : route.view;
+  document.querySelectorAll("nav a").forEach((link) => {
+    if (link.dataset.view === navView) link.setAttribute("aria-current", "page");
+    else link.removeAttribute("aria-current");
+  });
+
+  if (route.view !== "detail") document.title = "Telegarrm";
+  if (route.view === "catalog") loadCatalog();
+  if (route.view === "detail") loadDetail(route.chatId, route.anchorId);
+  if (route.view === "channels") {
+    refreshChannels();
+    if (!chatsLoaded) {
+      chatsLoaded = true;  // Evita cargas repetidas mientras la primera está en curso
+      loadChats();
+    }
+  }
+}
+
+window.addEventListener("hashchange", showRoute);
+
+// ---------------------------------------------------------------------------
+// Catálogo
+// ---------------------------------------------------------------------------
+
+let catalogItems = [];
+let lastCatalogJson = null;
+
+const itemPath = (item) => `${item.chat_id}/${item.anchor_id}`;
+const posterUrl = (item) => `/api/catalog/${itemPath(item)}/poster`;
+
+function posterElement(item) {
+  const box = el("div", "poster");
+  const initials = el("span", "poster-initials",
+    item.title.split(/\s+/).filter(Boolean).slice(0, 2).map((word) => word[0]).join("").toUpperCase());
+  if (item.has_poster) {
+    const img = el("img");
+    img.loading = "lazy";
+    img.alt = "";
+    img.src = posterUrl(item);
+    // Si la portada falla, se quedan las iniciales
+    img.addEventListener("error", () => img.replaceWith(initials));
+    box.append(img);
+  } else {
+    box.append(initials);
+  }
+  return box;
+}
+
+function itemMeta(item) {
+  const parts = [];
+  if (item.year) parts.push(item.year);
+  parts.push(KIND_LABEL[item.kind] || item.kind);
+  if (item.kind === "series") parts.push(plural(item.seasons, "temporada", "temporadas"));
+  if (item.quality) parts.push(item.quality);
+  return parts.join(" · ");
+}
+
+function renderCatalog() {
+  const query = normalize($("catalog-search").value.trim());
+  const kind = $("catalog-kind").value;
+  const visible = catalogItems
+    .filter((item) => !kind || item.kind === kind)
+    .filter((item) => !query || normalize([item.title, item.channel_title, ...item.genres].join(" ")).includes(query))
+    .sort((a, b) => a.title.localeCompare(b.title, "es", { sensitivity: "base" }));
+
+  const grid = $("catalog-grid");
+  grid.replaceChildren();
+  for (const item of visible) {
+    const card = el("a", "card");
+    card.href = `#/catalogo/${itemPath(item)}`;
+    const body = el("div", "card-body");
+    body.append(el("div", "card-title", item.title), el("div", "card-meta", itemMeta(item)));
+    card.append(posterElement(item), body);
+    grid.append(card);
+  }
+
+  if (!catalogItems.length) {
+    $("catalog-summary").textContent =
+      "El catálogo está vacío. Añade canales en la pestaña «Canales»; se rellenará al sincronizarlos.";
+  } else {
+    const total = catalogItems.reduce((sum, item) => sum + item.total_size, 0);
+    $("catalog-summary").textContent = `${plural(visible.length, "título", "títulos")} de ${formatNumber(catalogItems.length)} · ${formatSize(total)} en total`;
+  }
+}
+
+async function loadCatalog() {
+  try {
+    const items = await api("/api/catalog");
+    const json = JSON.stringify(items);
+    if (json === lastCatalogJson) return;  // Sin cambios: no se rehacen las tarjetas
+    lastCatalogJson = json;
+    catalogItems = items;
+    renderCatalog();
+  } catch (e) {
+    $("catalog-summary").textContent = `No se pudo cargar el catálogo: ${e.message}`;
+  }
+}
+
+$("catalog-search").addEventListener("input", renderCatalog);
+$("catalog-kind").addEventListener("change", renderCatalog);
+
+function episodeLabel(file) {
+  const episode = String(file.episode).padStart(2, "0");
+  const end = file.episode_end ? `-${String(file.episode_end).padStart(2, "0")}` : "";
+  return `${file.season}x${episode}${end}`;
+}
+
+function filesTable(files, withEpisodes) {
+  const table = el("table");
+  const head = el("tr");
+  if (withEpisodes) head.append(el("th", "", "Episodio"));
+  head.append(el("th", "", withEpisodes ? "Título" : "Archivo"), el("th", "num", "Tamaño"));
+  table.append(head);
+  for (const file of files) {
+    const row = el("tr");
+    if (withEpisodes) row.append(el("td", "episode", episodeLabel(file)));
+    const name = withEpisodes ? (file.episode_title || "") : file.file_name;
+    const nameCell = el("td", "", name);
+    nameCell.title = file.file_name;  // El nombre original, al pasar el ratón
+    row.append(nameCell, el("td", "num", formatSize(file.size)));
+    table.append(row);
+  }
+  return table;
+}
+
+async function loadDetail(chatId, anchorId) {
+  const container = $("detail-content");
+  container.replaceChildren(el("p", "hint", "Cargando…"));
+  let item;
+  try {
+    item = await api(`/api/catalog/${chatId}/${anchorId}`);
+  } catch (e) {
+    container.replaceChildren(el("p", "err", e.message));
+    return;
+  }
+
+  const info = el("div");
+  const title = el("h2", "", item.title);
+  const badges = el("div", "badges");
+  for (const text of [KIND_LABEL[item.kind], item.year, item.quality, ...item.languages, ...item.genres]) {
+    if (text) badges.append(el("span", "badge", String(text)));
+  }
+  const parts = item.kind === "series"
+    ? [plural(item.seasons, "temporada", "temporadas"), plural(item.episodes, "episodio", "episodios")]
+    : [plural(item.file_count, "archivo", "archivos")];
+  parts.push(formatSize(item.total_size));
+  const summary = el("p", "", parts.join(" · "));
+  const channel = el("p", "hint", `Canal: ${item.channel_title}`);
+  info.append(title, badges, summary, channel);
+
+  if (item.description) {
+    const details = el("details");
+    details.append(el("summary", "", "Ficha original"), el("div", "description", item.description));
+    info.append(details);
+  }
+
+  const detail = el("div", "detail");
+  detail.append(posterElement(item), info);
+
+  const files = el("div", "files");
+  if (item.kind === "series") {
+    const bySeason = new Map();
+    const loose = [];
+    for (const file of item.files) {
+      if (file.episode === null) loose.push(file);
+      else bySeason.set(file.season, [...(bySeason.get(file.season) || []), file]);
+    }
+    for (const [season, seasonFiles] of bySeason) {
+      const size = seasonFiles.reduce((sum, file) => sum + file.size, 0);
+      files.append(el("h3", "", `Temporada ${season} · ${plural(seasonFiles.length, "archivo", "archivos")} · ${formatSize(size)}`),
+        filesTable(seasonFiles, true));
+    }
+    if (loose.length) files.append(el("h3", "", "Otros archivos"), filesTable(loose, false));
+  } else {
+    files.append(el("h3", "", "Archivos"), filesTable(item.files, false));
+  }
+
+  container.replaceChildren(detail, files);
+  document.title = `${item.title} · Telegarrm`;
 }
 
 // ---------------------------------------------------------------------------
@@ -166,27 +394,16 @@ function renderChannels(channels) {
   const list = $("channel-list");
   list.replaceChildren();
   for (const channel of channels) {
-    const item = document.createElement("li");
+    const item = el("li");
+    const info = el("div");
+    info.append(el("div", "channel-title", channel.title || `Chat ${channel.id}`),
+      el("div", "channel-meta", channelMeta(channel)));
 
-    const info = document.createElement("div");
-    const title = document.createElement("div");
-    title.className = "channel-title";
-    title.textContent = channel.title || `Chat ${channel.id}`;
-    const meta = document.createElement("div");
-    meta.className = "channel-meta";
-    meta.textContent = channelMeta(channel);
-    info.append(title, meta);
-
-    const actions = document.createElement("div");
-    actions.className = "channel-actions";
-    const sync = document.createElement("button");
-    sync.className = "secondary small";
-    sync.textContent = "Sincronizar";
+    const actions = el("div", "channel-actions");
+    const sync = el("button", "secondary small", "Sincronizar");
     sync.disabled = channel.syncing;
     sync.addEventListener("click", () => syncChannel(channel.id, sync));
-    const remove = document.createElement("button");
-    remove.className = "danger small";
-    remove.textContent = "Quitar";
+    const remove = el("button", "danger small", "Quitar");
     remove.addEventListener("click", () => removeChannel(channel));
     actions.append(sync, remove);
 
@@ -217,7 +434,7 @@ async function loadChats() {
     select.disabled = false;
     $("add-submit").disabled = false;
   } catch (e) {
-    chatsLoaded = false;  // Se reintenta en el siguiente sondeo
+    chatsLoaded = false;  // Se reintenta la próxima vez que se abra la pestaña
     select.replaceChildren(new Option("No se pudieron cargar los chats", ""));
     showError("add-error", e.message);
   }
@@ -248,6 +465,7 @@ async function removeChannel(channel) {
   } catch (e) {
     alert(e.message);
   }
+  lastCatalogJson = null;  // El catálogo ha cambiado
   await refreshChannels();
   loadChats();
 }
@@ -282,6 +500,7 @@ async function refresh() {
     data = await api("/api/status");
   } catch (e) {
     setStatus("st-service", "Sin respuesta del servidor", "err");
+    if (!routeShown) showRoute();
     return;
   }
   $("version").textContent = `v${data.version}`;
@@ -299,15 +518,15 @@ async function refresh() {
   currentAuthState = tg.authorization_state;
 
   const ready = tg.authorization_state === "authorizationStateReady";
-  $("channels-section").hidden = !ready;
-  if (ready) {
-    refreshChannels();
-    if (!chatsLoaded) {
-      chatsLoaded = true;  // Evita cargas repetidas mientras la primera está en curso
-      loadChats();
-    }
+  if (ready !== telegramReady || !routeShown) {
+    telegramReady = ready;
+    showRoute();  // Al iniciar o perder la sesión cambia lo que se puede ver
   }
+  if (ready && currentRoute().view === "channels") refreshChannels();
 }
 
 refresh();
-setInterval(refresh, POLL_MS);
+setInterval(refresh, STATUS_POLL_MS);
+setInterval(() => {
+  if (telegramReady && currentRoute().view === "catalog") loadCatalog();
+}, CATALOG_POLL_MS);

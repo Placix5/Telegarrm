@@ -7,45 +7,80 @@
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
+<header class="topbar">
+  <div class="topbar-inner">
+    <h1>Telegarrm <small id="version"></small></h1>
+    <nav aria-label="Secciones">
+      <a href="#/catalogo" data-view="catalog">Catálogo</a>
+      <a href="#/canales" data-view="channels">Canales</a>
+      <a href="#/estado" data-view="status">Estado</a>
+    </nav>
+  </div>
+</header>
+
 <main>
-  <h1>Telegarrm <small id="version"></small></h1>
+  <!-- Catálogo -->
+  <div class="view" id="view-catalog" hidden>
+    <div class="toolbar">
+      <input type="search" id="catalog-search" placeholder="Buscar por título, género o canal…" aria-label="Buscar">
+      <select id="catalog-kind" aria-label="Tipo">
+        <option value="">Todo</option>
+        <option value="series">Series</option>
+        <option value="movie">Películas</option>
+      </select>
+    </div>
+    <p class="hint" id="catalog-summary"></p>
+    <div class="grid" id="catalog-grid"></div>
+  </div>
 
-  <section aria-labelledby="estado">
-    <h2 id="estado">Estado</h2>
-    <dl>
-      <dt>Servicio</dt><dd id="st-service">Consultando…</dd>
-      <dt>Base de datos</dt><dd id="st-db">—</dd>
-      <dt>Telegram</dt><dd id="st-connection">—</dd>
-      <dt>Sesión</dt><dd id="st-auth">—</dd>
-    </dl>
-  </section>
+  <!-- Ficha de una serie o película -->
+  <div class="view" id="view-detail" hidden>
+    <p><a href="#/catalogo" class="back">← Volver al catálogo</a></p>
+    <div id="detail-content"></div>
+  </div>
 
-  <section aria-labelledby="sesion" id="auth-section" hidden>
-    <h2 id="sesion">Iniciar sesión en Telegram</h2>
-    <form id="auth-form" autocomplete="off">
-      <p id="auth-text"></p>
-      <label for="auth-input" id="auth-label"></label>
-      <input id="auth-input" required>
-      <p class="hint" id="auth-hint" hidden></p>
-      <button type="submit" id="auth-submit">Enviar</button>
-      <p id="auth-error" class="err error-box" role="alert" hidden></p>
-    </form>
-  </section>
+  <!-- Canales vigilados -->
+  <div class="view" id="view-channels" hidden>
+    <section aria-labelledby="canales">
+      <h2 id="canales">Canales vigilados</h2>
+      <p class="hint" id="channels-empty">Todavía no vigilas ningún canal. Elige abajo los canales o grupos donde están tus series y películas.</p>
+      <ul class="channel-list" id="channel-list"></ul>
 
-  <section aria-labelledby="canales" id="channels-section" hidden>
-    <h2 id="canales">Canales vigilados</h2>
-    <p class="hint" id="channels-empty">Todavía no vigilas ningún canal. Elige abajo los canales o grupos donde están tus series y películas.</p>
-    <ul class="channel-list" id="channel-list"></ul>
+      <form id="add-form">
+        <label for="chat-select">Añadir canal o grupo</label>
+        <div class="row">
+          <select id="chat-select" disabled><option>Cargando tus chats…</option></select>
+          <button type="submit" id="add-submit" disabled>Añadir</button>
+        </div>
+        <p id="add-error" class="err error-box" role="alert" hidden></p>
+      </form>
+    </section>
+  </div>
 
-    <form id="add-form">
-      <label for="chat-select">Añadir canal o grupo</label>
-      <div class="row">
-        <select id="chat-select" disabled><option>Cargando tus chats…</option></select>
-        <button type="submit" id="add-submit" disabled>Añadir</button>
-      </div>
-      <p id="add-error" class="err error-box" role="alert" hidden></p>
-    </form>
-  </section>
+  <!-- Estado e inicio de sesión -->
+  <div class="view" id="view-status" hidden>
+    <section aria-labelledby="estado">
+      <h2 id="estado">Estado</h2>
+      <dl>
+        <dt>Servicio</dt><dd id="st-service">Consultando…</dd>
+        <dt>Base de datos</dt><dd id="st-db">—</dd>
+        <dt>Telegram</dt><dd id="st-connection">—</dd>
+        <dt>Sesión</dt><dd id="st-auth">—</dd>
+      </dl>
+    </section>
+
+    <section aria-labelledby="sesion" id="auth-section" hidden>
+      <h2 id="sesion">Iniciar sesión en Telegram</h2>
+      <form id="auth-form" autocomplete="off">
+        <p id="auth-text"></p>
+        <label for="auth-input" id="auth-label"></label>
+        <input id="auth-input" required>
+        <p class="hint" id="auth-hint" hidden></p>
+        <button type="submit" id="auth-submit">Enviar</button>
+        <p id="auth-error" class="err error-box" role="alert" hidden></p>
+      </form>
+    </section>
+  </div>
 </main>
 <script src="app.js"></script>
 </body>

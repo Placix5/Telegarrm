@@ -25,6 +25,11 @@ Formato: **Contexto** (qué problema había), **Decisión**, **Alternativas desc
 | [D-017](#d-017-selección-de-canales-a-cargo-del-usuario) | Selección de canales a cargo del usuario | Vigente |
 | [D-018](#d-018-sin-comandos-de-shell-montados-con-cadenas) | Sin comandos de shell montados con cadenas | Vigente |
 | [D-019](#d-019-localización-y-datos-personales) | Localización y datos personales | Vigente |
+| [D-020](#d-020-catálogo-en-memoria-derivado-de-los-mensajes) | Catálogo en memoria derivado de los mensajes | Vigente |
+| [D-021](#d-021-las-fichas-separan-los-elementos-del-catálogo) | Las fichas separan los elementos del catálogo | Vigente |
+| [D-022](#d-022-tests-con-ctest-sin-framework-externo) | Tests con CTest, sin framework externo | Vigente |
+| [D-023](#d-023-portadas-descargadas-bajo-demanda-con-tdlib) | Portadas descargadas bajo demanda con TDLib | Vigente |
+| [D-024](#d-024-búsqueda-y-navegación-en-el-navegador) | Búsqueda y navegación en el navegador | Vigente |
 
 ---
 
@@ -188,3 +193,44 @@ Formato: **Contexto** (qué problema había), **Decisión**, **Alternativas desc
 
 - **Decisión**: unidades del Sistema Internacional (tamaños en kB/MB/GB y velocidades en MB/s, en base 1000), fechas `dd/mm/aaaa`, hora `Europe/Madrid` y textos en español. Los datos personales (teléfono, sesión) se quedan solo en la Pi y no hay telemetría.
 - **Consecuencias**: la web formatea fechas y números con `es-ES`; la API devuelve fechas como segundos Unix (UTC) y tamaños en bytes.
+
+## D-020: Catálogo en memoria derivado de los mensajes
+*06/10/2026*
+
+- **Contexto**: el catálogo (series, películas y sus archivos) se obtiene interpretando los mensajes guardados, y el parser irá mejorando con cada canal nuevo.
+- **Decisión**: la clase `Catalog` lo calcula en memoria a partir de la tabla `messages`. Lo hace al arrancar y cada vez que cambian los mensajes de un canal: mensajes nuevos, cada 1000 mensajes durante una carga larga y al completar el historial. Cada canal guarda su lista de elementos como punteros compartidos inmutables, así que la API los lee sin copias ni bloqueos largos.
+- **Alternativas descartadas**: tablas `media`/`episodes` en SQLite. Cada mejora del parser obligaría a migrar o recalcular datos guardados, y aún no hay nada que necesite persistir.
+- **Consecuencias**: mejorar el parser solo requiere reiniciar el servicio. Calcular un canal de 100 mensajes es instantáneo; con miles habrá que medirlo. Los elementos se identifican por `(chat_id, id del mensaje de la ficha)`, un identificador estable que podrán usar las descargas (Fase 3) y el seguimiento (Fase 4). Esos datos sí se guardarán en tablas.
+
+## D-021: Las fichas separan los elementos del catálogo
+*06/10/2026*
+
+- **Contexto**: en los canales reales (`Ultimate Spider-Man`, `Generator Rex`) cada serie empieza con una foto con pie (la "ficha": título, año, calidad, géneros e idioma), seguida de los vídeos. Hay fotos sin pie que son portadas de temporada, y textos sueltos de cierre, créditos o enlaces. Cada autor usa un formato distinto.
+- **Decisión**:
+  - Cada foto con pie abre un elemento nuevo y los vídeos o comprimidos siguientes le pertenecen. Las fotos sin pie y los textos no cortan.
+  - **Título**: primero el de la ficha; si no hay, el nombre de la serie en los ficheros; después el nombre del fichero (películas) y, en último caso, el título del canal sin `[etiquetas]`.
+  - Es una **serie** si algún fichero tiene marcador de episodio (`1x01`, `#01x01`, `S01E01`, `T1E3`, `Temporada 1 Capítulo 3`); si no, es una **película**.
+  - Un "título de episodio" repetido en más de la mitad de los episodios es el nombre de la serie (`1x01 - Ultimate Spiderman.mkv`) y se descarta.
+- **Alternativas descartadas**: un elemento por canal, que fallaría con un canal "biblioteca" con muchas series o películas. Agrupar solo por el nombre del fichero tampoco sirve: hay canales cuyos ficheros no lo llevan.
+- **Consecuencias**: funciona tanto con canales de una serie como con canales biblioteca. Un mismo episodio publicado dos veces (una versión mejorada) aparece dos veces en la ficha y cuenta como un solo episodio: la base para el reemplazo de la Fase 4. Pendiente de validar con películas reales.
+
+## D-022: Tests con CTest, sin framework externo
+*06/10/2026*
+
+- **Decisión**: `tests/parser_tests.cpp` usa dos macros propias (`CHECK`, `CHECK_EQ`) y se registra en CTest. El código, salvo `main()`, se compila como biblioteca estática (`telegarrm_core`) que comparten el ejecutable y los tests. Los casos reproducen mensajes reales de los canales sincronizados.
+- **Alternativas descartadas**: GoogleTest o Catch2, por ser una dependencia más que descargar y compilar en la Pi para unos pocos tests.
+- **Consecuencias**: `ctest --test-dir build` tras compilar. Se comprobó que los tests detectan fallos (una copia con expectativas erróneas falla con mensajes claros). Si los tests crecen mucho, se puede adoptar un framework.
+
+## D-023: Portadas descargadas bajo demanda con TDLib
+*06/10/2026*
+
+- **Decisión**: `GET /api/catalog/{chat}/{ficha}/poster` pide a TDLib la foto de la ficha. Elige el tamaño más pequeño de al menos 600 px de ancho (en la práctica, 853×1280 y unos 150 kB), la descarga si hace falta y la sirve con caché de navegador de una semana. TDLib la guarda en `db/tdlib`.
+- **Alternativas descartadas**: descargar todas las portadas al sincronizar, porque se gastaría tráfico y disco en portadas que quizá nunca se vean.
+- **Consecuencias**: la primera vista de una portada tarda unos 0,25 s; después, unos 0,02 s. Mientras se descarga, la petición ocupa un hilo del servidor HTTP; las imágenes usan `loading="lazy"` para no pedirlas todas a la vez.
+
+## D-024: Búsqueda y navegación en el navegador
+*06/10/2026*
+
+- **Decisión**: `/api/catalog` devuelve el resumen de todos los elementos, y la web filtra y ordena en el navegador (sin distinguir mayúsculas ni acentos, ordenando con las reglas del español). La navegación usa rutas con `#` (`#/catalogo`, `#/catalogo/{chat}/{ficha}`, `#/canales`, `#/estado`). Sin sesión de Telegram solo se muestra *Estado*.
+- **Alternativas descartadas**: búsqueda en el servidor, innecesaria para un catálogo de decenas o cientos de títulos.
+- **Consecuencias**: búsqueda instantánea y sin peticiones. Si el catálogo llega a miles de títulos, habrá que paginar en la API.
