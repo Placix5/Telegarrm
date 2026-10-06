@@ -117,7 +117,7 @@ Los pasos del inicio de sesión responden `{"ok": true}`, o `{"error": "..."}` c
 
 ## Historial de cambios
 ### Fase 3: descargas e importación a la biblioteca
-- Importación (D-034): al terminar, cada descarga se descomprime si hace falta (7-Zip, sin shell), se eligen los vídeos y subtítulos y se mueven a la biblioteca con nombres para Jellyfin (`Título (Año) [tmdbid-N]/…`, `Season 01/Serie S01E01 - 1080p.mkv`), y se libera el búfer.
+- Importación (D-034): al terminar, cada descarga se descomprime si hace falta (7-Zip, sin shell), se eligen los vídeos y subtítulos y se mueven a la biblioteca con nombres para Jellyfin (`Título (Año) [tmdbid-N]/…`, `Season 01/Serie S01E01 - 1080p.mkv`), y se libera el búfer. Comprobado en la Pi con un ZIP (451 MB) y un RAR de 2 partes (1,86 GB, descomprimido en ~20 s); los RAR necesitan el paquete `7zip-rar`.
 - Pestaña *Ajustes*: búfer de descargas de TDLib (aplicado con un reinicio ordenado desde la web), bibliotecas y espacio libre mínimo, con validación real de cada ruta (D-032). La unidad admite `/srv/media` y rutas adicionales vía `install-service.sh`.
 - Arreglos de la web: flecha propia en los desplegables y botones de descarga de ancho fijo que muestran el progreso.
 - Cola de descargas persistente: botón "Almacenar en disco" por versión o por temporada, pestaña *Descargas* con progreso, velocidad y tiempo restante, cancelación (borra lo parcial), reintento, reanudación tras reiniciar y comprobación de espacio libre. Los archivos quedan, de momento, en la caché de TDLib (D-031).

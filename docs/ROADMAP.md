@@ -45,7 +45,7 @@ Formato real visto: canales de una serie con una ficha (foto + pie con título, 
 - [x] **Cola persistente** (tablas `downloads` y `download_parts`) con un trabajador: progreso, reintentos, reanudación tras reiniciar, cancelación y comprobación de espacio libre (D-031). Los archivos quedan en la caché de TDLib.
 - [x] **Ajustes** en la web: búfer de descargas de TDLib, bibliotecas y espacio libre mínimo (D-032).
 - [x] **Biblioteca**: `/srv/media/{descargas,peliculas,series}` (D-033); en el servidor, el RAID montado en `/srv/media`.
-- [x] **Importación** (D-034): descompresión con 7-Zip sin shell (zip troceado, multiparte RAR, 7z), vídeos sin muestras, subtítulos, nombres para Jellyfin (`Título (Año) [tmdbid-N]`, `Season 01`) y limpieza del búfer. Para RAR hace falta el paquete `7zip-rar`.
+- [x] **Importación** (D-034): descompresión con 7-Zip sin shell (zip troceado, multiparte RAR, 7z), vídeos sin muestras, subtítulos, nombres para Jellyfin (`Título (Año) [tmdbid-N]`, `Season 01`) y limpieza del búfer. Comprobado con descargas reales en ZIP y RAR multiparte (el RAR necesita el paquete `7zip-rar`).
 - [x] **API**: `POST /api/downloads`, `GET /api/downloads` (progreso), cancelar, reintentar y quitar.
 - [x] **Web**: botón "Almacenar en disco" y pestaña *Descargas* con el progreso.
 

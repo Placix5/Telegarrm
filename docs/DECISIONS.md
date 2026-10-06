@@ -425,4 +425,5 @@ Formato: **Contexto** (qué problema había), **Decisión**, **Alternativas desc
 - **Verificación**:
   - Tests con un ZIP troceado de verdad (episodios a `Season 01`, la muestra y el `.nfo` fuera, búfer y temporales limpios) y con el lanzador de procesos (un argumento `"hola; rm -rf /"` llega tal cual).
   - En la Pi, *Toy Story Toons: Fiestasaurio Rex* (ZIP de 451 MB) se descargó en ~13 s y se importó en ~4 s.
-- **Pendiente**: para los RAR, Debian distribuye 7-Zip sin su códec (licencia no libre). Hay que instalar `7zip-rar`; mientras tanto, la importación falla con ese mensaje y se puede reintentar después de instalarlo.
+- **RAR**: Debian distribuye 7-Zip sin el códec de RAR (licencia no libre). Hace falta el paquete `7zip-rar`, que Plácido instaló el 07/10/2026. Comprobado con *Westworld 4x04*, un RAR de 2 partes y 1,86 GB: se descargó en unos 46 s (40–70 MB/s), se descomprimió en unos 20 s y quedó en `Westworld (2016) [tmdbid-63247]/Season 04/Westworld S04E04 - 1080p.mkv`, con permisos `640` y sin restos. Sin el códec, la importación falla con un mensaje que indica el paquete y se puede reintentar sin volver a descargar.
+- **Nota**: TDLib guarda todos sus archivos en el búfer, también las fotos de las fichas que la web pide como carátulas (`photos/`, unos 7 MB para 40 portadas). No interfiere con la importación.
