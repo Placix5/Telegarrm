@@ -1,0 +1,5 @@
+# Compilación
+/build/
+
+# Base de datos generada en tiempo de ejecución
+/db/
