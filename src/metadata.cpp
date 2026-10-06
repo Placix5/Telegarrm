@@ -28,6 +28,10 @@ constexpr auto kCatalogWait = std::chrono::seconds(10);
 // Puntuación mínima para aceptar un resultado de búsqueda (ver score())
 constexpr int kMinScore = 80;
 constexpr std::size_t kProgressEvery = 100;
+// Versión del criterio de coincidencia: al cambiarla, las obras "sin coincidencia" se vuelven a
+// buscar (con la caché de TMDB casi no cuesta). 2: penalización leve del año en series.
+constexpr int kMatcherVersion = 2;
+constexpr const char* kMatcherVersionSetting = "tmdb_matcher_version";
 
 std::int64_t nowSeconds() {
     return static_cast<std::int64_t>(std::time(nullptr));
@@ -63,8 +67,10 @@ bool keysContain(const std::string& a, const std::string& b) {
 }
 
 // Puntuación de un resultado de búsqueda: título exacto (en castellano u original) 100,
-// contenido 50; año igual +30, a un año +15, distinto -40. Se acepta desde kMinScore: título
-// exacto, o título contenido con el mismo año. Mejor sin datos que con los de otra obra.
+// contenido 50; año igual +30, a un año +15, distinto -40 en películas (remakes) y solo -10 en
+// series, cuyo año en la ficha suele ser el de la temporada o la subida y no el del estreno
+// (Ultimate Spider-Man: 2015 en la ficha, 2012 en TMDB). Se acepta desde kMinScore: título exacto,
+// o título contenido con el mismo año. Mejor sin datos que con los de otra obra.
 int score(const Json& result, const Catalog::Item& item, bool series) {
     const std::string localKey = media::titleKey(text(result, series ? "name" : "title"));
     const std::string originalKey = media::titleKey(text(result, series ? "original_name" : "original_title"));
@@ -86,7 +92,7 @@ int score(const Json& result, const Catalog::Item& item, bool series) {
     const auto resultYear = yearOf(text(result, series ? "first_air_date" : "release_date"));
     if (item.year && resultYear) {
         const int difference = std::abs(*item.year - *resultYear);
-        points += difference == 0 ? 30 : difference == 1 ? 15 : -40;
+        points += difference == 0 ? 30 : difference == 1 ? 15 : (series ? -10 : -40);
     }
     return points;
 }
@@ -197,6 +203,22 @@ bool MetadataService::due(const Catalog::Item& item, const Info* known, std::int
 
 void MetadataService::run() {
     std::cout << "[TMDB] Metadatos activados" << std::endl;
+    if (db_.getSetting(kMatcherVersionSetting).value_or("") != std::to_string(kMatcherVersion)) {
+        std::size_t retried = 0;
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            for (auto it = byKey_.begin(); it != byKey_.end();) {
+                if (it->second->mediaType.empty()) {
+                    it = byKey_.erase(it);  // Sin coincidencia con el criterio anterior: se busca otra vez
+                    ++retried;
+                } else {
+                    ++it;
+                }
+            }
+        }
+        db_.setSetting(kMatcherVersionSetting, std::to_string(kMatcherVersion));
+        std::cout << "[TMDB] Criterio de coincidencia nuevo: se vuelven a buscar " << retried << " obras" << std::endl;
+    }
     while (!stopping()) {
         std::vector<Catalog::ItemPtr> items = catalog_.items();
         if (items.empty()) {

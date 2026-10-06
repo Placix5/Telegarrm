@@ -38,7 +38,8 @@ Formato: **Contexto** (qué problema había), **Decisión**, **Alternativas desc
 | [D-030](#d-030-cómo-se-integra-tmdb) | Cómo se integra TMDB | Vigente |
 | [D-031](#d-031-cola-de-descargas) | Cola de descargas | Vigente |
 | [D-032](#d-032-ajustes-desde-la-web-y-reinicio-con-el-código-75) | Ajustes desde la web y reinicio con el código 75 | Vigente |
-| [D-033](#d-033-estructura-de-carpetas-srvmedia-y-jellyfin) | Estructura de carpetas `/srv/media` y Jellyfin | Propuesta |
+| [D-033](#d-033-estructura-de-carpetas-srvmedia-y-jellyfin) | Estructura de carpetas `/srv/media` y Jellyfin | Vigente |
+| [D-034](#d-034-importación-a-la-biblioteca) | Importación a la biblioteca | Vigente |
 
 ---
 
@@ -376,9 +377,10 @@ Formato: **Contexto** (qué problema había), **Decisión**, **Alternativas desc
 - **Alternativas descartadas**: recrear el cliente de TDLib en caliente. Es más complejo (descargas en curso, sincronización) y un reinicio ordenado de unos segundos lo resuelve todo.
 - **Permisos de escritura**: la unidad permite escribir en `db/` y en `/srv/media` (opcional, D-033). Otras rutas se añaden con `sudo ./deploy/install-service.sh /ruta…`, que las guarda en `/etc/systemd/system/telegarrm.service.d/rutas.conf` (solo rutas absolutas con caracteres seguros).
 - **Verificación**: las validaciones dan los mensajes esperados (ruta relativa, inexistente, de solo lectura por el aislamiento, margen negativo). Un búfer de prueba se aplicó con "Reiniciar ahora" y una descarga real cayó en él; después se restauró el predeterminado.
+- **Efecto secundario descubierto al usarlo**: TDLib guarda las rutas de los archivos *relativas* a `files_directory`. Al cambiar el búfer, lo descargado en el anterior no se reutiliza: si hace falta, TDLib lo vuelve a bajar, y lo antiguo queda huérfano y se puede borrar. Lo avisa la ayuda de *Ajustes*.
 
 ## D-033: Estructura de carpetas `/srv/media` y Jellyfin
-*07/10/2026 · **Propuesta** a Plácido*
+*07/10/2026 · Aceptada por Plácido (creó `/srv/media` en la Pi)*
 
 - **Contexto**:
   - El destino final es un servidor con un SSD para el sistema y un RAID para los datos.
@@ -400,3 +402,27 @@ Formato: **Contexto** (qué problema había), **Decisión**, **Alternativas desc
   
   Se usa `Season`, no `Temporada`, porque es lo que Jellyfin detecta con seguridad.
 - **En la Pi** (solo tiene la tarjeta SD), la misma estructura en la SD sirve para probar el flujo completo. En el servidor, al montar el RAID en `/srv/media`, no hay que cambiar ningún ajuste.
+
+## D-034: Importación a la biblioteca
+*07/10/2026 · Cierra la Fase 3*
+
+- **Decisión**: al terminar una descarga, `DownloadManager` la pasa a *importing* y `library::importRelease`:
+  1. **Descomprime** con 7-Zip si es un comprimido (`.zip.001`…, `.partN.rar`, `.7z`), en una carpeta temporal oculta dentro de la biblioteca (`.telegarrm/<id>`), en el mismo disco que el destino.
+     - 7-Zip se lanza **sin shell** (D-018) con `posix_spawn`: argumentos separados, `--` antes del nombre, la entrada estándar vacía (un comprimido con contraseña falla en vez de quedarse esperando) y sin heredar los descriptores del servicio.
+     - El hijo recibe la máscara de señales vacía: el servicio bloquea SIGTERM en todos sus hilos (D-010) y, si el hijo la heredara, no se le podría parar.
+     - El progreso (`-bsp1`) se muestra en la web.
+  2. **Elige los vídeos**: descarta las muestras (con "sample" o "muestra" en el nombre y menos del 30 % del mayor) y el resto (`.nfo`, imágenes…). Los subtítulos sueltos se colocan junto al vídeo cuando solo hay uno.
+  3. **Renombra para Jellyfin** con título, año e identificador de TMDB si los hay (D-030); si no, con los del catálogo:
+     - `peliculas/Título (Año) [tmdbid-N]/Título (Año) - 4K HDR.mkv`. La etiqueta de versión permite tener varias versiones de una misma película.
+     - `series/Serie (Año) [tmdbid-N]/Season 01/Serie S01E01 - 1080p.mkv`, con `S01E02-E03` si son varios episodios. Los vídeos sin episodio de una serie van a `extras/`.
+     - Se quita lo que no vale en un nombre de fichero: `:` se convierte en ` -`, y `/ \ * ? " < > |`, los caracteres de control y los puntos finales desaparecen. La longitud se limita sin partir caracteres UTF-8.
+  4. **Mueve**: un renombrado si es posible. Si no (`EXDEV`), copia a un temporal, lo renombra y borra el original.
+     - Si el destino ya existe con el mismo tamaño, se da por importado, así que reintentar no duplica nada. Si es distinto, se numera: `Nombre (2).mkv`.
+     - Al terminar se borran las partes del búfer y la carpeta temporal.
+- **Hallazgo**: dentro del aislamiento de systemd, cada `ReadWritePaths` es un punto de montaje distinto. `rename()` falla entre ellos (`EXDEV`) aunque estén en el mismo disco. Por eso la comprobación de *Ajustes* prueba a renombrar de verdad un fichero entre el búfer y cada biblioteca, y la estructura de D-033 pone todo bajo `/srv/media` (un único punto de montaje).
+- **Estados de una descarga**: `queued` → `downloading` → `importing` → `completed` (en la biblioteca, con `library_path`). Si falla, `failed` con un motivo claro. Reintentar no vuelve a descargar lo que ya está en el búfer. La migración v6 devolvió a la cola las descargas terminadas antes de existir la importación, para importarlas.
+- **Criterio de TMDB, versión 2**: en series, un año distinto penaliza poco (−10), porque el año de la ficha suele ser el de la temporada (*Ultimate Spider-Man*: 2015 en la ficha, 2012 en TMDB). Al cambiar el criterio, las obras sin coincidencia se vuelven a buscar una vez.
+- **Verificación**:
+  - Tests con un ZIP troceado de verdad (episodios a `Season 01`, la muestra y el `.nfo` fuera, búfer y temporales limpios) y con el lanzador de procesos (un argumento `"hola; rm -rf /"` llega tal cual).
+  - En la Pi, *Toy Story Toons: Fiestasaurio Rex* (ZIP de 451 MB) se descargó en ~13 s y se importó en ~4 s.
+- **Pendiente**: para los RAR, Debian distribuye 7-Zip sin su códec (licencia no libre). Hay que instalar `7zip-rar`; mientras tanto, la importación falla con ese mensaje y se puede reintentar después de instalarlo.

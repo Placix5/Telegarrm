@@ -42,6 +42,27 @@ bool saveSettings(DbManager& db, const AppSettings& settings) {
            db.setSetting(kMinFreeBytes, std::to_string(settings.minFreeBytes));
 }
 
+std::optional<bool> canRename(const std::string& fromDir, const std::string& toDir) {
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    const std::string name = ".telegarrm-renombrado-" + std::to_string(::getpid());
+    const fs::path from = fs::path(fromDir) / name;
+    const fs::path to = fs::path(toDir) / name;
+    {
+        std::ofstream out(from);
+        if (!(out << "ok")) {
+            return std::nullopt;
+        }
+    }
+    fs::rename(from, to, ec);
+    if (!ec) {
+        fs::remove(to, ec);
+        return true;
+    }
+    fs::remove(from, ec);
+    return ec == std::errc::cross_device_link ? std::optional<bool>(false) : std::nullopt;
+}
+
 PathCheck checkPath(const std::string& path) {
     PathCheck check;
     namespace fs = std::filesystem;

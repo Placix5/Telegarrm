@@ -3,7 +3,9 @@
 // Los casos "reales" reproducen mensajes de canales sincronizados en la Pi (06/10/2026).
 
 #include <cstdint>
+#include <algorithm>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <set>
 #include <sstream>
@@ -13,6 +15,8 @@
 #include <unistd.h>
 
 #include "catalog.hpp"
+#include "library.hpp"
+#include "process.hpp"
 #include "media_parser.hpp"
 
 namespace {
@@ -707,6 +711,133 @@ void testDownloadQueue() {
     std::filesystem::remove(path + "-shm");
 }
 
+
+void testLibraryNames() {
+    using library::WorkInfo;
+    CHECK_EQ(library::sanitizeName("Batman: El regreso del Caballero Oscuro"), "Batman - El regreso del Caballero Oscuro");
+    CHECK_EQ(library::sanitizeName("AC/DC: ¿Qué? *Live*"), "AC DC - ¿Qué Live");  // "?" no vale en Windows ni Samba
+    CHECK_EQ(library::sanitizeName("Etc..."), "Etc");
+    CHECK_EQ(library::sanitizeName("   "), "Sin título");
+    {
+        // Recorte sin partir caracteres UTF-8 (cada "ñ" son dos bytes)
+        const std::string longName = library::sanitizeName(std::string(300, 'a') + std::string(100, '\xC3') );
+        CHECK(longName.size() <= 180);
+        std::string accents;
+        for (int i = 0; i < 120; ++i) {
+            accents += "ñ";
+        }
+        const std::string cut = library::sanitizeName(accents);
+        CHECK(cut.size() <= 180 && cut.size() % 2 == 0);
+    }
+    CHECK_EQ(library::workFolderName(WorkInfo{"Ted Lasso", 2020, 97546}), "Ted Lasso (2020) [tmdbid-97546]");
+    CHECK_EQ(library::workFolderName(WorkInfo{"Ted Lasso", std::nullopt, 0}), "Ted Lasso");
+    CHECK_EQ(library::seasonFolderName(4), "Season 04");
+    CHECK_EQ(library::movieFileName(WorkInfo{"Hokum", 2025, 1}, "4K HDR", ".mkv"), "Hokum (2025) - 4K HDR.mkv");
+    CHECK_EQ(library::movieFileName(WorkInfo{"Hokum", 2025, 1}, "", ".mkv"), "Hokum (2025).mkv");
+    CHECK_EQ(library::episodeFileName(WorkInfo{"Ted Lasso", 2020, 1}, 4, 8, 0, "1080p", ".mkv"), "Ted Lasso S04E08 - 1080p.mkv");
+    CHECK_EQ(library::episodeFileName(WorkInfo{"Serie", std::nullopt, 0}, 1, 2, 3, "", ".mp4"), "Serie S01E02-E03.mp4");
+    CHECK_EQ(library::versionLabel("2160p", true, {"REMUX"}), "4K HDR REMUX");
+    CHECK_EQ(library::versionLabel("1080p", false, {}), "1080p");
+    CHECK_EQ(library::versionLabel("", false, {}), "");
+}
+
+void testProcessWithoutShell() {
+    // Sin shell: el ";" llega tal cual como argumento, no ejecuta nada más
+    const process::Result result = process::run({"/bin/echo", "hola; rm -rf /"}, nullptr, nullptr);
+    CHECK(result.started);
+    CHECK_EQ(result.exitCode, 0);
+    CHECK_EQ(result.output, "hola; rm -rf /\n");
+    const process::Result missing = process::run({"/no/existe"}, nullptr, nullptr);
+    CHECK(!missing.started);
+}
+
+void writeFile(const std::filesystem::path& path, std::size_t size, char fill) {
+    std::filesystem::create_directories(path.parent_path());
+    std::ofstream out(path, std::ios::binary);
+    std::string data(size, fill);
+    // Contenido variado para que el zip no lo comprima casi a nada (y se trocee en varias partes)
+    for (std::size_t i = 0; i < data.size(); ++i) {
+        data[i] = static_cast<char>((i * 2654435761u + static_cast<unsigned char>(fill)) >> 13);
+    }
+    out.write(data.data(), static_cast<std::streamsize>(data.size()));
+}
+
+void testLibraryImport() {
+    namespace fs = std::filesystem;
+    const fs::path base = fs::temp_directory_path() / ("telegarrm_import_" + std::to_string(::getpid()));
+    fs::remove_all(base);
+    const fs::path buffer = base / "descargas";
+    const fs::path movies = base / "peliculas";
+    const fs::path series = base / "series";
+    fs::create_directories(movies);
+    fs::create_directories(series);
+
+    // 1) Película sin comprimir: se mueve con su nombre de Jellyfin
+    writeFile(buffer / "documents" / "Peli.Original.1080p.mkv", 5000, 'p');
+    library::ImportRequest movie;
+    movie.id = 1;
+    movie.kind = "movie";
+    movie.work = {"Batman: El regreso", 2012, 123};
+    movie.versionLabel = "1080p";
+    movie.parts = {(buffer / "documents" / "Peli.Original.1080p.mkv").string()};
+    movie.libraryRoot = movies.string();
+    const library::ImportResult moved = library::importRelease(movie, nullptr, nullptr);
+    CHECK(moved.ok);
+    CHECK(fs::exists(movies / "Batman - El regreso (2012) [tmdbid-123]" / "Batman - El regreso (2012) - 1080p.mkv"));
+    CHECK(!fs::exists(movie.parts[0]));
+
+    // 2) Temporada en un zip troceado: episodios a "Season 01", la muestra y el .nfo fuera
+    const std::string sevenZip = library::findSevenZip();
+    if (sevenZip.empty()) {
+        std::cout << "(7-Zip no está instalado: se omite la prueba con comprimidos)" << std::endl;
+    } else {
+        const fs::path source = base / "origen";
+        writeFile(source / "Serie 1x01.mkv", 6000, 'a');
+        writeFile(source / "Serie 1x02.mkv", 6000, 'b');
+        writeFile(source / "sample.mkv", 500, 'c');
+        writeFile(source / "info.nfo", 100, 'd');
+        fs::create_directories(buffer / "documents");
+        const process::Result packed = process::run(
+            {sevenZip, "a", "-tzip", "-mx0", "-v4k", (buffer / "documents" / "Pack.zip").string(),
+             (source / "Serie 1x01.mkv").string(), (source / "Serie 1x02.mkv").string(),
+             (source / "sample.mkv").string(), (source / "info.nfo").string()},
+            nullptr, nullptr);
+        CHECK_EQ(packed.exitCode, 0);
+
+        std::vector<std::string> parts;
+        for (const auto& entry : fs::directory_iterator(buffer / "documents")) {
+            if (entry.path().filename().string().rfind("Pack.zip.", 0) == 0) {
+                parts.push_back(entry.path().string());
+            }
+        }
+        std::sort(parts.begin(), parts.end());
+        CHECK(parts.size() > 1);  // De verdad está troceado
+
+        library::ImportRequest season;
+        season.id = 2;
+        season.kind = "series";
+        season.work = {"Serie", 2021, 0};
+        season.archive = true;
+        season.parts = parts;
+        season.libraryRoot = series.string();
+        int lastPercent = -1;
+        const library::ImportResult imported =
+            library::importRelease(season, [&lastPercent](int percent) { lastPercent = percent; }, nullptr);
+        CHECK(imported.ok);
+        if (!imported.ok) {
+            std::cerr << "    error: " << imported.error << std::endl;
+        }
+        const fs::path seasonDir = series / "Serie (2021)" / "Season 01";
+        CHECK(fs::exists(seasonDir / "Serie S01E01.mkv"));
+        CHECK(fs::exists(seasonDir / "Serie S01E02.mkv"));
+        CHECK(!fs::exists(series / "Serie (2021)" / "extras"));  // La muestra no se importa
+        CHECK_EQ(static_cast<int>(imported.files.size()), 2);
+        CHECK(!fs::exists(parts.front()));                      // El búfer queda libre
+        CHECK(!fs::exists(series / ".telegarrm"));              // Sin temporales
+    }
+    fs::remove_all(base);
+}
+
 }  // namespace
 
 int main() {
@@ -728,6 +859,9 @@ int main() {
     testCatalogDifferentFileName();
     testCatalogSharedAlbum();
     testDownloadQueue();
+    testLibraryNames();
+    testProcessWithoutShell();
+    testLibraryImport();
 
     std::cout << (checks - failures) << "/" << checks << " comprobaciones correctas" << std::endl;
     return failures == 0 ? 0 : 1;

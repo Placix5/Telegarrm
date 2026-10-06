@@ -116,10 +116,13 @@ public:
         bool archive = false;
         std::int64_t totalSize = 0;
         std::int64_t downloadedSize = 0;
-        std::string status;  // queued / downloading / completed / failed / cancelled
+        // queued / downloading / importing (descomprimiendo y moviendo) / completed (en la
+        // biblioteca) / failed / cancelled
+        std::string status;
         std::string error;
         std::int64_t createdAt = 0;
         std::int64_t updatedAt = 0;
+        std::string libraryPath;  // Carpeta de la obra en la biblioteca, al terminar
         std::vector<DownloadPart> parts;
     };
 
@@ -179,8 +182,10 @@ public:
     std::optional<Download> nextQueuedDownload();          // La más antigua en cola, con partes
     bool setDownloadStatus(std::int64_t id, const std::string& status, const std::string& error = "");
     bool updateDownloadProgress(std::int64_t id, std::int64_t downloadedSize, const std::vector<DownloadPart>& parts);
-    // Tras un reinicio, lo que estaba descargándose vuelve a la cola (TDLib continúa donde lo dejó)
+    // Tras un reinicio, lo que estaba descargándose o importándose vuelve a la cola (TDLib continúa
+    // donde lo dejó; la importación se repite)
     int requeueInterruptedDownloads();
+    bool setDownloadLibraryPath(std::int64_t id, const std::string& libraryPath);
     bool deleteDownload(std::int64_t id);
 
 private:

@@ -32,3 +32,8 @@ struct PathCheck {
 };
 
 PathCheck checkPath(const std::string& path);
+
+// ¿Se puede mover un fichero de una carpeta a otra con un simple renombrado? Se prueba de verdad:
+// dentro del aislamiento de systemd cada ReadWritePaths es un punto de montaje distinto y rename()
+// falla entre ellos (EXDEV) aunque estén en el mismo disco. std::nullopt si no se pudo probar.
+std::optional<bool> canRename(const std::string& fromDir, const std::string& toDir);

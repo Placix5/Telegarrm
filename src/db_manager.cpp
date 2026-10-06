@@ -131,6 +131,13 @@ constexpr Migration kMigrations[] = {
             PRIMARY KEY (download_id, message_id)
         ) WITHOUT ROWID;
     )SQL"},
+    {6, R"SQL(
+        -- Importación a la biblioteca (D-034): dónde quedó cada descarga
+        ALTER TABLE downloads ADD COLUMN library_path TEXT NOT NULL DEFAULT '';
+        -- Lo descargado antes de existir la importación vuelve a la cola: sus archivos siguen en
+        -- el búfer, así que solo se importa
+        UPDATE downloads SET status = 'queued' WHERE status = 'completed';
+    )SQL"},
 };
 
 // Finaliza automáticamente las sentencias preparadas.
@@ -258,7 +265,7 @@ std::int64_t now() {
 
 constexpr const char* kSelectDownload = R"SQL(
     SELECT id, chat_id, message_id, title, kind, season, episode, episode_end, name, quality, hdr, tags,
-           archive, total_size, downloaded_size, status, error, created_at, updated_at
+           archive, total_size, downloaded_size, status, error, created_at, updated_at, library_path
     FROM downloads
 )SQL";
 
@@ -283,6 +290,7 @@ DbManager::Download readDownload(sqlite3_stmt* stmt) {
     d.error = columnText(stmt, 16);
     d.createdAt = sqlite3_column_int64(stmt, 17);
     d.updatedAt = sqlite3_column_int64(stmt, 18);
+    d.libraryPath = columnText(stmt, 19);
     return d;
 }
 
@@ -858,7 +866,7 @@ DbManager::AddDownloadResult DbManager::addDownload(const Download& d) {
     Transaction tx(db_.get());
     StmtPtr existing = prepare(db_.get(), R"SQL(
         SELECT id FROM downloads
-        WHERE chat_id = ?1 AND message_id = ?2 AND status IN ('queued', 'downloading', 'completed');
+        WHERE chat_id = ?1 AND message_id = ?2 AND status IN ('queued', 'downloading', 'importing', 'completed');
     )SQL");
     StmtPtr insert = prepare(db_.get(), R"SQL(
         INSERT INTO downloads (chat_id, message_id, title, kind, season, episode, episode_end, name, quality, hdr,
@@ -1043,7 +1051,8 @@ int DbManager::requeueInterruptedDownloads() {
     if (!db_) {
         return 0;
     }
-    StmtPtr stmt = prepare(db_.get(), "UPDATE downloads SET status = 'queued', updated_at = ?1 WHERE status = 'downloading';");
+    StmtPtr stmt = prepare(db_.get(),
+                           "UPDATE downloads SET status = 'queued', updated_at = ?1 WHERE status IN ('downloading', 'importing');");
     if (!stmt) {
         return 0;
     }
@@ -1070,4 +1079,23 @@ bool DbManager::deleteDownload(std::int64_t id) {
         return false;
     }
     return sqlite3_changes(db_.get()) > 0;
+}
+
+bool DbManager::setDownloadLibraryPath(std::int64_t id, const std::string& libraryPath) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!db_) {
+        return false;
+    }
+    StmtPtr stmt = prepare(db_.get(), "UPDATE downloads SET library_path = ?2, updated_at = ?3 WHERE id = ?1;");
+    if (!stmt) {
+        return false;
+    }
+    sqlite3_bind_int64(stmt.get(), 1, id);
+    bindText(stmt.get(), 2, libraryPath);
+    sqlite3_bind_int64(stmt.get(), 3, now());
+    if (sqlite3_step(stmt.get()) != SQLITE_DONE) {
+        logError(db_.get(), "guardar la ruta en la biblioteca");
+        return false;
+    }
+    return true;
 }

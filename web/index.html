@@ -51,7 +51,7 @@
     <section aria-labelledby="descargas">
       <h2 id="descargas">Descargas</h2>
       <p class="hint" id="downloads-empty">No hay descargas. Elige una versión en la ficha de una serie o película y pulsa «Almacenar en disco».</p>
-      <p class="hint" id="downloads-note" hidden>De momento los archivos se guardan en la caché de Telegram de la Raspberry Pi; moverlos a la biblioteca llegará en el siguiente paso.</p>
+      <p class="hint" id="downloads-note" hidden>Al terminar, cada descarga se descomprime si hace falta y se lleva a la biblioteca con nombres para Jellyfin (carpetas en Ajustes).</p>
       <ul class="download-list" id="download-list"></ul>
     </section>
   </div>
@@ -89,7 +89,7 @@
         <div class="field">
           <label for="set-download_dir">Búfer de descargas</label>
           <input id="set-download_dir" spellcheck="false" placeholder="db/tdlib (predeterminado)">
-          <p class="hint">Donde Telegram descarga los archivos (también los trozos a medio bajar) antes de llevarlos a la biblioteca. Ponlo en el mismo disco que la biblioteca: así pasarlos es instantáneo y no se escriben dos veces.</p>
+          <p class="hint">Donde Telegram descarga los archivos (también los trozos a medio bajar) antes de llevarlos a la biblioteca. Ponlo en el mismo disco que la biblioteca: así pasarlos es instantáneo y no se escriben dos veces. Al cambiarlo, lo que hubiera en el búfer anterior no se reutiliza (se puede borrar).</p>
           <p class="field-status" id="status-download_dir"></p>
         </div>
         <div class="field">

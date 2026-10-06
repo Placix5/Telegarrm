@@ -26,14 +26,14 @@ Detalle y tareas en [docs/ROADMAP.md](docs/ROADMAP.md).
 - [x] **Fase 0**: Estructura base y servidor HTTP (`cpp-httplib`).
 - [x] **Fase 1**: Motor TDLib en un hilo propio y SQLite para configuración y estado. *Completada.*
 - [x] **Fase 2**: Canales y catálogo: lectura del historial de los canales elegidos, catálogo con versiones y metadatos de TMDB.
-- [ ] **Fase 3**: Descargas: cola, descompresión y renombrado (núcleo antiguo de C++). *En curso: cola persistente y descarga con TDLib listas; falta llevar los archivos a la biblioteca.*
+- [x] **Fase 3**: Descargas: cola, descompresión y renombrado para Jellyfin.
 - [ ] **Fase 4**: Tele-ARR: escucha de mensajes nuevos, reemplazo de calidades y auto-descarga de capítulos en seguimiento.
 
 ## Dependencias
 - Compilador con C++17, CMake >= 3.14, SQLite3 y TDLib >= 1.8.
 - Paquetes en Debian / Raspberry Pi OS:
   ```bash
-  sudo apt install build-essential cmake git libsqlite3-dev gperf zlib1g-dev libssl-dev
+  sudo apt install build-essential cmake git libsqlite3-dev gperf zlib1g-dev libssl-dev 7zip 7zip-rar
   ```
 - TDLib (solo la librería JSON compartida) en `~/td/tdlib`, donde CMake lo encuentra automáticamente. En una Raspberry Pi 5 tarda unos 30 minutos:
   ```bash
@@ -98,7 +98,7 @@ Desplegar una versión nueva del programa no necesita `sudo`: `cmake --build bui
 | `GET /api/catalog` | Obras (series y películas) de todos los canales: título, títulos alternativos, año, versiones disponibles (`qualities`, `hdr`), idiomas, géneros, temas, `airing` (en emisión), temporadas, episodios, tamaño en bytes, `tmdb_id` si los archivos lo traen |
 | `GET /api/catalog/{chat}/{ficha}` | Obra completa: sinopsis, ficha original y sus archivos lógicos (`releases`) con calidad, HDR, etiquetas de versión, temporada y episodio, y sus partes. Vale cualquier ficha de la obra |
 | `GET /api/catalog/{chat}/{ficha}/poster` | Portada: la foto de la ficha (de Telegram) o, si no hay, la carátula de TMDB; se guardan tras la primera vez |
-| `GET /api/downloads` | Cola de descargas con su progreso (`downloaded_size`, `bytes_per_second`, `status`: queued, downloading, completed, failed, cancelled) |
+| `GET /api/downloads` | Cola de descargas con su progreso (`downloaded_size`, `bytes_per_second`, `import_percent`, `library_path`; `status`: queued, downloading, importing, completed —en la biblioteca—, failed, cancelled) |
 | `POST /api/downloads` | `{"chat_id": -100..., "message_id": ...}` (cualquier parte de un archivo del catálogo): 201, o 409 si ya está en la cola o descargado |
 | `POST /api/downloads/{id}/cancel` | Cancelar (borra lo descargado a medias) |
 | `POST /api/downloads/{id}/retry` | Reintentar una descarga fallida o cancelada |
@@ -116,7 +116,8 @@ Ejemplo de `/api/status`:
 Los pasos del inicio de sesión responden `{"ok": true}`, o `{"error": "..."}` con HTTP 400 (dato incorrecto, ej. `PHONE_CODE_INVALID`), 409 (Telegram no espera ese dato ahora) o 504 (Telegram no responde).
 
 ## Historial de cambios
-### Fase 3 (en curso): descargas
+### Fase 3: descargas e importación a la biblioteca
+- Importación (D-034): al terminar, cada descarga se descomprime si hace falta (7-Zip, sin shell), se eligen los vídeos y subtítulos y se mueven a la biblioteca con nombres para Jellyfin (`Título (Año) [tmdbid-N]/…`, `Season 01/Serie S01E01 - 1080p.mkv`), y se libera el búfer.
 - Pestaña *Ajustes*: búfer de descargas de TDLib (aplicado con un reinicio ordenado desde la web), bibliotecas y espacio libre mínimo, con validación real de cada ruta (D-032). La unidad admite `/srv/media` y rutas adicionales vía `install-service.sh`.
 - Arreglos de la web: flecha propia en los desplegables y botones de descarga de ancho fijo que muestran el progreso.
 - Cola de descargas persistente: botón "Almacenar en disco" por versión o por temporada, pestaña *Descargas* con progreso, velocidad y tiempo restante, cancelación (borra lo parcial), reintento, reanudación tras reiniciar y comprobación de espacio libre. Los archivos quedan, de momento, en la caché de TDLib (D-031).

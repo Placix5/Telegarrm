@@ -72,8 +72,9 @@ std::string formatSize(std::int64_t bytes) {
 
 }  // namespace
 
-DownloadManager::DownloadManager(DbManager& db, TelegramClient& telegram, std::string filesDir)
-    : db_(db), telegram_(telegram), filesDir_(std::move(filesDir)) {}
+DownloadManager::DownloadManager(DbManager& db, TelegramClient& telegram, std::string filesDir,
+                                 WorkInfoResolver workInfo)
+    : db_(db), telegram_(telegram), filesDir_(std::move(filesDir)), workInfo_(std::move(workInfo)) {}
 
 DownloadManager::~DownloadManager() {
     stop();
@@ -170,14 +171,18 @@ void DownloadManager::run() {
                   << formatSize(download.totalSize) << ")" << std::endl;
 
         std::string error;
-        const Outcome outcome = process(download, error);
+        Outcome outcome = process(download, error);
+        if (outcome == Outcome::Completed) {
+            std::cout << "[Descargas] Descargada #" << download.id << ": " << download.name << std::endl;
+            outcome = importToLibrary(download, error);
+        }
         activeId_ = 0;
         cancelId_ = 0;
 
         switch (outcome) {
             case Outcome::Completed:
                 db_.setDownloadStatus(download.id, "completed");
-                std::cout << "[Descargas] Terminada #" << download.id << ": " << download.name << std::endl;
+                std::cout << "[Descargas] En la biblioteca #" << download.id << ": " << download.libraryPath << std::endl;
                 break;
             case Outcome::Failed:
                 db_.setDownloadStatus(download.id, "failed", error);
@@ -188,7 +193,7 @@ void DownloadManager::run() {
                 std::cout << "[Descargas] Cancelada #" << download.id << std::endl;
                 break;
             case Outcome::Stopped:
-                return;  // Sigue "downloading": al arrancar vuelve a la cola y TDLib continúa
+                return;  // Sigue "downloading"/"importing": al arrancar vuelve a la cola y se retoma
         }
     }
 }
@@ -345,8 +350,64 @@ DownloadManager::Outcome DownloadManager::process(DbManager::Download& download,
             lastPersist = now;
         }
         if (allDone) {
+            for (std::size_t i = 0; i < parts.size(); ++i) {
+                download.parts[i] = parts[i].data;
+            }
             return Outcome::Completed;
         }
         sleepFor(kPollInterval);
     }
+}
+
+DownloadManager::Outcome DownloadManager::importToLibrary(DbManager::Download& download, std::string& error) {
+    db_.setDownloadStatus(download.id, "importing");
+    {
+        std::lock_guard<std::mutex> lock(progressMutex_);
+        progress_.downloaded = download.totalSize;
+        progress_.bytesPerSecond = 0;
+        progress_.importPercent = download.archive ? 0 : 100;
+    }
+
+    const AppSettings settings = loadSettings(db_);
+    library::ImportRequest request;
+    request.id = download.id;
+    request.kind = download.kind;
+    request.work = workInfo_(download);
+    request.season = download.season;
+    request.episode = download.episode;
+    request.episodeEnd = download.episodeEnd;
+    request.versionLabel = library::versionLabel(download.quality, download.hdr, download.tags);
+    request.archive = download.archive;
+    for (const DbManager::DownloadPart& part : download.parts) {
+        request.parts.push_back(part.localPath);
+    }
+    request.libraryRoot = download.kind == "series" ? settings.seriesDir : settings.moviesDir;
+    request.minFreeBytes = settings.minFreeBytes;
+
+    const library::ImportResult result = library::importRelease(
+        request,
+        [this](int percent) {
+            std::lock_guard<std::mutex> lock(progressMutex_);
+            progress_.importPercent = percent;
+        },
+        [this, &download] { return stopping() || cancelId_ == download.id; });
+
+    if (result.stopped) {
+        if (cancelId_ != download.id) {
+            return Outcome::Stopped;
+        }
+        // Cancelada al importar: se libera el búfer
+        std::error_code ec;
+        for (const std::string& part : request.parts) {
+            std::filesystem::remove(part, ec);
+        }
+        return Outcome::Cancelled;
+    }
+    if (!result.ok) {
+        error = "Descargado, pero no se pudo llevar a la biblioteca: " + result.error;
+        return Outcome::Failed;
+    }
+    download.libraryPath = result.libraryPath;
+    db_.setDownloadLibraryPath(download.id, result.libraryPath);
+    return Outcome::Completed;
 }

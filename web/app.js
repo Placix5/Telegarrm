@@ -453,9 +453,11 @@ function externalLink(url, text) {
 // ---------------------------------------------------------------------------
 
 const DOWNLOAD_STATUS = {
-  queued: "En cola", downloading: "Descargando", completed: "Descargado", failed: "Falló", cancelled: "Cancelada",
+  queued: "En cola", downloading: "Descargando", importing: "Importando", completed: "En la biblioteca",
+  failed: "Falló", cancelled: "Cancelada",
 };
-const ACTIVE_STATUSES = ["queued", "downloading", "completed"];
+const ACTIVE_STATUSES = ["queued", "downloading", "importing", "completed"];
+const IN_PROGRESS = ["queued", "downloading", "importing"];
 
 let downloadList = [];
 let downloadsByKey = new Map();  // "chat:mensaje" de la primera parte -> descarga más reciente
@@ -498,7 +500,11 @@ function applyButtonState(button) {
   let disabled = false;
   if (download && download.status === "queued") { text = "En cola"; disabled = true; }
   if (download && download.status === "downloading") { text = `Descargando ${percent(download)} %`; disabled = true; }
-  if (download && download.status === "completed") { text = "Descargado"; disabled = true; }
+  if (download && download.status === "importing") {
+    text = download.import_percent !== null && download.import_percent < 100 ? `Importando ${download.import_percent} %` : "Importando…";
+    disabled = true;
+  }
+  if (download && download.status === "completed") { text = "En la biblioteca"; disabled = true; }
   if (download && download.status === "failed") text = "Reintentar";
   button.textContent = text;
   button.disabled = disabled;
@@ -540,7 +546,7 @@ function renderDownloads() {
   const list = $("download-list");
   list.replaceChildren();
   $("downloads-empty").hidden = downloadList.length > 0;
-  $("downloads-note").hidden = !downloadList.some((d) => d.status === "completed");
+  $("downloads-note").hidden = downloadList.length === 0;
 
   for (const d of downloadList) {
     const item = el("li");
@@ -552,14 +558,24 @@ function renderDownloads() {
     head.append(info, status);
     item.append(head);
 
-    if (d.status !== "cancelled") {
+    // Mientras importa, la barra muestra la descompresión
+    const importing = d.status === "importing";
+    const shown = importing ? (d.import_percent === null ? 0 : d.import_percent) : percent(d);
+    if (d.status !== "cancelled" && d.status !== "completed") {
       const bar = el("div", "progress");
       const fill = el("div");
-      fill.style.width = `${percent(d)}%`;
+      fill.style.width = `${shown}%`;
       bar.append(fill);
       item.append(bar);
     }
-    const meta = [`${formatSize(d.downloaded_size)} de ${formatSize(d.total_size)} (${percent(d)} %)`];
+    const meta = [];
+    if (importing) {
+      meta.push(d.import_percent !== null && d.import_percent < 100 ? `Descomprimiendo: ${d.import_percent} %` : "Moviendo a la biblioteca…");
+    } else if (d.status !== "completed") {
+      meta.push(`${formatSize(d.downloaded_size)} de ${formatSize(d.total_size)} (${percent(d)} %)`);
+    } else {
+      meta.push(formatSize(d.total_size));
+    }
     if (d.status === "downloading" && d.bytes_per_second > 0) {
       meta.push(`${SIZE_FORMAT.format(d.bytes_per_second / 1e6)} MB/s`);
       const left = formatDuration((d.total_size - d.downloaded_size) / d.bytes_per_second);
@@ -567,6 +583,7 @@ function renderDownloads() {
     }
     meta.push(`añadida el ${formatDate(d.created_at)}`);
     item.append(el("div", "download-meta", meta.join(" · ")));
+    if (d.library_path) item.append(el("div", "download-meta", `📁 ${d.library_path}`));
     if (d.error) item.append(el("div", "err", d.error));
 
     const actions = el("div", "channel-actions");
@@ -576,7 +593,7 @@ function renderDownloads() {
       button.addEventListener("click", handler);
       actions.append(button);
     };
-    if (d.status === "queued" || d.status === "downloading") {
+    if (IN_PROGRESS.includes(d.status)) {
       action("Cancelar", "danger", () => {
         if (confirm("¿Cancelar la descarga? Se borrará lo descargado hasta ahora.")) downloadAction(d.id, "cancel", "POST");
       });
@@ -599,7 +616,7 @@ async function refreshDownloads() {
     const key = releaseKey(d.chat_id, d.message_id);
     if (!downloadsByKey.has(key)) downloadsByKey.set(key, d);
   }
-  const active = downloadList.filter((d) => d.status === "queued" || d.status === "downloading").length;
+  const active = downloadList.filter((d) => IN_PROGRESS.includes(d.status)).length;
   $("downloads-count").textContent = active;
   $("downloads-count").hidden = active === 0;
   if (currentRoute().view === "downloads") renderDownloads();
@@ -635,8 +652,8 @@ function renderSettings(data) {
   fs.hidden = data.same_filesystem === null;
   fs.className = data.same_filesystem ? "hint ok" : "hint warn";
   fs.textContent = data.same_filesystem
-    ? "✓ El búfer y las bibliotecas están en el mismo disco: llevar lo descargado a la biblioteca será instantáneo."
-    : "⚠ El búfer y las bibliotecas están en discos distintos: cada archivo se copiará (se escribirá dos veces).";
+    ? "✓ Llevar lo descargado del búfer a la biblioteca será instantáneo (un simple renombrado)."
+    : "⚠ El búfer y las bibliotecas no comparten disco (o están en carpetas autorizadas por separado en el servicio): cada archivo se copiará y se escribirá dos veces. Ponlos bajo una misma carpeta, como /srv/media.";
 
   $("settings-warning").textContent = data.warning || "";
   $("settings-warning").hidden = !data.warning;

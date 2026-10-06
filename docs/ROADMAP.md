@@ -39,13 +39,13 @@ Todo se gestiona desde el navegador, sin SSH ni terminal.
 
 Formato real visto: canales de una serie con una ficha (foto + pie con título, año, calidad, géneros e idioma), portadas de temporada sin pie, episodios `1x01 - Serie.mkv` o `Serie #01x01 - Título.mp4` y textos de cierre.
 
-## Fase 3: Descargas (en curso)
+## Fase 3: Descargas (completada)
 - [x] **Rutas** de la biblioteca y del búfer configurables desde la web (`settings`).
 - [x] **Elegir versión**: la web ofrece las versiones de cada película o episodio (4K HDR, 1080p, REMUX…) y, en las series, la temporada completa en una versión.
 - [x] **Cola persistente** (tablas `downloads` y `download_parts`) con un trabajador: progreso, reintentos, reanudación tras reiniciar, cancelación y comprobación de espacio libre (D-031). Los archivos quedan en la caché de TDLib.
 - [x] **Ajustes** en la web: búfer de descargas de TDLib, bibliotecas y espacio libre mínimo (D-032).
-- [ ] **Biblioteca**: estructura propuesta `/srv/media/{descargas,peliculas,series}` en el RAID (D-033), pendiente de que Plácido la confirme y la cree.
-- [ ] **Postproceso** con nombres para Jellyfin (`Título (Año) [tmdbid-N]`, `Season 01`), migrado del núcleo antiguo: descompresión (7z, zip troceado `.zip.001`, multiparte `.partN.rar`), limpieza de nombres y colocación en `Serie/Temporada 01/Serie - S01E01.mkv`.
+- [x] **Biblioteca**: `/srv/media/{descargas,peliculas,series}` (D-033); en el servidor, el RAID montado en `/srv/media`.
+- [x] **Importación** (D-034): descompresión con 7-Zip sin shell (zip troceado, multiparte RAR, 7z), vídeos sin muestras, subtítulos, nombres para Jellyfin (`Título (Año) [tmdbid-N]`, `Season 01`) y limpieza del búfer. Para RAR hace falta el paquete `7zip-rar`.
 - [x] **API**: `POST /api/downloads`, `GET /api/downloads` (progreso), cancelar, reintentar y quitar.
 - [x] **Web**: botón "Almacenar en disco" y pestaña *Descargas* con el progreso.
 

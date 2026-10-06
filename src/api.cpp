@@ -454,8 +454,10 @@ Json downloadJson(const DbManager::Download& d, const std::optional<DownloadMana
             {"total_size", d.totalSize},
             {"downloaded_size", live ? live->downloaded : d.downloadedSize},
             {"bytes_per_second", live ? live->bytesPerSecond : 0.0},
+            {"import_percent", live && live->importPercent >= 0 ? Json(live->importPercent) : Json(nullptr)},
             {"status", d.status},
             {"error", nullable(d.error)},
+            {"library_path", nullable(d.libraryPath)},
             {"created_at", d.createdAt},
             {"updated_at", d.updatedAt}};
 }
@@ -526,7 +528,7 @@ void registerDownloadRoutes(httplib::Server& server, DbManager& db, Catalog& cat
         }
         if (download->status == "queued") {
             db.setDownloadStatus(*id, "cancelled");
-        } else if (download->status != "downloading" || !downloads.cancelActive(*id)) {
+        } else if ((download->status != "downloading" && download->status != "importing") || !downloads.cancelActive(*id)) {
             sendError(res, 409, "Solo se pueden cancelar descargas en cola o en curso");
             return;
         }
@@ -557,7 +559,7 @@ void registerDownloadRoutes(httplib::Server& server, DbManager& db, Catalog& cat
             sendError(res, 404, "Descarga no encontrada");
             return;
         }
-        if (download->status == "queued" || download->status == "downloading") {
+        if (download->status == "queued" || download->status == "downloading" || download->status == "importing") {
             sendError(res, 409, "Cancélala antes de quitarla de la lista");
             return;
         }
@@ -734,7 +736,8 @@ Json pathCheckJson(const PathCheck& check) {
 Json settingsJson(DbManager& db, const ApiServices& services) {
     const AppSettings settings = loadSettings(db);
     const std::string configuredDownloadDir = settings.downloadDir.empty() ? kDefaultDownloadDir : settings.downloadDir;
-    const PathCheck download = checkPath(std::filesystem::absolute(configuredDownloadDir).string());
+    const std::string downloadPath = std::filesystem::absolute(configuredDownloadDir).string();
+    const PathCheck download = checkPath(downloadPath);
 
     Json checks = {{"download_dir", pathCheckJson(download)}};
     Json sameFilesystem = nullptr;  // ¿Mover del búfer a la biblioteca será un simple renombrado?
@@ -746,9 +749,10 @@ Json settingsJson(DbManager& db, const ApiServices& services) {
         }
         const PathCheck library = checkPath(path);
         checks[field] = pathCheckJson(library);
-        if (download.device && library.device) {
-            const bool same = *download.device == *library.device;
-            sameFilesystem = sameFilesystem.is_null() ? Json(same) : Json(sameFilesystem.get<bool>() && same);
+        // Se prueba a renombrar de verdad (con el aislamiento, mismo disco no basta, D-034)
+        const auto same = download.ok && library.ok ? canRename(downloadPath, path) : std::nullopt;
+        if (same) {
+            sameFilesystem = sameFilesystem.is_null() ? Json(*same) : Json(sameFilesystem.get<bool>() && *same);
         }
     }
 

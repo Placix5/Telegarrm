@@ -4,29 +4,35 @@
 #include <chrono>
 #include <condition_variable>
 #include <cstdint>
+#include <functional>
 #include <mutex>
 #include <optional>
 #include <string>
 #include <thread>
 
 #include "db_manager.hpp"
+#include "library.hpp"
 
 class TelegramClient;
 
 // Procesa la cola de descargas (tabla downloads) en su propio hilo, una descarga cada vez
-// (docs/DECISIONS.md, D-031). Cada descarga es un archivo lógico del catálogo: se piden a TDLib
-// todas sus partes y se sigue su progreso. Los archivos quedan en la caché de TDLib (db/tdlib);
-// moverlos y descomprimirlos en la biblioteca es el siguiente paso de la Fase 3.
+// (docs/DECISIONS.md, D-031 y D-034). Cada descarga es un archivo lógico del catálogo: se piden a
+// TDLib todas sus partes al búfer y, al terminar, se importa a la biblioteca (descomprimir,
+// renombrar para Jellyfin y mover).
 class DownloadManager {
 public:
     struct Progress {
         std::int64_t downloaded = 0;  // Bytes
         std::int64_t total = 0;
         double bytesPerSecond = 0;
+        int importPercent = -1;       // Progreso de la descompresión (-1 = aún no)
     };
 
+    // Datos de la obra para los nombres en la biblioteca (título, año y TMDB)
+    using WorkInfoResolver = std::function<library::WorkInfo(const DbManager::Download&)>;
+
     // filesDir: carpeta donde TDLib guarda los archivos (para comprobar el espacio libre)
-    DownloadManager(DbManager& db, TelegramClient& telegram, std::string filesDir);
+    DownloadManager(DbManager& db, TelegramClient& telegram, std::string filesDir, WorkInfoResolver workInfo);
     ~DownloadManager();
 
     DownloadManager(const DownloadManager&) = delete;
@@ -46,7 +52,10 @@ private:
     enum class Outcome { Completed, Failed, Cancelled, Stopped };
 
     void run();
+    // Descarga las partes; al terminar, download.parts tiene sus rutas locales
     Outcome process(DbManager::Download& download, std::string& error);
+    // Importa a la biblioteca una descarga terminada
+    Outcome importToLibrary(DbManager::Download& download, std::string& error);
     bool telegramReady() const;
     bool sleepFor(std::chrono::milliseconds duration);
     bool stopping();
@@ -54,6 +63,7 @@ private:
     DbManager& db_;
     TelegramClient& telegram_;
     const std::string filesDir_;
+    const WorkInfoResolver workInfo_;
     std::thread worker_;
 
     std::mutex controlMutex_;  // Protege stopRequested_ y wakeRequested_

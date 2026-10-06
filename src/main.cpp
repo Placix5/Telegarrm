@@ -107,8 +107,19 @@ int main() {
         catalog.rebuildChannel(chatId);
         metadata.requestRun();
     });
-    // Cola de descargas; TDLib guarda los archivos en el búfer
-    DownloadManager downloads(db, telegram, downloadDir);
+    // Cola de descargas; TDLib guarda los archivos en el búfer y después se importan a la biblioteca.
+    // Para los nombres: título, año e identificador de TMDB si los hay; si no, los del catálogo.
+    DownloadManager downloads(db, telegram, downloadDir, [&catalog, &metadata](const DbManager::Download& download) {
+        library::WorkInfo work{download.title, std::nullopt, 0};
+        if (const auto ref = catalog.findRelease(download.chatId, download.messageId)) {
+            const Catalog::Item& item = *ref->item;
+            const auto info = metadata.lookup(item);
+            work.title = info && !info->title.empty() ? info->title : item.title;
+            work.year = info && info->year ? info->year : item.year;
+            work.tmdbId = info ? static_cast<long>(info->providerId) : item.tmdbId;
+        }
+        return work;
+    });
 
     // Inicializar el servidor HTTP
     httplib::Server svr;

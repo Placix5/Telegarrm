@@ -43,8 +43,10 @@ add_library(telegarrm_core STATIC
     src/channel_sync.cpp
     src/db_manager.cpp
     src/download_manager.cpp
+    src/library.cpp
     src/media_parser.cpp
     src/metadata.cpp
+    src/process.cpp
     src/settings.cpp
     src/tmdb_client.cpp
     src/signal_watcher.cpp
