@@ -130,6 +130,11 @@ Formato: **Contexto** (qué problema había), **Decisión**, **Alternativas desc
   - **polkit**: la regla `deploy/50-telegarrm.rules` permite a `plax` hacer `start`, `stop` y `restart` *solo* de esta unidad sin `sudo`, para desplegar versiones nuevas. No permite habilitarla, modificarla ni tocar otras unidades.
 - **Unidad copiada, no enlazada**: systemd la lee como root. Si fuera un enlace a la `home`, `plax` podría cambiar `User=` o `ExecStart=` y escalar privilegios.
 - **Verificación**: antes de instalarlo se probó el binario real con las 24 propiedades del servicio mediante `systemd-run --user`. TDLib conecta, el sincronizador escribe en `db/` y la parada es ordenada. Dentro del proceso: `Seccomp: 2`, `NoNewPrivs: 1` y la raíz en solo lectura.
+- **Verificación tras instalarlo** (06/10/2026):
+  - Corre como `plax` con `CapEff` vacío, `NoNewPrivs: 1` y `Seccomp: 2`.
+  - Solo `db/` se monta con escritura y la raíz es de solo lectura.
+  - `systemd-analyze security` da una exposición de 3.1 ("OK").
+  - `plax` reinicia el servicio sin `sudo` en unos 50 ms. polkit le niega `disable` y cualquier acción sobre otras unidades.
 - **Consecuencias**:
   - Cambiar algo en `deploy/` exige volver a ejecutar el script con `sudo`.
   - En la Fase 3 hay que añadir la ruta de la biblioteca de series y películas a `ReadWritePaths`.
