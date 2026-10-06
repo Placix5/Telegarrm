@@ -1,31 +1,58 @@
-# Servicio de usuario de systemd para Telegarrm.
+# Servicio de sistema de systemd para Telegarrm (corre como el usuario plax).
+# Instalación, actualización y motivos: README ("Como servicio") y docs/DECISIONS.md (D-012).
 #
-# Instalación (sin sudo):
-#   systemctl --user link ~/Telegarrm/deploy/telegarrm.service
-#   systemctl --user enable --now telegarrm
-# Para que arranque con la Pi sin iniciar sesión (una sola vez, con sudo):
-#   sudo loginctl enable-linger $USER
+# Se COPIA a /etc/systemd/system (no se enlaza): la unidad la lee systemd como root
+# y no debe poder modificarla un usuario sin privilegios.
 #
-# Logs:      journalctl --user-unit telegarrm -f
-# Reinicio:  systemctl --user restart telegarrm
+# Logs:      journalctl -u telegarrm -f
+# Reinicio:  systemctl restart telegarrm   (sin sudo gracias a deploy/50-telegarrm.rules)
 
 [Unit]
 Description=Telegarrm: gestor de descargas desde Telegram
 Documentation=https://github.com/Placix5/Telegarrm
+Wants=network-online.target
+After=network-online.target
 
 [Service]
 Type=simple
+User=plax
+Group=plax
 # Las rutas db/ y web/ son relativas al directorio de trabajo
-WorkingDirectory=%h/Telegarrm
-# TELEGARRM_API_ID y TELEGARRM_API_HASH (fichero con permisos 600)
-EnvironmentFile=%h/.config/telegarrm/env
-ExecStart=%h/Telegarrm/build/telegarrm
+WorkingDirectory=/home/plax/Telegarrm
+# TELEGARRM_API_ID y TELEGARRM_API_HASH (fichero con permisos 600; lo lee systemd)
+EnvironmentFile=/home/plax/.config/telegarrm/env
+ExecStart=/home/plax/Telegarrm/build/telegarrm
 # SIGTERM provoca una parada ordenada (TDLib incluido); TDLib tiene hasta 10 s para cerrar
 KillSignal=SIGTERM
 TimeoutStopSec=30
 Restart=on-failure
 RestartSec=10
+# Ficheros nuevos sin permisos para "otros"; la sesión de TDLib se crea aparte con 0700
+UMask=0027
+
+# --- Aislamiento ---
+# Solo puede escribir en db/. Cuando haya descargas (Fase 3), añadir aquí la biblioteca.
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/plax/Telegarrm/db
+PrivateTmp=yes
+PrivateDevices=yes
 NoNewPrivileges=yes
+CapabilityBoundingSet=
+RestrictSUIDSGID=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictRealtime=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+# AF_NETLINK: getaddrinfo/getifaddrs lo usan para detectar las interfaces de red
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
 
 [Install]
-WantedBy=default.target
+WantedBy=multi-user.target

@@ -12,9 +12,9 @@ Telegarrm es un servicio daemon (stack ARR) que utiliza Telegram (TDLib) como fu
   - `signal_watcher.cpp`: parada ordenada con SIGINT/SIGTERM (clase `SignalWatcher`)
 - `include/`: Cabeceras y dependencias de un solo archivo (`httplib.h`, `nlohmann/json.hpp`)
 - `web/`: Interfaz web (`index.html`, `style.css`, `app.js`, sin dependencias)
-- `deploy/`: Servicio de systemd
+- `deploy/`: Servicio de systemd, regla de polkit y script de instalación
 - `db/`: Datos generados al ejecutar: `telegarrm.db` (SQLite) y `tdlib/` (sesión de Telegram)
-- `docs/`: Documentación; la planificación vigente está en [docs/ROADMAP.md](docs/ROADMAP.md)
+- `docs/`: Documentación; la planificación vigente está en [docs/ROADMAP.md](docs/ROADMAP.md) y los motivos de cada decisión en [docs/DECISIONS.md](docs/DECISIONS.md)
 - `build/`: Archivos de compilación
 
 ## Fases de Desarrollo
@@ -62,13 +62,13 @@ Ejecútalo desde la raíz del proyecto: las rutas `db/` y `web/` son relativas a
 La primera vez, abre `http://<ip-de-la-pi>:8080/` e inicia sesión en Telegram (teléfono, código y, si la tienes, contraseña de verificación en dos pasos). La sesión se conserva entre reinicios.
 
 ### Como servicio (systemd)
-`deploy/telegarrm.service` es un servicio de usuario: se gestiona sin `sudo` y lee las credenciales de `~/.config/telegarrm/env` (permisos `600`, con las dos variables de [Configuración](#configuración)).
+`deploy/telegarrm.service` es un servicio de sistema que corre como `plax`, aislado (solo puede escribir en `db/`), y lee las credenciales de `~/.config/telegarrm/env` (permisos `600`, con las dos variables de [Configuración](#configuración)). La regla de polkit `deploy/50-telegarrm.rules` permite a `plax` arrancarlo, pararlo y reiniciarlo sin `sudo`. Motivos en [docs/DECISIONS.md](docs/DECISIONS.md) (D-013).
+
+Instalación con `sudo`, una vez y cada vez que cambie algo en `deploy/`. El script **copia** la unidad y la regla a `/etc` como ficheros de root; no las enlaza, porque las leen systemd y polkit con privilegios.
 ```bash
-systemctl --user link ~/Telegarrm/deploy/telegarrm.service
-systemctl --user enable --now telegarrm
-sudo loginctl enable-linger $USER   # una vez: arrancar con la Pi sin iniciar sesión
+sudo ./deploy/install-service.sh
 ```
-Logs con `journalctl --user-unit telegarrm -f`; reinicio con `systemctl --user restart telegarrm` (parada ordenada incluida).
+Desplegar una versión nueva del programa no necesita `sudo`: `cmake --build build && systemctl restart telegarrm` (con parada ordenada). Logs con `journalctl -u telegarrm -f`.
 
 > La web aún no tiene autenticación y el inicio de sesión viaja por HTTP sin cifrar: úsala solo dentro de tu red local o a través de la VPN.
 
@@ -99,7 +99,8 @@ Los pasos del inicio de sesión responden `{"ok": true}`, o `{"error": "..."}` c
 - Esquema de BD versionado con migraciones (`PRAGMA user_version`); WAL para escribir menos en la tarjeta SD.
 - `ChannelSync` copia el historial de los canales vigilados en la tabla `messages` (texto, nombre, tamaño y tipo de fichero), por lotes de 100. El cursor se guarda en la misma transacción que cada lote, así que tras un reinicio continúa donde lo dejó. Respeta los `FLOOD_WAIT` de Telegram y después busca mensajes nuevos cada 15 min.
 - La web permite elegir los canales vigilados entre los chats de la cuenta, sincronizarlos a mano y quitarlos.
-- Servicio de usuario de systemd (`deploy/telegarrm.service`).
+- Servicio de sistema de systemd aislado (`deploy/telegarrm.service`) y regla de polkit para reiniciarlo sin `sudo`. Sustituye al servicio de usuario inicial.
+- Registro de decisiones en `docs/DECISIONS.md`.
 
 ### Fase 1: TDLib real e inicio de sesión desde la web
 - `TelegramClient` usa TDLib (interfaz JSON, `td_send`/`td_receive`) en su propio hilo. Cada respuesta se asocia a su petición mediante `@extra`, con variantes asíncrona (`send`) y síncrona con timeout (`request`). Al parar, cierra TDLib de forma ordenada (`close`) para que guarde su estado.

@@ -28,8 +28,10 @@ El proyecto anterior (CLI) está en `~/TelegramDownloader`: de ahí se migran el
 *   **Dependencias** (Debian / Raspberry Pi OS): `sudo apt install build-essential cmake libsqlite3-dev gperf zlib1g-dev libssl-dev`, más TDLib compilado en `~/td/tdlib` (ver README).
 *   **Compilar**: `cmake -S . -B build && cmake --build build`
 *   **Ejecutar**: `TELEGARRM_API_ID=... TELEGARRM_API_HASH=... ./build/telegarrm` desde la raíz del proyecto: las rutas `db/` y `web/` son relativas al directorio actual.
+*   **En la Pi corre como servicio de sistema** (`telegarrm.service`). Desplegar: `cmake --build build && systemctl restart telegarrm` (sin sudo, por la regla de polkit). Logs: `journalctl -u telegarrm`. Las pruebas de arranque y de errores, en otro directorio de trabajo con credenciales falsas, para no tocar la sesión real.
 
 ## Flujo de Trabajo
 *   La planificación vigente está en `docs/ROADMAP.md`: mantenla al día al cerrar cada hito.
+*   **Registra cada decisión en `docs/DECISIONS.md` en el momento de tomarla** (contexto, decisión, alternativas descartadas, consecuencias). Si una cambia, márcala como sustituida en lugar de borrarla.
 *   Commits pequeños y descriptivos, **solo en local**: Plácido decide cuándo hacer push a GitHub.
 *   Antes de dar algo por terminado: compilar sin warnings y probarlo en la Pi.

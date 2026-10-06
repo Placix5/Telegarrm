@@ -1,6 +1,6 @@
 # Hoja de ruta de Telegarrm
 
-Documento vivo con el plan de implementación. Lo mantiene Claude Code (desarrollo y plan técnico); Gemini revisa el código y la documentación; Plácido decide prioridades y valida en uso real.
+Documento vivo con el plan de implementación; los motivos de cada decisión están en [DECISIONS.md](DECISIONS.md). Lo mantiene Claude Code (desarrollo y plan técnico); Gemini revisa el código y la documentación; Plácido decide prioridades y valida en uso real.
 
 ## Objetivo
 Un servicio tipo *stack ARR* (Sonarr/Radarr) que corre siempre en la Raspberry Pi y usa uno o dos canales de Telegram como única fuente:
@@ -23,7 +23,7 @@ Todo se gestiona desde el navegador, sin SSH ni terminal.
 - [x] TDLib 1.8 (interfaz JSON) en un hilo propio, con peticiones asíncronas y síncronas.
 - [x] Inicio de sesión desde la web: teléfono, código y contraseña 2FA.
 - [x] Primer inicio de sesión real con la cuenta de Plácido.
-- [x] Servicio de usuario `systemd` (`deploy/telegarrm.service`, `EnvironmentFile` con permisos `600`). Falta `loginctl enable-linger` para que arranque sin iniciar sesión.
+- [x] Servicio de systemd: primero de usuario y después de sistema, aislado y con regla de polkit (`deploy/`, D-012 y D-013). Falta que Plácido lo instale con `sudo`.
 
 ## Fase 2: Canales y catálogo (en curso)
 - [x] **Canales**: listar los chats de la cuenta (`getChats`, incluidos archivados) para elegir desde la web cuáles vigilar (tabla `channels`).
