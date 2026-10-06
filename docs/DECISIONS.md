@@ -304,5 +304,19 @@ Formato: **Contexto** (qué problema había), **Decisión**, **Alternativas desc
   - 220 obras ya traen su identificador de TMDB en el nombre de los archivos (`tmdbid_8078`), lo que da una coincidencia exacta.
   - La credencial irá en `TELEGARRM_TMDB_TOKEN`, en el mismo fichero de entorno (D-006).
   - Las respuestas se guardarán en una caché en SQLite, para no repetir consultas.
-- **Alternativas descartadas**: TheTVDB, porque su API v4 exige que cada usuario de un proyecto personal tenga un PIN de suscriptor de pago, y solo cubre series.
+- **Alternativas evaluadas** (06/10/2026, comparando los datos reales de *Ted Lasso*):
+
+  | Fuente | Licencia / coste | Cobertura | En castellano |
+  | --- | --- | --- | --- |
+  | **TMDB** | Gratis para uso no comercial con atribución; uso comercial de pago | Series y películas, carátulas | Sinopsis y títulos de episodio ("Piloto", "Pastitas"…) |
+  | **TVmaze** | CC BY-SA 4.0: libre para cualquier uso con atribución | Solo series, sin películas | No: títulos y resúmenes en inglés ("Pilot", "Biscuits"…) |
+  | **Wikidata** | CC0 (dominio público) | Series y películas; pocos episodios; sin carátulas (derechos de autor) | Título y descripción breve ("serie de televisión de comedia estadounidense"); solo 11 de 44 episodios con título en castellano |
+  | **TheTVDB** | API v4: PIN de suscriptor de pago para proyectos personales | Solo series | — |
+
+  No hay ninguna fuente abierta que iguale a TMDB en castellano (títulos de episodio, sinopsis y carátulas).
+- **Cómo reducir la dependencia de TMDB** (por si deja de ser gratuito o cambia sus condiciones):
+  1. Telegarrm funciona sin TMDB: el catálogo sale de las fichas de Telegram (título, año, calidad y, en el canal grande, sinopsis). TMDB solo lo enriquece.
+  2. Todo lo obtenido se guarda en local (SQLite y carátulas en disco): lo ya consultado se conserva aunque TMDB cierre.
+  3. De cada obra se guardan sus identificadores externos (IMDb, TVDB, Wikidata), que TMDB proporciona. Con ellos, cambiar de fuente sería un cruce exacto.
+  4. Los metadatos se piden a través de un "proveedor" intercambiable: TMDB es el primero. Wikidata (CC0) y TVmaze (CC BY-SA) se podrían añadir como alternativa o complemento.
 - **Consecuencias**: solo se envían a TMDB títulos y años, nunca datos personales. Si el proyecto llegara a tener uso comercial, habría que pedir licencia a TMDB.
