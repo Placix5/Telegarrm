@@ -1,7 +1,11 @@
-#include <cstdio>
+#include <cerrno>
+#include <climits>
+#include <cstdlib>
 #include <iostream>
-#include <string>
+#include <optional>
+#include <utility>
 
+#include "api.hpp"
 #include "db_manager.hpp"
 #include "httplib.h"
 #include "signal_watcher.hpp"
@@ -10,30 +14,32 @@
 namespace {
 
 constexpr const char* kDbPath = "db/telegarrm.db";
+constexpr const char* kTdlibDir = "db/tdlib";
 constexpr int kPort = 8080;
 
-// Escapa una cadena para incrustarla dentro de un literal JSON
-std::string jsonEscape(const std::string& in) {
-    std::string out;
-    out.reserve(in.size());
-    for (const char c : in) {
-        switch (c) {
-            case '"':  out += "\\\""; break;
-            case '\\': out += "\\\\"; break;
-            case '\n': out += "\\n"; break;
-            case '\r': out += "\\r"; break;
-            case '\t': out += "\\t"; break;
-            default:
-                if (static_cast<unsigned char>(c) < 0x20) {
-                    char buf[8];
-                    std::snprintf(buf, sizeof(buf), "\\u%04x", static_cast<unsigned>(c));
-                    out += buf;
-                } else {
-                    out += c;
-                }
-        }
+// Credenciales de la API de Telegram (https://my.telegram.org), leídas del entorno
+std::optional<TelegramClient::Config> telegramConfigFromEnv() {
+    const char* apiId = std::getenv("TELEGARRM_API_ID");
+    const char* apiHash = std::getenv("TELEGARRM_API_HASH");
+    if (!apiId || !*apiId || !apiHash || !*apiHash) {
+        std::cerr << "Error: faltan las variables de entorno TELEGARRM_API_ID y TELEGARRM_API_HASH "
+                     "(se obtienen en https://my.telegram.org)." << std::endl;
+        return std::nullopt;
     }
-    return out;
+
+    char* end = nullptr;
+    errno = 0;
+    const long id = std::strtol(apiId, &end, 10);
+    if (errno != 0 || *end != '\0' || id <= 0 || id > INT_MAX) {
+        std::cerr << "Error: TELEGARRM_API_ID debe ser un número entero positivo." << std::endl;
+        return std::nullopt;
+    }
+
+    TelegramClient::Config config;
+    config.apiId = static_cast<int>(id);
+    config.apiHash = apiHash;
+    config.databaseDir = kTdlibDir;
+    return config;
 }
 
 }  // namespace
@@ -44,6 +50,11 @@ int main() {
 
     std::cout << "Iniciando Telegarrm " TELEGARRM_VERSION " (Fase 1)..." << std::endl;
 
+    auto telegramConfig = telegramConfigFromEnv();
+    if (!telegramConfig) {
+        return 1;
+    }
+
     // Base de datos: crea db/telegarrm.db y sus tablas si no existen
     DbManager db(kDbPath);
     if (!db.open()) {
@@ -53,26 +64,11 @@ int main() {
     // Registrar la versión en ejecución; /api/status la lee después desde SQLite
     db.setSetting("version", TELEGARRM_VERSION);
 
-    // Hilo de Telegram (simulado). Debe lanzarse antes de listen(), que es bloqueante.
-    TelegramClient telegram;
-    telegram.start();
+    TelegramClient telegram(std::move(*telegramConfig));
 
     // Inicializar el servidor HTTP
     httplib::Server svr;
-
-    // Endpoint de estado: incluye la versión leída de la tabla settings
-    svr.Get("/api/status", [&db](const httplib::Request&, httplib::Response& res) {
-        const auto dbVersion = db.getSetting("version");
-
-        std::string body = R"({"status": "Telegarrm is running", "version": ")" TELEGARRM_VERSION R"(", )";
-        if (dbVersion) {
-            body += R"("database": {"status": "ok", "version": ")" + jsonEscape(*dbVersion) + R"("}})";
-        } else {
-            body += R"("database": {"status": "error", "version": null}})";
-            res.status = 503;
-        }
-        res.set_content(body, "application/json");
-    });
+    registerApiRoutes(svr, db, telegram);
 
     // Configurar la carpeta web estática
     if (!svr.set_mount_point("/", "./web")) {
@@ -86,10 +82,19 @@ int main() {
         httplib::set_socket_opt(sock, SOL_SOCKET, SO_REUSEADDR, 1);
     });
 
+    // El puerto se reserva antes de arrancar TDLib: una segunda instancia termina aquí
+    // sin llegar a tocar la sesión de Telegram de la primera
     if (!svr.bind_to_port("0.0.0.0", kPort)) {
         std::cerr << "Error: no se pudo escuchar en el puerto " << kPort << "." << std::endl;
         return 1;
     }
+
+    // Hilo de TDLib. Debe lanzarse antes de listen_after_bind(), que es bloqueante.
+    if (!telegram.start()) {
+        std::cerr << "Error: no se pudo iniciar el cliente de Telegram." << std::endl;
+        return 1;
+    }
+
     std::cout << "Servidor web escuchando en http://localhost:" << kPort << std::endl;
 
     // SIGINT/SIGTERM detienen el servidor, lo que hace volver a listen_after_bind()
