@@ -3,11 +3,14 @@
 // Los casos "reales" reproducen mensajes de canales sincronizados en la Pi (06/10/2026).
 
 #include <cstdint>
+#include <filesystem>
 #include <iostream>
 #include <set>
 #include <sstream>
 #include <string>
 #include <vector>
+
+#include <unistd.h>
 
 #include "catalog.hpp"
 #include "media_parser.hpp"
@@ -640,6 +643,70 @@ void testCatalogDifferentFileName() {
     }
 }
 
+
+// Cola de descargas sobre una BD temporal (fuera del proyecto)
+void testDownloadQueue() {
+    const std::string path = (std::filesystem::temp_directory_path() /
+                              ("telegarrm_tests_" + std::to_string(::getpid()) + ".db")).string();
+    std::filesystem::remove(path);
+    {
+        DbManager db(path);
+        CHECK(db.open());
+
+        DbManager::Download download;
+        download.chatId = -500;
+        download.messageId = 101;
+        download.title = "Hokum";
+        download.kind = "movie";
+        download.name = "Hokum (4K HDR)";
+        download.quality = "2160p";
+        download.hdr = true;
+        download.tags = {"REMUX"};
+        download.archive = true;
+        download.totalSize = 3000;
+        download.parts = {{101, 1, "Hokum.part01.rar", 2000, 0, ""}, {102, 2, "Hokum.part02.rar", 1000, 0, ""}};
+
+        const auto first = db.addDownload(download);
+        CHECK(first.ok);
+        // El mismo archivo no se puede encolar dos veces mientras esté activo
+        const auto again = db.addDownload(download);
+        CHECK(again.duplicate);
+        CHECK_EQ(again.id, first.id);
+
+        auto next = db.nextQueuedDownload();
+        CHECK(next.has_value());
+        if (next) {
+            CHECK_EQ(static_cast<int>(next->parts.size()), 2);
+            CHECK_EQ(next->tags, Strings{"REMUX"});
+            CHECK(next->hdr && next->archive);
+        }
+
+        // Interrumpida a medias: al arrancar vuelve a la cola con su progreso
+        CHECK(db.setDownloadStatus(first.id, "downloading"));
+        CHECK(db.updateDownloadProgress(first.id, 2000, {{101, 1, "Hokum.part01.rar", 2000, 2000, "/tmp/x"}}));
+        CHECK_EQ(db.requeueInterruptedDownloads(), 1);
+        next = db.getDownload(first.id);
+        CHECK(next && next->status == "queued");
+        CHECK(next && next->downloadedSize == 2000);
+        CHECK(next && next->parts[0].localPath == "/tmp/x");
+
+        // Cancelada, ya se puede volver a encolar (es otra descarga)
+        CHECK(db.setDownloadStatus(first.id, "cancelled"));
+        const auto retry = db.addDownload(download);
+        CHECK(retry.ok);
+        CHECK(retry.id != first.id);
+        CHECK_EQ(static_cast<int>(db.listDownloads().size()), 2);
+
+        // Borrar una descarga borra sus partes (en cascada)
+        CHECK(db.deleteDownload(first.id));
+        CHECK(!db.getDownload(first.id));
+        CHECK_EQ(static_cast<int>(db.listDownloads().size()), 1);
+    }
+    std::filesystem::remove(path);
+    std::filesystem::remove(path + "-wal");
+    std::filesystem::remove(path + "-shm");
+}
+
 }  // namespace
 
 int main() {
@@ -660,6 +727,7 @@ int main() {
     testCatalogFilesWithoutFicha();
     testCatalogDifferentFileName();
     testCatalogSharedAlbum();
+    testDownloadQueue();
 
     std::cout << (checks - failures) << "/" << checks << " comprobaciones correctas" << std::endl;
     return failures == 0 ? 0 : 1;

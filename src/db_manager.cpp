@@ -59,6 +59,78 @@ constexpr Migration kMigrations[] = {
         -- (INSERT OR REPLACE completa las filas existentes sin duplicarlas)
         UPDATE channels SET newest_message_id = 0, oldest_message_id = 0, history_complete = 0;
     )SQL"},
+    {4, R"SQL(
+        -- Respuestas de TMDB tal cual (D-029): se conservan aunque TMDB deje de estar disponible
+        CREATE TABLE tmdb_cache (
+            request    TEXT    PRIMARY KEY,  -- Ruta y parámetros, sin el token
+            status     INTEGER NOT NULL,     -- Código HTTP (200, 404...)
+            body       TEXT    NOT NULL,
+            fetched_at INTEGER NOT NULL
+        ) WITHOUT ROWID;
+        -- Coincidencia de cada obra del catálogo con TMDB, con sus identificadores externos
+        CREATE TABLE metadata (
+            work_key       TEXT    PRIMARY KEY,  -- tipo|título normalizado|año (ver MetadataService)
+            provider       TEXT    NOT NULL,
+            media_type     TEXT    NOT NULL DEFAULT '',  -- movie / tv; vacío = sin coincidencia
+            provider_id    INTEGER NOT NULL DEFAULT 0,
+            imdb_id        TEXT    NOT NULL DEFAULT '',
+            tvdb_id        INTEGER NOT NULL DEFAULT 0,
+            wikidata_id    TEXT    NOT NULL DEFAULT '',
+            title          TEXT    NOT NULL DEFAULT '',
+            original_title TEXT    NOT NULL DEFAULT '',
+            overview       TEXT    NOT NULL DEFAULT '',
+            year           INTEGER,
+            genres         TEXT    NOT NULL DEFAULT '',  -- Separados por saltos de línea
+            poster_path    TEXT    NOT NULL DEFAULT '',
+            matched_by     TEXT    NOT NULL,             -- tmdbid / search / none
+            updated_at     INTEGER NOT NULL
+        ) WITHOUT ROWID;
+        CREATE TABLE metadata_episodes (
+            work_key TEXT    NOT NULL REFERENCES metadata(work_key) ON DELETE CASCADE,
+            season   INTEGER NOT NULL,
+            episode  INTEGER NOT NULL,
+            name     TEXT    NOT NULL DEFAULT '',
+            overview TEXT    NOT NULL DEFAULT '',
+            air_date TEXT    NOT NULL DEFAULT '',
+            PRIMARY KEY (work_key, season, episode)
+        ) WITHOUT ROWID;
+    )SQL"},
+    {5, R"SQL(
+        -- Cola de descargas persistente (Fase 3). Cada descarga es un archivo lógico (Release)
+        -- y sus partes; sobrevive a reinicios.
+        CREATE TABLE downloads (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            chat_id         INTEGER NOT NULL,
+            message_id      INTEGER NOT NULL,  -- Primera parte: identifica el archivo lógico
+            title           TEXT    NOT NULL,  -- Obra
+            kind            TEXT    NOT NULL,  -- series / movie
+            season          INTEGER NOT NULL DEFAULT 0,
+            episode         INTEGER NOT NULL DEFAULT 0,
+            episode_end     INTEGER NOT NULL DEFAULT 0,
+            name            TEXT    NOT NULL,
+            quality         TEXT    NOT NULL DEFAULT '',
+            hdr             INTEGER NOT NULL DEFAULT 0,
+            tags            TEXT    NOT NULL DEFAULT '',  -- Separadas por saltos de línea
+            archive         INTEGER NOT NULL DEFAULT 0,
+            total_size      INTEGER NOT NULL,
+            downloaded_size INTEGER NOT NULL DEFAULT 0,
+            status          TEXT    NOT NULL,  -- queued / downloading / completed / failed / cancelled
+            error           TEXT    NOT NULL DEFAULT '',
+            created_at      INTEGER NOT NULL,
+            updated_at      INTEGER NOT NULL
+        );
+        CREATE INDEX downloads_by_status ON downloads (status, id);
+        CREATE TABLE download_parts (
+            download_id     INTEGER NOT NULL REFERENCES downloads(id) ON DELETE CASCADE,
+            message_id      INTEGER NOT NULL,
+            number          INTEGER NOT NULL,
+            file_name       TEXT    NOT NULL,
+            size            INTEGER NOT NULL,
+            downloaded_size INTEGER NOT NULL DEFAULT 0,
+            local_path      TEXT    NOT NULL DEFAULT '',
+            PRIMARY KEY (download_id, message_id)
+        ) WITHOUT ROWID;
+    )SQL"},
 };
 
 // Finaliza automáticamente las sentencias preparadas.
@@ -155,6 +227,63 @@ std::optional<std::int64_t> columnOptionalInt64(sqlite3_stmt* stmt, int index) {
         return std::nullopt;
     }
     return sqlite3_column_int64(stmt, index);
+}
+
+// Listas cortas (géneros, etiquetas) guardadas como texto separado por saltos de línea
+std::string joinLines(const std::vector<std::string>& values) {
+    std::string out;
+    for (const std::string& value : values) {
+        out += (out.empty() ? "" : "\n") + value;
+    }
+    return out;
+}
+
+std::vector<std::string> splitLines(const std::string& text) {
+    std::vector<std::string> values;
+    std::size_t start = 0;
+    while (start < text.size()) {
+        const auto end = text.find('\n', start);
+        values.push_back(text.substr(start, end == std::string::npos ? std::string::npos : end - start));
+        if (end == std::string::npos) {
+            break;
+        }
+        start = end + 1;
+    }
+    return values;
+}
+
+std::int64_t now() {
+    return static_cast<std::int64_t>(std::time(nullptr));
+}
+
+constexpr const char* kSelectDownload = R"SQL(
+    SELECT id, chat_id, message_id, title, kind, season, episode, episode_end, name, quality, hdr, tags,
+           archive, total_size, downloaded_size, status, error, created_at, updated_at
+    FROM downloads
+)SQL";
+
+DbManager::Download readDownload(sqlite3_stmt* stmt) {
+    DbManager::Download d;
+    d.id = sqlite3_column_int64(stmt, 0);
+    d.chatId = sqlite3_column_int64(stmt, 1);
+    d.messageId = sqlite3_column_int64(stmt, 2);
+    d.title = columnText(stmt, 3);
+    d.kind = columnText(stmt, 4);
+    d.season = sqlite3_column_int(stmt, 5);
+    d.episode = sqlite3_column_int(stmt, 6);
+    d.episodeEnd = sqlite3_column_int(stmt, 7);
+    d.name = columnText(stmt, 8);
+    d.quality = columnText(stmt, 9);
+    d.hdr = sqlite3_column_int(stmt, 10) != 0;
+    d.tags = splitLines(columnText(stmt, 11));
+    d.archive = sqlite3_column_int(stmt, 12) != 0;
+    d.totalSize = sqlite3_column_int64(stmt, 13);
+    d.downloadedSize = sqlite3_column_int64(stmt, 14);
+    d.status = columnText(stmt, 15);
+    d.error = columnText(stmt, 16);
+    d.createdAt = sqlite3_column_int64(stmt, 17);
+    d.updatedAt = sqlite3_column_int64(stmt, 18);
+    return d;
 }
 
 constexpr const char* kSelectChannels = R"SQL(
@@ -568,4 +697,377 @@ std::vector<DbManager::Topic> DbManager::listTopics(std::int64_t chatId) {
         logError(db_.get(), "listar los temas");
     }
     return topics;
+}
+
+std::optional<DbManager::CachedResponse> DbManager::getCachedResponse(const std::string& request) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!db_) {
+        return std::nullopt;
+    }
+    StmtPtr stmt = prepare(db_.get(), "SELECT status, body, fetched_at FROM tmdb_cache WHERE request = ?1;");
+    if (!stmt) {
+        return std::nullopt;
+    }
+    bindText(stmt.get(), 1, request);
+    if (sqlite3_step(stmt.get()) != SQLITE_ROW) {
+        return std::nullopt;
+    }
+    return CachedResponse{sqlite3_column_int(stmt.get(), 0), columnText(stmt.get(), 1), sqlite3_column_int64(stmt.get(), 2)};
+}
+
+bool DbManager::putCachedResponse(const std::string& request, int status, const std::string& body) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!db_) {
+        return false;
+    }
+    StmtPtr stmt = prepare(db_.get(), R"SQL(
+        INSERT OR REPLACE INTO tmdb_cache (request, status, body, fetched_at) VALUES (?1, ?2, ?3, ?4);
+    )SQL");
+    if (!stmt) {
+        return false;
+    }
+    bindText(stmt.get(), 1, request);
+    sqlite3_bind_int(stmt.get(), 2, status);
+    bindText(stmt.get(), 3, body);
+    sqlite3_bind_int64(stmt.get(), 4, now());
+    if (sqlite3_step(stmt.get()) != SQLITE_DONE) {
+        logError(db_.get(), "guardar la respuesta de TMDB");
+        return false;
+    }
+    return true;
+}
+
+std::vector<DbManager::Metadata> DbManager::loadMetadata() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    std::vector<Metadata> all;
+    if (!db_) {
+        return all;
+    }
+    StmtPtr stmt = prepare(db_.get(), R"SQL(
+        SELECT work_key, provider, media_type, provider_id, imdb_id, tvdb_id, wikidata_id, title, original_title,
+               overview, year, genres, poster_path, matched_by, updated_at
+        FROM metadata;
+    )SQL");
+    StmtPtr episodes = prepare(db_.get(), R"SQL(
+        SELECT season, episode, name, overview, air_date FROM metadata_episodes
+        WHERE work_key = ?1 ORDER BY season, episode;
+    )SQL");
+    if (!stmt || !episodes) {
+        return all;
+    }
+    while (sqlite3_step(stmt.get()) == SQLITE_ROW) {
+        Metadata m;
+        m.workKey = columnText(stmt.get(), 0);
+        m.provider = columnText(stmt.get(), 1);
+        m.mediaType = columnText(stmt.get(), 2);
+        m.providerId = sqlite3_column_int64(stmt.get(), 3);
+        m.imdbId = columnText(stmt.get(), 4);
+        m.tvdbId = sqlite3_column_int64(stmt.get(), 5);
+        m.wikidataId = columnText(stmt.get(), 6);
+        m.title = columnText(stmt.get(), 7);
+        m.originalTitle = columnText(stmt.get(), 8);
+        m.overview = columnText(stmt.get(), 9);
+        if (const auto year = columnOptionalInt64(stmt.get(), 10)) {
+            m.year = static_cast<int>(*year);
+        }
+        m.genres = splitLines(columnText(stmt.get(), 11));
+        m.posterPath = columnText(stmt.get(), 12);
+        m.matchedBy = columnText(stmt.get(), 13);
+        m.updatedAt = sqlite3_column_int64(stmt.get(), 14);
+
+        sqlite3_reset(episodes.get());
+        bindText(episodes.get(), 1, m.workKey);
+        while (sqlite3_step(episodes.get()) == SQLITE_ROW) {
+            m.episodes.push_back({sqlite3_column_int(episodes.get(), 0), sqlite3_column_int(episodes.get(), 1),
+                                  columnText(episodes.get(), 2), columnText(episodes.get(), 3),
+                                  columnText(episodes.get(), 4)});
+        }
+        all.push_back(std::move(m));
+    }
+    return all;
+}
+
+bool DbManager::saveMetadata(const Metadata& m) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!db_) {
+        return false;
+    }
+    Transaction tx(db_.get());
+    StmtPtr upsert = prepare(db_.get(), R"SQL(
+        INSERT OR REPLACE INTO metadata
+            (work_key, provider, media_type, provider_id, imdb_id, tvdb_id, wikidata_id, title, original_title,
+             overview, year, genres, poster_path, matched_by, updated_at)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15);
+    )SQL");
+    StmtPtr removeEpisodes = prepare(db_.get(), "DELETE FROM metadata_episodes WHERE work_key = ?1;");
+    StmtPtr insertEpisode = prepare(db_.get(), R"SQL(
+        INSERT INTO metadata_episodes (work_key, season, episode, name, overview, air_date)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6);
+    )SQL");
+    if (!tx.ok() || !upsert || !removeEpisodes || !insertEpisode) {
+        return false;
+    }
+    const std::string genres = joinLines(m.genres);
+    bindText(upsert.get(), 1, m.workKey);
+    bindText(upsert.get(), 2, m.provider);
+    bindText(upsert.get(), 3, m.mediaType);
+    sqlite3_bind_int64(upsert.get(), 4, m.providerId);
+    bindText(upsert.get(), 5, m.imdbId);
+    sqlite3_bind_int64(upsert.get(), 6, m.tvdbId);
+    bindText(upsert.get(), 7, m.wikidataId);
+    bindText(upsert.get(), 8, m.title);
+    bindText(upsert.get(), 9, m.originalTitle);
+    bindText(upsert.get(), 10, m.overview);
+    bindOptionalInt64(upsert.get(), 11, m.year ? std::optional<std::int64_t>(*m.year) : std::nullopt);
+    bindText(upsert.get(), 12, genres);
+    bindText(upsert.get(), 13, m.posterPath);
+    bindText(upsert.get(), 14, m.matchedBy);
+    sqlite3_bind_int64(upsert.get(), 15, m.updatedAt);
+    if (sqlite3_step(upsert.get()) != SQLITE_DONE) {
+        logError(db_.get(), "guardar los metadatos");
+        return false;
+    }
+    // INSERT OR REPLACE borra la fila anterior, y con ella (en cascada) sus episodios; por si acaso:
+    bindText(removeEpisodes.get(), 1, m.workKey);
+    if (sqlite3_step(removeEpisodes.get()) != SQLITE_DONE) {
+        logError(db_.get(), "borrar los episodios");
+        return false;
+    }
+    for (const MetadataEpisode& e : m.episodes) {
+        sqlite3_reset(insertEpisode.get());
+        bindText(insertEpisode.get(), 1, m.workKey);
+        sqlite3_bind_int(insertEpisode.get(), 2, e.season);
+        sqlite3_bind_int(insertEpisode.get(), 3, e.episode);
+        bindText(insertEpisode.get(), 4, e.name);
+        bindText(insertEpisode.get(), 5, e.overview);
+        bindText(insertEpisode.get(), 6, e.airDate);
+        if (sqlite3_step(insertEpisode.get()) != SQLITE_DONE) {
+            logError(db_.get(), "guardar un episodio");
+            return false;
+        }
+    }
+    return tx.commit();
+}
+
+DbManager::AddDownloadResult DbManager::addDownload(const Download& d) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    AddDownloadResult result;
+    if (!db_) {
+        return result;
+    }
+    Transaction tx(db_.get());
+    StmtPtr existing = prepare(db_.get(), R"SQL(
+        SELECT id FROM downloads
+        WHERE chat_id = ?1 AND message_id = ?2 AND status IN ('queued', 'downloading', 'completed');
+    )SQL");
+    StmtPtr insert = prepare(db_.get(), R"SQL(
+        INSERT INTO downloads (chat_id, message_id, title, kind, season, episode, episode_end, name, quality, hdr,
+                               tags, archive, total_size, status, created_at, updated_at)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, 'queued', ?14, ?14);
+    )SQL");
+    StmtPtr insertPart = prepare(db_.get(), R"SQL(
+        INSERT INTO download_parts (download_id, message_id, number, file_name, size) VALUES (?1, ?2, ?3, ?4, ?5);
+    )SQL");
+    if (!tx.ok() || !existing || !insert || !insertPart) {
+        return result;
+    }
+
+    sqlite3_bind_int64(existing.get(), 1, d.chatId);
+    sqlite3_bind_int64(existing.get(), 2, d.messageId);
+    if (sqlite3_step(existing.get()) == SQLITE_ROW) {
+        result.duplicate = true;
+        result.id = sqlite3_column_int64(existing.get(), 0);
+        return result;
+    }
+
+    const std::string tags = joinLines(d.tags);
+    sqlite3_bind_int64(insert.get(), 1, d.chatId);
+    sqlite3_bind_int64(insert.get(), 2, d.messageId);
+    bindText(insert.get(), 3, d.title);
+    bindText(insert.get(), 4, d.kind);
+    sqlite3_bind_int(insert.get(), 5, d.season);
+    sqlite3_bind_int(insert.get(), 6, d.episode);
+    sqlite3_bind_int(insert.get(), 7, d.episodeEnd);
+    bindText(insert.get(), 8, d.name);
+    bindText(insert.get(), 9, d.quality);
+    sqlite3_bind_int(insert.get(), 10, d.hdr ? 1 : 0);
+    bindText(insert.get(), 11, tags);
+    sqlite3_bind_int(insert.get(), 12, d.archive ? 1 : 0);
+    sqlite3_bind_int64(insert.get(), 13, d.totalSize);
+    sqlite3_bind_int64(insert.get(), 14, now());
+    if (sqlite3_step(insert.get()) != SQLITE_DONE) {
+        logError(db_.get(), "añadir la descarga");
+        return result;
+    }
+    const std::int64_t id = sqlite3_last_insert_rowid(db_.get());
+    for (const DownloadPart& part : d.parts) {
+        sqlite3_reset(insertPart.get());
+        sqlite3_bind_int64(insertPart.get(), 1, id);
+        sqlite3_bind_int64(insertPart.get(), 2, part.messageId);
+        sqlite3_bind_int(insertPart.get(), 3, part.number);
+        bindText(insertPart.get(), 4, part.fileName);
+        sqlite3_bind_int64(insertPart.get(), 5, part.size);
+        if (sqlite3_step(insertPart.get()) != SQLITE_DONE) {
+            logError(db_.get(), "añadir una parte de la descarga");
+            return result;
+        }
+    }
+    if (!tx.commit()) {
+        return result;
+    }
+    result.ok = true;
+    result.id = id;
+    return result;
+}
+
+std::vector<DbManager::Download> DbManager::listDownloads() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    std::vector<Download> downloads;
+    if (!db_) {
+        return downloads;
+    }
+    const std::string sql = std::string(kSelectDownload) + " ORDER BY id DESC;";
+    StmtPtr stmt = prepare(db_.get(), sql.c_str());
+    if (!stmt) {
+        return downloads;
+    }
+    while (sqlite3_step(stmt.get()) == SQLITE_ROW) {
+        downloads.push_back(readDownload(stmt.get()));
+    }
+    return downloads;
+}
+
+std::optional<DbManager::Download> DbManager::queryDownloadWithParts(const char* where, std::int64_t id) {
+    // Requiere mutex_ tomado
+    const std::string sql = std::string(kSelectDownload) + where;
+    StmtPtr stmt = prepare(db_.get(), sql.c_str());
+    if (!stmt) {
+        return std::nullopt;
+    }
+    if (sqlite3_bind_parameter_count(stmt.get()) >= 1) {
+        sqlite3_bind_int64(stmt.get(), 1, id);
+    }
+    if (sqlite3_step(stmt.get()) != SQLITE_ROW) {
+        return std::nullopt;
+    }
+    Download d = readDownload(stmt.get());
+
+    StmtPtr parts = prepare(db_.get(), R"SQL(
+        SELECT message_id, number, file_name, size, downloaded_size, local_path
+        FROM download_parts WHERE download_id = ?1 ORDER BY number, message_id;
+    )SQL");
+    if (!parts) {
+        return std::nullopt;
+    }
+    sqlite3_bind_int64(parts.get(), 1, d.id);
+    while (sqlite3_step(parts.get()) == SQLITE_ROW) {
+        d.parts.push_back({sqlite3_column_int64(parts.get(), 0), sqlite3_column_int(parts.get(), 1),
+                           columnText(parts.get(), 2), sqlite3_column_int64(parts.get(), 3),
+                           sqlite3_column_int64(parts.get(), 4), columnText(parts.get(), 5)});
+    }
+    return d;
+}
+
+std::optional<DbManager::Download> DbManager::getDownload(std::int64_t id) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!db_) {
+        return std::nullopt;
+    }
+    return queryDownloadWithParts(" WHERE id = ?1;", id);
+}
+
+std::optional<DbManager::Download> DbManager::nextQueuedDownload() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!db_) {
+        return std::nullopt;
+    }
+    return queryDownloadWithParts(" WHERE status = 'queued' ORDER BY id LIMIT 1;", 0);
+}
+
+bool DbManager::setDownloadStatus(std::int64_t id, const std::string& status, const std::string& error) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!db_) {
+        return false;
+    }
+    StmtPtr stmt = prepare(db_.get(), "UPDATE downloads SET status = ?2, error = ?3, updated_at = ?4 WHERE id = ?1;");
+    if (!stmt) {
+        return false;
+    }
+    sqlite3_bind_int64(stmt.get(), 1, id);
+    bindText(stmt.get(), 2, status);
+    bindText(stmt.get(), 3, error);
+    sqlite3_bind_int64(stmt.get(), 4, now());
+    if (sqlite3_step(stmt.get()) != SQLITE_DONE) {
+        logError(db_.get(), "cambiar el estado de la descarga");
+        return false;
+    }
+    return sqlite3_changes(db_.get()) > 0;
+}
+
+bool DbManager::updateDownloadProgress(std::int64_t id, std::int64_t downloadedSize, const std::vector<DownloadPart>& parts) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!db_) {
+        return false;
+    }
+    Transaction tx(db_.get());
+    StmtPtr download = prepare(db_.get(), "UPDATE downloads SET downloaded_size = ?2, updated_at = ?3 WHERE id = ?1;");
+    StmtPtr part = prepare(db_.get(), R"SQL(
+        UPDATE download_parts SET downloaded_size = ?3, local_path = ?4 WHERE download_id = ?1 AND message_id = ?2;
+    )SQL");
+    if (!tx.ok() || !download || !part) {
+        return false;
+    }
+    sqlite3_bind_int64(download.get(), 1, id);
+    sqlite3_bind_int64(download.get(), 2, downloadedSize);
+    sqlite3_bind_int64(download.get(), 3, now());
+    if (sqlite3_step(download.get()) != SQLITE_DONE) {
+        logError(db_.get(), "guardar el progreso");
+        return false;
+    }
+    for (const DownloadPart& p : parts) {
+        sqlite3_reset(part.get());
+        sqlite3_bind_int64(part.get(), 1, id);
+        sqlite3_bind_int64(part.get(), 2, p.messageId);
+        sqlite3_bind_int64(part.get(), 3, p.downloadedSize);
+        bindText(part.get(), 4, p.localPath);
+        if (sqlite3_step(part.get()) != SQLITE_DONE) {
+            logError(db_.get(), "guardar el progreso de una parte");
+            return false;
+        }
+    }
+    return tx.commit();
+}
+
+int DbManager::requeueInterruptedDownloads() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!db_) {
+        return 0;
+    }
+    StmtPtr stmt = prepare(db_.get(), "UPDATE downloads SET status = 'queued', updated_at = ?1 WHERE status = 'downloading';");
+    if (!stmt) {
+        return 0;
+    }
+    sqlite3_bind_int64(stmt.get(), 1, now());
+    if (sqlite3_step(stmt.get()) != SQLITE_DONE) {
+        logError(db_.get(), "devolver las descargas a la cola");
+        return 0;
+    }
+    return sqlite3_changes(db_.get());
+}
+
+bool DbManager::deleteDownload(std::int64_t id) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!db_) {
+        return false;
+    }
+    StmtPtr stmt = prepare(db_.get(), "DELETE FROM downloads WHERE id = ?1;");
+    if (!stmt) {
+        return false;
+    }
+    sqlite3_bind_int64(stmt.get(), 1, id);
+    if (sqlite3_step(stmt.get()) != SQLITE_DONE) {
+        logError(db_.get(), "borrar la descarga");
+        return false;
+    }
+    return sqlite3_changes(db_.get()) > 0;
 }

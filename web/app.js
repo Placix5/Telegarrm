@@ -128,6 +128,7 @@ let routeShown = false;
 function currentRoute() {
   const parts = location.hash.replace(/^#\/?/, "").split("/").filter(Boolean);
   if (parts[0] === "canales") return { view: "channels" };
+  if (parts[0] === "descargas") return { view: "downloads" };
   if (parts[0] === "estado") return { view: "status" };
   if (parts[0] === "catalogo" && parts.length === 3) return { view: "detail", chatId: parts[1], anchorId: parts[2] };
   return { view: "catalog" };
@@ -139,7 +140,7 @@ function showRoute() {
   // Sin sesión de Telegram solo tiene sentido la pantalla de estado (inicio de sesión)
   if (!telegramReady && route.view !== "status") route = { view: "status" };
 
-  for (const view of ["catalog", "detail", "channels", "status"]) {
+  for (const view of ["catalog", "detail", "downloads", "channels", "status"]) {
     $(`view-${view}`).hidden = view !== route.view;
   }
   const navView = route.view === "detail" ? "catalog" : route.view;
@@ -151,6 +152,7 @@ function showRoute() {
   if (route.view !== "detail") document.title = "Telegarrm";
   if (route.view === "catalog") loadCatalog();
   if (route.view === "detail") loadDetail(route.chatId, route.anchorId);
+  if (route.view === "downloads") renderDownloads();
   if (route.view === "channels") {
     refreshChannels();
     if (!chatsLoaded) {
@@ -214,7 +216,8 @@ function renderCatalog() {
   const sort = $("catalog-sort").value === "recent" ? (a, b) => b.updated_at - a.updated_at || byTitle(a, b) : byTitle;
   const visible = catalogItems
     .filter((item) => !kind || (kind === "airing" ? item.airing : item.kind === kind))
-    .filter((item) => !query || normalize([item.title, ...item.alternate_titles, item.channel_title, ...item.genres].join(" ")).includes(query))
+    .filter((item) => !query || normalize([item.title, ...item.alternate_titles, item.channel_title, ...item.genres,
+      item.tmdb ? item.tmdb.title : "", item.tmdb ? item.tmdb.original_title : ""].join(" ")).includes(query))
     .sort(sort);
 
   const grid = $("catalog-grid");
@@ -262,12 +265,13 @@ function episodeLabel(release) {
   return `${release.season}x${episode}${end}`;
 }
 
-// Versiones de un episodio o película: "1080p · 1,2 GB" (con el nombre del archivo al pasar el ratón)
+// Versiones de un episodio: "1080p · 1,2 GB" y su botón de descarga
 function versionsElement(releases) {
   const box = el("div", "versions");
   for (const release of releases) {
     const chip = el("span", "version");
-    chip.append(el("strong", "", versionLabel(release)), document.createTextNode(` · ${formatSize(release.size)}`));
+    chip.append(el("strong", "", versionLabel(release)), document.createTextNode(` · ${formatSize(release.size)}`),
+      downloadButton(release, true));
     const parts = release.parts.length > 1 ? ` (${release.parts.length} partes)` : "";
     chip.title = `${release.name}${parts}`;
     box.append(chip);
@@ -283,7 +287,7 @@ function table(headers) {
   return node;
 }
 
-// Series: una fila por episodio con todas sus versiones
+// Series: una fila por episodio con todas sus versiones; título y sinopsis de TMDB si los hay
 function episodesTable(releases) {
   const node = table([["Episodio"], ["Título"], ["Versiones"]]);
   const byEpisode = new Map();
@@ -293,25 +297,64 @@ function episodesTable(releases) {
   }
   for (const [label, versions] of byEpisode) {
     const row = el("tr");
+    const titleCell = el("td");
     const title = versions.map((release) => release.episode_title).find(Boolean) || "";
+    titleCell.append(el("div", "", title));
+    const overview = versions.map((release) => release.episode_overview).find(Boolean);
+    if (overview) {
+      const text = el("div", "episode-overview", overview);
+      text.title = overview;
+      titleCell.append(text);
+    }
     const cell = el("td");
     cell.append(versionsElement(versions));
-    row.append(el("td", "episode", label), el("td", "", title), cell);
+    row.append(el("td", "episode", label), titleCell, cell);
     node.append(row);
   }
   return node;
 }
 
+// Botones para descargar una temporada entera en una versión: el primer archivo de cada episodio
+// con esa versión (los archivos ya vienen ordenados de mejor a peor)
+function seasonActions(releases) {
+  const byVersion = new Map();
+  for (const release of releases) {
+    const label = versionLabel(release);
+    const episodes = byVersion.get(label) || new Map();
+    if (!episodes.has(episodeLabel(release))) episodes.set(episodeLabel(release), release);
+    byVersion.set(label, episodes);
+  }
+  const box = el("div", "season-actions");
+  box.append(el("span", "hint", "Temporada completa:"));
+  for (const [label, episodes] of byVersion) {
+    const chosen = [...episodes.values()];
+    const size = chosen.reduce((sum, release) => sum + release.size, 0);
+    const button = el("button", "secondary small", `Almacenar en ${label} (${formatSize(size)})`);
+    button.addEventListener("click", async () => {
+      const pending = chosen.filter((release) => !activeDownload(release));
+      if (!pending.length) return;
+      if (!confirm(`¿Descargar ${plural(pending.length, "episodio", "episodios")} en ${label}?`)) return;
+      button.disabled = true;
+      for (const release of pending) await enqueue(release);
+      button.disabled = false;
+    });
+    box.append(button);
+  }
+  return box;
+}
+
 // Películas y archivos sueltos: una fila por versión
 function versionsTable(releases) {
-  const node = table([["Versión"], ["Archivo"], ["Publicado"], ["Tamaño", "num"]]);
+  const node = table([["Versión"], ["Archivo"], ["Publicado"], ["Tamaño", "num"], [""]]);
   for (const release of releases) {
     const row = el("tr");
     const name = el("td", "", release.name);
     name.title = release.parts.map((part) => part.file_name).join("\n");
     const parts = release.parts.length > 1 ? ` · ${release.parts.length} partes` : "";
+    const action = el("td");
+    action.append(downloadButton(release, false));
     row.append(el("td", "", versionLabel(release)), name, el("td", "", formatDate(release.date).split(",")[0]),
-      el("td", "num", formatSize(release.size) + parts));
+      el("td", "num", formatSize(release.size) + parts), action);
     node.append(row);
   }
   return node;
@@ -337,10 +380,21 @@ async function loadDetail(chatId, anchorId) {
     if (text) badges.append(el("span", "badge", String(text)));
   }
   info.append(title, badges);
+  const tmdb = item.tmdb;
+  if (tmdb && tmdb.original_title && normalize(tmdb.original_title) !== normalize(item.title)) {
+    info.append(el("p", "hint", `Título original: ${tmdb.original_title}`));
+  }
   if (item.alternate_titles.length) {
     info.append(el("p", "hint", `También: ${item.alternate_titles.join(" · ")}`));
   }
-  if (item.synopsis) info.append(el("p", "synopsis", item.synopsis));
+  // Sinopsis de TMDB; si no hay, la de la ficha de Telegram
+  const synopsis = item.overview || item.synopsis;
+  if (synopsis) info.append(el("p", "synopsis", synopsis));
+  const links = el("div", "links");
+  const ids = item.external_ids;
+  if (ids && tmdb) links.append(externalLink(`https://www.themoviedb.org/${tmdb.type}/${ids.tmdb}`, "Ver en TMDB"));
+  if (ids && ids.imdb) links.append(externalLink(`https://www.imdb.com/title/${ids.imdb}/`, "IMDb"));
+  if (links.children.length) info.append(links);
 
   const parts = item.kind === "series"
     ? [plural(item.seasons, "temporada", "temporadas"), plural(item.episodes, "episodio", "episodios")]
@@ -372,7 +426,7 @@ async function loadDetail(chatId, anchorId) {
       const episodes = new Set(releases.map(episodeLabel)).size;
       const size = releases.reduce((sum, release) => sum + release.size, 0);
       files.append(el("h3", "", `Temporada ${season} · ${plural(episodes, "episodio", "episodios")} · ${formatSize(size)}`),
-        episodesTable(releases));
+        seasonActions(releases), episodesTable(releases));
     }
     if (loose.length) files.append(el("h3", "", "Otros archivos"), versionsTable(loose));
   } else {
@@ -381,6 +435,169 @@ async function loadDetail(chatId, anchorId) {
 
   container.replaceChildren(detail, files);
   document.title = `${item.title} · Telegarrm`;
+  updateDownloadButtons();
+}
+
+function externalLink(url, text) {
+  const link = el("a", "", text);
+  link.href = url;
+  link.target = "_blank";
+  link.rel = "noopener";
+  return link;
+}
+
+// ---------------------------------------------------------------------------
+// Descargas
+// ---------------------------------------------------------------------------
+
+const DOWNLOAD_STATUS = {
+  queued: "En cola", downloading: "Descargando", completed: "Descargado", failed: "Falló", cancelled: "Cancelada",
+};
+const ACTIVE_STATUSES = ["queued", "downloading", "completed"];
+
+let downloadList = [];
+let downloadsByKey = new Map();  // "chat:mensaje" de la primera parte -> descarga más reciente
+
+const releaseKey = (chatId, messageId) => `${chatId}:${messageId}`;
+const percent = (d) => (d.total_size > 0 ? Math.floor((100 * d.downloaded_size) / d.total_size) : 0);
+
+function formatDuration(seconds) {
+  if (!isFinite(seconds) || seconds <= 0) return "";
+  const minutes = Math.ceil(seconds / 60);
+  if (minutes < 60) return `${minutes} min`;
+  return `${Math.floor(minutes / 60)} h ${minutes % 60} min`;
+}
+
+function activeDownload(release) {
+  const download = downloadsByKey.get(releaseKey(release.chat_id, release.message_id));
+  return download && ACTIVE_STATUSES.includes(download.status) ? download : null;
+}
+
+// Botón de descarga de un archivo lógico; su texto sigue el estado de la cola
+function downloadButton(release, compact) {
+  const button = el("button", "small", "");
+  button.dataset.chat = release.chat_id;
+  button.dataset.message = release.message_id;
+  button.dataset.compact = compact ? "1" : "";
+  button.addEventListener("click", async () => {
+    const download = downloadsByKey.get(releaseKey(release.chat_id, release.message_id));
+    button.disabled = true;
+    if (download && download.status === "failed") await downloadAction(download.id, "retry", "POST");
+    else await enqueue(release);
+  });
+  applyButtonState(button);
+  return button;
+}
+
+function applyButtonState(button) {
+  const download = downloadsByKey.get(releaseKey(button.dataset.chat, button.dataset.message));
+  const compact = button.dataset.compact === "1";
+  let text = compact ? "Descargar" : "Almacenar en disco";
+  let disabled = false;
+  if (download && download.status === "queued") { text = "En cola"; disabled = true; }
+  if (download && download.status === "downloading") { text = `Descargando ${percent(download)} %`; disabled = true; }
+  if (download && download.status === "completed") { text = "Descargado"; disabled = true; }
+  if (download && download.status === "failed") text = "Reintentar";
+  button.textContent = text;
+  button.disabled = disabled;
+  button.className = `small ${disabled ? "secondary" : ""}`;
+}
+
+function updateDownloadButtons() {
+  document.querySelectorAll("button[data-message]").forEach(applyButtonState);
+}
+
+async function enqueue(release) {
+  try {
+    await api("/api/downloads", { method: "POST", body: JSON.stringify({ chat_id: release.chat_id, message_id: release.message_id }) });
+  } catch (e) {
+    alert(e.message);
+  }
+  await refreshDownloads();
+}
+
+async function downloadAction(id, action, method) {
+  try {
+    await api(action ? `/api/downloads/${id}/${action}` : `/api/downloads/${id}`, { method });
+  } catch (e) {
+    alert(e.message);
+  }
+  await refreshDownloads();
+}
+
+function downloadTitle(d) {
+  const episode = d.episode ? ` · ${episodeLabel(d)}` : "";
+  return `${d.title}${episode}`;
+}
+
+function renderDownloads() {
+  const list = $("download-list");
+  list.replaceChildren();
+  $("downloads-empty").hidden = downloadList.length > 0;
+  $("downloads-note").hidden = !downloadList.some((d) => d.status === "completed");
+
+  for (const d of downloadList) {
+    const item = el("li");
+    const head = el("div", "download-head");
+    const info = el("div");
+    info.append(el("div", "download-title", downloadTitle(d)),
+      el("div", "download-meta", `${versionLabel(d)} · ${d.name}`));
+    const status = el("div", `status-${d.status}`, DOWNLOAD_STATUS[d.status] || d.status);
+    head.append(info, status);
+    item.append(head);
+
+    if (d.status !== "cancelled") {
+      const bar = el("div", "progress");
+      const fill = el("div");
+      fill.style.width = `${percent(d)}%`;
+      bar.append(fill);
+      item.append(bar);
+    }
+    const meta = [`${formatSize(d.downloaded_size)} de ${formatSize(d.total_size)} (${percent(d)} %)`];
+    if (d.status === "downloading" && d.bytes_per_second > 0) {
+      meta.push(`${SIZE_FORMAT.format(d.bytes_per_second / 1e6)} MB/s`);
+      const left = formatDuration((d.total_size - d.downloaded_size) / d.bytes_per_second);
+      if (left) meta.push(`quedan ${left}`);
+    }
+    meta.push(`añadida el ${formatDate(d.created_at)}`);
+    item.append(el("div", "download-meta", meta.join(" · ")));
+    if (d.error) item.append(el("div", "err", d.error));
+
+    const actions = el("div", "channel-actions");
+    actions.style.marginTop = "0.5rem";
+    const action = (text, cls, handler) => {
+      const button = el("button", `${cls} small`, text);
+      button.addEventListener("click", handler);
+      actions.append(button);
+    };
+    if (d.status === "queued" || d.status === "downloading") {
+      action("Cancelar", "danger", () => {
+        if (confirm("¿Cancelar la descarga? Se borrará lo descargado hasta ahora.")) downloadAction(d.id, "cancel", "POST");
+      });
+    }
+    if (d.status === "failed" || d.status === "cancelled") action("Reintentar", "secondary", () => downloadAction(d.id, "retry", "POST"));
+    if (["completed", "failed", "cancelled"].includes(d.status)) action("Quitar de la lista", "secondary", () => downloadAction(d.id, "", "DELETE"));
+    if (actions.children.length) item.append(actions);
+    list.append(item);
+  }
+}
+
+async function refreshDownloads() {
+  try {
+    downloadList = await api("/api/downloads");
+  } catch (e) {
+    return;
+  }
+  downloadsByKey = new Map();
+  for (const d of downloadList) {  // La lista viene de la más reciente a la más antigua
+    const key = releaseKey(d.chat_id, d.message_id);
+    if (!downloadsByKey.has(key)) downloadsByKey.set(key, d);
+  }
+  const active = downloadList.filter((d) => d.status === "queued" || d.status === "downloading").length;
+  $("downloads-count").textContent = active;
+  $("downloads-count").hidden = active === 0;
+  if (currentRoute().view === "downloads") renderDownloads();
+  updateDownloadButtons();
 }
 
 // ---------------------------------------------------------------------------
@@ -583,6 +800,7 @@ async function refresh() {
     showRoute();  // Al iniciar o perder la sesión cambia lo que se puede ver
   }
   if (ready && currentRoute().view === "channels") refreshChannels();
+  if (ready) refreshDownloads();
 }
 
 refresh();

@@ -34,7 +34,9 @@ Formato: **Contexto** (qué problema había), **Decisión**, **Alternativas desc
 | [D-026](#d-026-obras-versiones-y-partes) | Obras, versiones y partes | Vigente |
 | [D-027](#d-027-qué-archivos-pertenecen-a-una-ficha) | Qué archivos pertenecen a una ficha | Vigente |
 | [D-028](#d-028-compilación-optimizada-por-defecto-y-caché-del-análisis) | Compilación optimizada y caché del análisis | Vigente |
-| [D-029](#d-029-metadatos-de-themoviedb-tmdb) | Metadatos de TheMovieDB (TMDB) | Propuesta |
+| [D-029](#d-029-metadatos-de-themoviedb-tmdb) | Metadatos de TheMovieDB (TMDB) | Vigente |
+| [D-030](#d-030-cómo-se-integra-tmdb) | Cómo se integra TMDB | Vigente |
+| [D-031](#d-031-cola-de-descargas) | Cola de descargas | Vigente |
 
 ---
 
@@ -295,7 +297,7 @@ Formato: **Contexto** (qué problema había), **Decisión**, **Alternativas desc
 - **Consecuencias**: arranque en frío en 2,1 s (12 veces menos) y reconstrucciones incrementales por debajo de 1 s. Si el catálogo crece mucho más, el siguiente paso sería sustituir las expresiones más usadas por código a mano o por una biblioteca de expresiones más rápida.
 
 ## D-029: Metadatos de TheMovieDB (TMDB)
-*06/10/2026 · **Propuesta**, pendiente de que Plácido cree la credencial*
+*06/10/2026 · Aprobada por Gemini y Plácido; implementada en D-030*
 
 - **Contexto**: Plácido quiere títulos de episodios, descripciones y datos fiables de cada serie y película, y propuso TheTVDB o TheMovieDB.
 - **Decisión propuesta**: TMDB.
@@ -320,3 +322,40 @@ Formato: **Contexto** (qué problema había), **Decisión**, **Alternativas desc
   3. De cada obra se guardan sus identificadores externos (IMDb, TVDB, Wikidata), que TMDB proporciona. Con ellos, cambiar de fuente sería un cruce exacto.
   4. Los metadatos se piden a través de un "proveedor" intercambiable: TMDB es el primero. Wikidata (CC0) y TVmaze (CC BY-SA) se podrían añadir como alternativa o complemento.
 - **Consecuencias**: solo se envían a TMDB títulos y años, nunca datos personales. Si el proyecto llegara a tener uso comercial, habría que pedir licencia a TMDB.
+
+## D-030: Cómo se integra TMDB
+*06/10/2026 · Implementa D-029*
+
+- **Decisión**:
+  - **`TmdbClient`**: cliente HTTPS (cpp-httplib con OpenSSL, verificando el certificado con los del sistema), una petición cada vez y como mucho unas 10 por segundo.
+    - Cada respuesta, también los 404, se guarda en `tmdb_cache` (migración v4), y si TMDB falla se usa la guardada aunque haya caducado.
+    - El token solo va en la cabecera `Authorization`: nunca en la clave de la caché ni en los logs.
+    - Las carátulas se guardan en `db/tmdb/images`. Solo se aceptan rutas con la forma `/abc.jpg`, para que no se pueda salir de la carpeta.
+  - **`MetadataService`**: un hilo que recorre el catálogo, primero las series en emisión y lo más reciente.
+    - Usa el `tmdbid` del nombre de los archivos si lo hay; si no, busca por título y títulos alternativos, con y sin año.
+    - **Puntuación**: título exacto (castellano u original) 100 puntos y contenido 50; año igual +30, a un año +15 y distinto −40. Se acepta desde 80, es decir, título exacto o contenido con el mismo año: mejor sin datos que con los de otra obra.
+    - **Qué guarda** (tablas `metadata` y `metadata_episodes`): identificadores (TMDB, IMDb, TVDB, Wikidata), título, título original, sinopsis, géneros, carátula y los episodios de las temporadas presentes en el catálogo.
+  - **Cada obra se identifica** por `tipo|título normalizado|año`. Si el parser cambia el título o el año, se vuelve a buscar, casi sin coste gracias a la caché.
+  - **Validez**: búsquedas y películas 30 días, series 7 días, series en emisión 1 día; las obras sin coincidencia se reintentan al mes.
+  - **En la web**: la sinopsis de TMDB tiene preferencia sobre la de la ficha, y los títulos y sinopsis de episodio vienen de TMDB. La carátula es la foto de la ficha y, si no hay, la de TMDB. Los créditos de TMDB (logo y aviso) van en el pie de todas las páginas.
+- **Consecuencias**:
+  - La primera pasada sobre ~2200 obras dura unos 16 minutos (unas 2,4 obras/s). En las primeras 100, el 95 % encontró coincidencia.
+  - **Sin token** (comprobado): no se hace ninguna petición, `/api/status` informa `metadata.enabled = false` y la web sigue mostrando lo ya guardado (601 obras en la prueba, *Ted Lasso* con sus títulos de episodio en castellano).
+  - **Pendiente**: usar TMDB para separar *remakes* que el catálogo une (D-026).
+
+## D-031: Cola de descargas
+*06/10/2026 · Inicio de la Fase 3*
+
+- **Decisión**:
+  - **Qué se encola**: tablas `downloads` y `download_parts` (migración v5). Cada descarga es un archivo lógico del catálogo (D-026) con todas sus partes. `POST /api/downloads` recibe solo `chat_id` y `message_id`, y el resto se toma del catálogo, nunca del navegador. Solo puede haber una descarga activa (en cola, descargando o descargada) por archivo.
+  - **`DownloadManager`**: un hilo que descarga de una en una, pidiendo a TDLib todas las partes y siguiendo el progreso cada segundo (se guarda cada 5 s).
+    - Antes de empezar comprueba que cabe, con 2 GB de margen, para no llenar la tarjeta SD.
+    - Reintenta las partes que se detienen (hasta 5 veces) y falla si no avanza en 15 minutos.
+    - Tras un reinicio, lo que se estaba descargando vuelve a la cola y TDLib continúa donde lo dejó.
+    - Cancelar para la descarga, **borra lo descargado a medias** y deja el progreso a cero.
+  - **Dónde quedan los archivos**: en la caché de TDLib (`db/tdlib/documents`), porque la biblioteca final (disco y carpetas) aún no está definida.
+  - **Web**:
+    - Botón "Almacenar en disco" en cada versión, y "Temporada completa" en cada versión de una temporada.
+    - Pestaña *Descargas* con progreso, velocidad, tiempo restante y acciones (cancelar, reintentar, quitar).
+- **Alternativas descartadas**: descargar varios archivos a la vez, porque TDLib ya reparte cada archivo en varias conexiones (llegó a unos 19 MB/s) y una cola secuencial es más predecible en una Raspberry Pi.
+- **Consecuencias**: probado con archivos reales de 20 MB (unos 2 s) y 251 MB (cancelado y reintentado), más tests de la cola sobre una BD temporal. Siguiente paso de la Fase 3: mover y descomprimir lo descargado en la biblioteca (D-018: sin shell) y liberar la caché de TDLib. Para eso hay que definir la ruta de la biblioteca y añadirla a `ReadWritePaths` del servicio (D-013).

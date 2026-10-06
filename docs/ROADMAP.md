@@ -25,7 +25,7 @@ Todo se gestiona desde el navegador, sin SSH ni terminal.
 - [x] Primer inicio de sesión real con la cuenta de Plácido.
 - [x] Servicio de systemd: primero de usuario y después de sistema, aislado y con regla de polkit (`deploy/`, D-012 y D-013). Falta que Plácido lo instale con `sudo`.
 
-## Fase 2: Canales y catálogo (en curso)
+## Fase 2: Canales y catálogo (completada)
 - [x] **Canales**: listar los chats de la cuenta (`getChats`, incluidos archivados) para elegir desde la web cuáles vigilar (tabla `channels`).
 - [x] **Sincronización**: recorrer el historial (`getChatHistory` paginado, respetando los `FLOOD_WAIT` de Telegram) y guardar los mensajes con texto o fichero: id, fecha, álbum, texto, nombre, tamaño y tipo MIME. Reanudable; mensajes nuevos cada 15 min.
 - [x] **Parser**: adaptar `episode_parser` del proyecto antiguo (SxxEyy, 1x01, calidades, códecs) con tests unitarios (`ctest`) construidos con ejemplos reales del canal. Tabla `media`: tipo, título, año, temporada, episodio, calidad, códec, idioma.
@@ -33,18 +33,20 @@ Todo se gestiona desde el navegador, sin SSH ni terminal.
 - [x] **API**: `GET /api/catalog`, `GET /api/catalog/{chat}/{ficha}` y la portada.
 - [x] **Web**: catálogo en tarjetas con portada, búsqueda y filtro por tipo; ficha con temporadas y episodios.
 - [x] Canal grande de Plácido (grupo con temas, ~33 000 mensajes): temas (D-025), obras con versiones y partes (D-026), asignación de archivos a fichas (D-027) y rendimiento (D-028).
-- [ ] **Metadatos de TMDB** (D-029): títulos de episodio, sinopsis, carátulas y desambiguar *remakes*. Pendiente de la credencial `TELEGARRM_TMDB_TOKEN`.
-- [ ] Créditos de TMDB en la web (requisito de su licencia).
+- [x] **Metadatos de TMDB** (D-029, D-030): títulos de episodio, sinopsis, géneros, carátulas e identificadores externos, en caché local.
+- [x] Créditos de TMDB en la web (requisito de su licencia).
+- [ ] Usar TMDB para separar *remakes* que el catálogo une (ej. *Vaiana* de 2016 y de 2026).
 
 Formato real visto: canales de una serie con una ficha (foto + pie con título, año, calidad, géneros e idioma), portadas de temporada sin pie, episodios `1x01 - Serie.mkv` o `Serie #01x01 - Título.mp4` y textos de cierre.
 
-## Fase 3: Descargas
-- **Rutas** de la biblioteca (series, películas, buffer temporal) configurables desde la web (`settings`).
-- **Elegir versión**: la web ofrece las versiones de cada película o episodio (`Release`: 4K HDR, 1080p, REMUX…) y se descarga solo la elegida.
-- **Cola persistente** (tabla `downloads`) con un trabajador: `downloadFile` + `updateFile` para el progreso, reintentos y reanudación tras reiniciar.
-- **Postproceso** migrado del núcleo antiguo: descompresión (7z, zip troceado `.zip.001`, multiparte `.partN.rar`), limpieza de nombres y colocación en `Serie/Temporada 01/Serie - S01E01.mkv`.
-- **API**: `POST /api/downloads`, `GET /api/downloads` (progreso), `DELETE /api/downloads/{id}`.
-- **Web**: botón "Almacenar en disco" y progreso en tiempo real.
+## Fase 3: Descargas (en curso)
+- [ ] **Rutas** de la biblioteca (series, películas, buffer temporal) configurables desde la web (`settings`).
+- [x] **Elegir versión**: la web ofrece las versiones de cada película o episodio (4K HDR, 1080p, REMUX…) y, en las series, la temporada completa en una versión.
+- [x] **Cola persistente** (tablas `downloads` y `download_parts`) con un trabajador: progreso, reintentos, reanudación tras reiniciar, cancelación y comprobación de espacio libre (D-031). Los archivos quedan en la caché de TDLib.
+- [ ] **Biblioteca**: definir con Plácido el disco y las carpetas de series y películas, y añadirlos a `ReadWritePaths` del servicio.
+- [ ] **Postproceso** migrado del núcleo antiguo: descompresión (7z, zip troceado `.zip.001`, multiparte `.partN.rar`), limpieza de nombres y colocación en `Serie/Temporada 01/Serie - S01E01.mkv`.
+- [x] **API**: `POST /api/downloads`, `GET /api/downloads` (progreso), cancelar, reintentar y quitar.
+- [x] **Web**: botón "Almacenar en disco" y pestaña *Descargas* con el progreso.
 
 ## Fase 4: Seguimiento (Tele-ARR)
 - Marcar series y películas como "en seguimiento".

@@ -101,6 +101,13 @@ public:
     std::vector<ItemPtr> items() const;
     ItemPtr find(std::int64_t chatId, std::int64_t anchorMessageId) const;
 
+    // Archivo lógico que contiene ese mensaje (cualquiera de sus partes) y su obra
+    struct ReleaseRef {
+        ItemPtr item;
+        const Release* release = nullptr;  // Apunta dentro de *item, que lo mantiene vivo
+    };
+    std::optional<ReleaseRef> findRelease(std::int64_t chatId, std::int64_t messageId) const;
+
     // Construye el catálogo de unos canales sin caché ni BD (para los tests)
     static std::vector<Item> buildItems(const std::vector<ChannelInput>& channels);
 
@@ -117,6 +124,8 @@ private:
     std::map<std::int64_t, std::vector<Block>> blocks_;
     std::unordered_map<std::int64_t, std::unique_ptr<ParseCache>> caches_;
 
-    mutable std::mutex mutex_;  // Protege items_
+    mutable std::mutex mutex_;  // Protege items_ y releaseIndex_
     std::vector<ItemPtr> items_;
+    // (chat, mensaje de cualquier parte) -> (obra, índice del Release)
+    std::map<std::pair<std::int64_t, std::int64_t>, std::pair<ItemPtr, std::size_t>> releaseIndex_;
 };

@@ -25,8 +25,8 @@ Detalle y tareas en [docs/ROADMAP.md](docs/ROADMAP.md).
 
 - [x] **Fase 0**: Estructura base y servidor HTTP (`cpp-httplib`).
 - [x] **Fase 1**: Motor TDLib en un hilo propio y SQLite para configuración y estado. *Completada.*
-- [ ] **Fase 2**: Canales y catálogo: lectura del historial de los canales elegidos y catálogo en la web. *En curso: canales, sincronización y catálogo con portadas listos; falta validarlo con más canales y con películas.*
-- [ ] **Fase 3**: Descargas: cola, descompresión y renombrado (núcleo antiguo de C++).
+- [x] **Fase 2**: Canales y catálogo: lectura del historial de los canales elegidos, catálogo con versiones y metadatos de TMDB.
+- [ ] **Fase 3**: Descargas: cola, descompresión y renombrado (núcleo antiguo de C++). *En curso: cola persistente y descarga con TDLib listas; falta llevar los archivos a la biblioteca.*
 - [ ] **Fase 4**: Tele-ARR: escucha de mensajes nuevos, reemplazo de calidades y auto-descarga de capítulos en seguimiento.
 
 ## Dependencias
@@ -51,6 +51,7 @@ Las credenciales de la API de Telegram se obtienen en <https://my.telegram.org> 
 | --- | --- |
 | `TELEGARRM_API_ID` | `api_id` de la aplicación (número) |
 | `TELEGARRM_API_HASH` | `api_hash` de la aplicación |
+| `TELEGARRM_TMDB_TOKEN` | Opcional. "API Read Access Token" de [TMDB](https://www.themoviedb.org/settings/api) para títulos de episodio, sinopsis y carátulas. Sin él, el catálogo usa solo las fichas de Telegram (y lo ya consultado). |
 
 Sin ellas, el servicio no arranca. La sesión de Telegram se guarda en `db/tdlib/` (permisos `0700`): da acceso completo a la cuenta, así que no la copies ni la subas a ningún sitio.
 
@@ -92,7 +93,12 @@ Desplegar una versión nueva del programa no necesita `sudo`: `cmake --build bui
 | `GET /api/channels/{id}/topics` | Temas de un grupo con temas, con cuántos mensajes tiene cada uno |
 | `GET /api/catalog` | Obras (series y películas) de todos los canales: título, títulos alternativos, año, versiones disponibles (`qualities`, `hdr`), idiomas, géneros, temas, `airing` (en emisión), temporadas, episodios, tamaño en bytes, `tmdb_id` si los archivos lo traen |
 | `GET /api/catalog/{chat}/{ficha}` | Obra completa: sinopsis, ficha original y sus archivos lógicos (`releases`) con calidad, HDR, etiquetas de versión, temporada y episodio, y sus partes. Vale cualquier ficha de la obra |
-| `GET /api/catalog/{chat}/{ficha}/poster` | Portada (JPEG), descargada de Telegram la primera vez |
+| `GET /api/catalog/{chat}/{ficha}/poster` | Portada: la foto de la ficha (de Telegram) o, si no hay, la carátula de TMDB; se guardan tras la primera vez |
+| `GET /api/downloads` | Cola de descargas con su progreso (`downloaded_size`, `bytes_per_second`, `status`: queued, downloading, completed, failed, cancelled) |
+| `POST /api/downloads` | `{"chat_id": -100..., "message_id": ...}` (cualquier parte de un archivo del catálogo): 201, o 409 si ya está en la cola o descargado |
+| `POST /api/downloads/{id}/cancel` | Cancelar (borra lo descargado a medias) |
+| `POST /api/downloads/{id}/retry` | Reintentar una descarga fallida o cancelada |
+| `DELETE /api/downloads/{id}` | Quitar de la lista una descarga terminada, fallida o cancelada |
 
 Ejemplo de `/api/status`:
 ```json
@@ -103,7 +109,11 @@ Ejemplo de `/api/status`:
 Los pasos del inicio de sesión responden `{"ok": true}`, o `{"error": "..."}` con HTTP 400 (dato incorrecto, ej. `PHONE_CODE_INVALID`), 409 (Telegram no espera ese dato ahora) o 504 (Telegram no responde).
 
 ## Historial de cambios
-### Fase 2 (en curso): canales, sincronización y catálogo
+### Fase 3 (en curso): descargas
+- Cola de descargas persistente: botón "Almacenar en disco" por versión o por temporada, pestaña *Descargas* con progreso, velocidad y tiempo restante, cancelación (borra lo parcial), reintento, reanudación tras reiniciar y comprobación de espacio libre. Los archivos quedan, de momento, en la caché de TDLib (D-031).
+
+### Fase 2: canales, sincronización y catálogo
+- Metadatos de TMDB (D-029, D-030): sinopsis, títulos y sinopsis de episodio, géneros, carátulas e identificadores externos, guardados en local; créditos de TMDB en la web. Funciona sin token con los datos de las fichas.
 - Grupos con temas (foros): cada mensaje guarda su tema y las fichas se agrupan dentro de cada tema (migración v3, que relee el historial una vez).
 - Obras con versiones: las temporadas, los episodios en emisión y las versiones 1080p/4K de una misma obra se unen por título; las partes de los archivos troceados (`.zip.001`, `.part01.rar`, `_part06.rar`) forman un único archivo. La web muestra las versiones de cada episodio o película y las series en emisión.
 - Compilación optimizada por defecto (`RelWithDebInfo`) y caché del análisis: el catálogo de 33 000 mensajes se calcula en unos 2 s.

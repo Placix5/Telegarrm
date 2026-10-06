@@ -14,8 +14,11 @@
 #include "catalog.hpp"
 #include "channel_sync.hpp"
 #include "db_manager.hpp"
+#include "download_manager.hpp"
 #include "httplib.h"
+#include "metadata.hpp"
 #include "telegram_client.hpp"
+#include "tmdb_client.hpp"
 
 namespace {
 
@@ -146,9 +149,9 @@ Json messageJson(const DbManager::Message& message) {
             {"topic_id", message.topicId}};
 }
 
-void registerStatusRoutes(httplib::Server& server, DbManager& db, TelegramClient& telegram) {
-    // Estado del servicio, de la BD (lee 'version' de settings) y de la sesión de Telegram
-    server.Get("/api/status", [&db, &telegram](const httplib::Request&, httplib::Response& res) {
+void registerStatusRoutes(httplib::Server& server, DbManager& db, TelegramClient& telegram, MetadataService& metadata) {
+    // Estado del servicio, de la BD (lee 'version' de settings), de la sesión de Telegram y de TMDB
+    server.Get("/api/status", [&db, &telegram, &metadata](const httplib::Request&, httplib::Response& res) {
         Json body = {{"status", "Telegarrm is running"}, {"version", TELEGARRM_VERSION}};
         int status = 200;
 
@@ -168,6 +171,13 @@ void registerStatusRoutes(httplib::Server& server, DbManager& db, TelegramClient
             tg["password_hint"] = auth.value("password_hint", "");
         }
         body["telegram"] = tg;
+
+        const MetadataService::Stats stats = metadata.stats();
+        body["metadata"] = {{"enabled", stats.enabled},
+                            {"working", stats.working},
+                            {"total", stats.total},
+                            {"matched", stats.matched},
+                            {"unmatched", stats.unmatched}};
 
         sendJson(res, status, body);
     });
@@ -210,24 +220,40 @@ Json nullable(const std::string& value) {
     return value.empty() ? Json(nullptr) : Json(value);
 }
 
-Json itemSummaryJson(const Catalog::Item& item) {
+using InfoPtr = MetadataService::InfoPtr;
+
+Json tmdbJson(const InfoPtr& info) {
+    if (!info) {
+        return nullptr;
+    }
+    return {{"id", info->providerId},
+            {"type", info->mediaType},
+            {"title", info->title},
+            {"original_title", info->originalTitle},
+            {"year", info->year ? Json(*info->year) : Json(nullptr)},
+            {"genres", info->genres}};
+}
+
+Json itemSummaryJson(const Catalog::Item& item, const InfoPtr& info) {
     const bool hdr = std::any_of(item.releases.begin(), item.releases.end(),
                                  [](const Catalog::Release& release) { return release.hdr; });
+    const std::optional<int> year = item.year ? item.year : (info ? info->year : std::nullopt);
     return {{"chat_id", item.chatId},
             {"anchor_id", item.anchorMessageId},
             {"kind", item.kind},
             {"title", item.title},
             {"alternate_titles", item.alternateTitles},
-            {"year", item.year ? Json(*item.year) : Json(nullptr)},
-            {"tmdb_id", item.tmdbId ? Json(item.tmdbId) : Json(nullptr)},
+            {"year", year ? Json(*year) : Json(nullptr)},
+            {"tmdb", tmdbJson(info)},
             {"qualities", item.qualities},
             {"hdr", hdr},
             {"languages", item.languages},
-            {"genres", item.genres},
+            // Los géneros de TMDB están normalizados en castellano; si no hay, los de la ficha
+            {"genres", info && !info->genres.empty() ? info->genres : item.genres},
             {"topics", item.topics},
             {"airing", item.airing},
             {"channel_title", item.channelTitle},
-            {"has_poster", item.posterMessageId != 0},
+            {"has_poster", item.posterMessageId != 0 || (info && !info->posterPath.empty())},
             {"seasons", item.seasonCount},
             {"episodes", item.episodeCount},
             {"release_count", item.releases.size()},
@@ -235,10 +261,22 @@ Json itemSummaryJson(const Catalog::Item& item) {
             {"updated_at", item.updatedAt}};
 }
 
-Json itemDetailJson(const Catalog::Item& item) {
-    Json detail = itemSummaryJson(item);
-    detail["synopsis"] = item.synopsis;
+Json itemDetailJson(const Catalog::Item& item, const InfoPtr& info) {
+    Json detail = itemSummaryJson(item, info);
+    detail["synopsis"] = item.synopsis;           // De la ficha de Telegram
+    detail["overview"] = info ? info->overview : "";  // De TMDB
     detail["description"] = item.description;
+    detail["external_ids"] = info ? Json{{"tmdb", info->providerId},
+                                         {"imdb", nullable(info->imdbId)},
+                                         {"tvdb", info->tvdbId ? Json(info->tvdbId) : Json(nullptr)},
+                                         {"wikidata", nullable(info->wikidataId)}}
+                                  : Json(nullptr);
+    std::map<std::pair<int, int>, const DbManager::MetadataEpisode*> episodes;
+    if (info) {
+        for (const DbManager::MetadataEpisode& episode : info->episodes) {
+            episodes[{episode.season, episode.episode}] = &episode;
+        }
+    }
     Json releases = Json::array();
     for (const Catalog::Release& release : item.releases) {
         Json parts = Json::array();
@@ -249,7 +287,12 @@ Json itemDetailJson(const Catalog::Item& item) {
                              {"number", part.number}});
         }
         const bool isEpisode = release.episode > 0;
+        // Título del episodio: el de TMDB en castellano; si no hay, el del nombre del fichero
+        const auto tmdbEpisode = episodes.find({release.season, release.episode});
+        const DbManager::MetadataEpisode* episode = tmdbEpisode != episodes.end() ? tmdbEpisode->second : nullptr;
+        const std::string episodeTitle = episode && !episode->name.empty() ? episode->name : release.episodeTitle;
         releases.push_back({{"chat_id", release.chatId},
+                            {"message_id", release.parts.front().messageId},
                             {"name", release.name},
                             {"quality", nullable(release.quality)},
                             {"hdr", release.hdr},
@@ -259,7 +302,9 @@ Json itemDetailJson(const Catalog::Item& item) {
                             {"season", isEpisode ? Json(release.season) : Json(nullptr)},
                             {"episode", isEpisode ? Json(release.episode) : Json(nullptr)},
                             {"episode_end", release.episodeEnd > 0 ? Json(release.episodeEnd) : Json(nullptr)},
-                            {"episode_title", nullable(release.episodeTitle)},
+                            {"episode_title", nullable(episodeTitle)},
+                            {"episode_overview", episode ? nullable(episode->overview) : Json(nullptr)},
+                            {"air_date", episode ? nullable(episode->airDate) : Json(nullptr)},
                             {"date", release.date},
                             {"topic_id", release.topicId},
                             {"parts", parts}});
@@ -291,16 +336,29 @@ const Json* choosePhotoSize(const Json& photo) {
     return best;
 }
 
-void registerCatalogRoutes(httplib::Server& server, TelegramClient& telegram, Catalog& catalog) {
-    server.Get("/api/catalog", [&catalog](const httplib::Request&, httplib::Response& res) {
+void sendFile(httplib::Response& res, const std::string& path, const char* contentType) {
+    std::ifstream in(path, std::ios::binary);
+    if (path.empty() || !in) {
+        sendError(res, 502, "La imagen no está disponible");
+        return;
+    }
+    const std::string data((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    res.set_header("Cache-Control", kPosterCacheControl);
+    res.set_content(data, contentType);
+}
+
+void registerCatalogRoutes(httplib::Server& server, TelegramClient& telegram, Catalog& catalog,
+                           MetadataService& metadata, TmdbClient& tmdb) {
+    server.Get("/api/catalog", [&catalog, &metadata](const httplib::Request&, httplib::Response& res) {
         Json result = Json::array();
         for (const Catalog::ItemPtr& item : catalog.items()) {
-            result.push_back(itemSummaryJson(*item));
+            result.push_back(itemSummaryJson(*item, metadata.lookup(*item)));
         }
         sendJson(res, 200, result);
     });
 
-    server.Get(R"(/api/catalog/(-?\d+)/(\d+))", [&catalog](const httplib::Request& req, httplib::Response& res) {
+    server.Get(R"(/api/catalog/(-?\d+)/(\d+))", [&catalog, &metadata](const httplib::Request& req,
+                                                                   httplib::Response& res) {
         const auto chatId = parseId(req.matches[1].str());
         const auto anchorId = parseId(req.matches[2].str());
         const auto item = (chatId && anchorId) ? catalog.find(*chatId, *anchorId) : nullptr;
@@ -308,17 +366,29 @@ void registerCatalogRoutes(httplib::Server& server, TelegramClient& telegram, Ca
             sendError(res, 404, "Elemento no encontrado en el catálogo");
             return;
         }
-        sendJson(res, 200, itemDetailJson(*item));
+        sendJson(res, 200, itemDetailJson(*item, metadata.lookup(*item)));
     });
 
-    // Portada: la foto de la ficha. TDLib la descarga la primera vez y la guarda en su caché.
-    server.Get(R"(/api/catalog/(-?\d+)/(\d+)/poster)", [&catalog, &telegram](const httplib::Request& req,
-                                                                              httplib::Response& res) {
+    // Portada: la foto de la ficha (TDLib la descarga la primera vez y la guarda en su caché). Si la
+    // obra no tiene ficha con foto, la carátula de TMDB, guardada en disco (D-030).
+    server.Get(R"(/api/catalog/(-?\d+)/(\d+)/poster)", [&catalog, &telegram, &metadata, &tmdb](
+                                                             const httplib::Request& req, httplib::Response& res) {
         const auto chatId = parseId(req.matches[1].str());
         const auto anchorId = parseId(req.matches[2].str());
         const auto item = (chatId && anchorId) ? catalog.find(*chatId, *anchorId) : nullptr;
-        if (!item || item->posterMessageId == 0) {
-            sendError(res, 404, "Este elemento no tiene portada");
+        if (!item) {
+            sendError(res, 404, "Elemento no encontrado en el catálogo");
+            return;
+        }
+        if (item->posterMessageId == 0) {
+            const auto info = metadata.lookup(*item);
+            const auto path = info && !info->posterPath.empty() ? tmdb.image("w500", info->posterPath) : std::nullopt;
+            if (!path) {
+                sendError(res, 404, "Este elemento no tiene portada");
+                return;
+            }
+            sendFile(res, *path, path->size() > 4 && path->compare(path->size() - 4, 4, ".png") == 0 ? "image/png"
+                                                                                                      : "image/jpeg");
             return;
         }
         if (!requireTelegramReady(telegram, res)) {
@@ -358,15 +428,137 @@ void registerCatalogRoutes(httplib::Server& server, TelegramClient& telegram, Ca
             file = *downloaded;
         }
 
-        const std::string path = file.value("local", Json::object()).value("path", "");
-        std::ifstream in(path, std::ios::binary);
-        if (path.empty() || !in) {
-            sendError(res, 502, "La portada descargada no está disponible");
+        // Telegram guarda las fotos en JPEG
+        sendFile(res, file.value("local", Json::object()).value("path", ""), "image/jpeg");
+    });
+}
+
+Json downloadJson(const DbManager::Download& d, const std::optional<DownloadManager::Progress>& live) {
+    return {{"id", d.id},
+            {"chat_id", d.chatId},
+            {"message_id", d.messageId},
+            {"title", d.title},
+            {"kind", d.kind},
+            {"season", d.season > 0 ? Json(d.season) : Json(nullptr)},
+            {"episode", d.episode > 0 ? Json(d.episode) : Json(nullptr)},
+            {"episode_end", d.episodeEnd > 0 ? Json(d.episodeEnd) : Json(nullptr)},
+            {"name", d.name},
+            {"quality", nullable(d.quality)},
+            {"hdr", d.hdr},
+            {"tags", d.tags},
+            {"archive", d.archive},
+            {"total_size", d.totalSize},
+            {"downloaded_size", live ? live->downloaded : d.downloadedSize},
+            {"bytes_per_second", live ? live->bytesPerSecond : 0.0},
+            {"status", d.status},
+            {"error", nullable(d.error)},
+            {"created_at", d.createdAt},
+            {"updated_at", d.updatedAt}};
+}
+
+void registerDownloadRoutes(httplib::Server& server, DbManager& db, Catalog& catalog, DownloadManager& downloads) {
+    server.Get("/api/downloads", [&db, &downloads](const httplib::Request&, httplib::Response& res) {
+        Json result = Json::array();
+        for (const DbManager::Download& download : db.listDownloads()) {
+            result.push_back(downloadJson(download, downloads.liveProgress(download.id)));
+        }
+        sendJson(res, 200, result);
+    });
+
+    // Encolar un archivo lógico del catálogo: {"chat_id": -100..., "message_id": ...} (cualquiera de
+    // sus partes). Los datos de la descarga salen del catálogo, no de lo que envíe el navegador.
+    server.Post("/api/downloads", [&db, &catalog, &downloads](const httplib::Request& req, httplib::Response& res) {
+        const Json body = Json::parse(req.body, nullptr, false);
+        if (!body.is_object() || !body.contains("chat_id") || !body["chat_id"].is_number_integer() ||
+            !body.contains("message_id") || !body["message_id"].is_number_integer()) {
+            sendError(res, 400, "El cuerpo debe ser JSON con los campos numéricos 'chat_id' y 'message_id'");
             return;
         }
-        const std::string data((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
-        res.set_header("Cache-Control", kPosterCacheControl);
-        res.set_content(data, "image/jpeg");  // Telegram guarda las fotos en JPEG
+        const auto ref = catalog.findRelease(body["chat_id"].get<std::int64_t>(), body["message_id"].get<std::int64_t>());
+        if (!ref) {
+            sendError(res, 404, "Ese archivo no está en el catálogo");
+            return;
+        }
+        const Catalog::Item& item = *ref->item;
+        const Catalog::Release& release = *ref->release;
+
+        DbManager::Download download;
+        download.chatId = release.chatId;
+        download.messageId = release.parts.front().messageId;
+        download.title = item.title;
+        download.kind = item.kind;
+        download.season = release.season;
+        download.episode = release.episode;
+        download.episodeEnd = release.episodeEnd;
+        download.name = release.name;
+        download.quality = release.quality;
+        download.hdr = release.hdr;
+        download.tags = release.tags;
+        download.archive = release.archive;
+        download.totalSize = release.size;
+        for (const Catalog::Part& part : release.parts) {
+            download.parts.push_back({part.messageId, part.number, part.fileName, part.size, 0, ""});
+        }
+
+        const DbManager::AddDownloadResult added = db.addDownload(download);
+        if (added.duplicate) {
+            sendJson(res, 409, {{"error", "Ya está en la cola, descargándose o descargado"}, {"id", added.id}});
+            return;
+        }
+        if (!added.ok) {
+            sendError(res, 500, "No se pudo añadir a la cola");
+            return;
+        }
+        downloads.wake();
+        sendJson(res, 201, {{"id", added.id}});
+    });
+
+    server.Post(R"(/api/downloads/(\d+)/cancel)", [&db, &downloads](const httplib::Request& req, httplib::Response& res) {
+        const auto id = parseId(req.matches[1].str());
+        const auto download = id ? db.getDownload(*id) : std::nullopt;
+        if (!download) {
+            sendError(res, 404, "Descarga no encontrada");
+            return;
+        }
+        if (download->status == "queued") {
+            db.setDownloadStatus(*id, "cancelled");
+        } else if (download->status != "downloading" || !downloads.cancelActive(*id)) {
+            sendError(res, 409, "Solo se pueden cancelar descargas en cola o en curso");
+            return;
+        }
+        sendJson(res, 202, {{"ok", true}});
+    });
+
+    server.Post(R"(/api/downloads/(\d+)/retry)", [&db, &downloads](const httplib::Request& req, httplib::Response& res) {
+        const auto id = parseId(req.matches[1].str());
+        const auto download = id ? db.getDownload(*id) : std::nullopt;
+        if (!download) {
+            sendError(res, 404, "Descarga no encontrada");
+            return;
+        }
+        if (download->status != "failed" && download->status != "cancelled") {
+            sendError(res, 409, "Solo se pueden reintentar descargas fallidas o canceladas");
+            return;
+        }
+        db.setDownloadStatus(*id, "queued");
+        downloads.wake();
+        sendJson(res, 202, {{"ok", true}});
+    });
+
+    // Quitar del historial. Los archivos de una descarga terminada se quedan en la caché de TDLib.
+    server.Delete(R"(/api/downloads/(\d+))", [&db](const httplib::Request& req, httplib::Response& res) {
+        const auto id = parseId(req.matches[1].str());
+        const auto download = id ? db.getDownload(*id) : std::nullopt;
+        if (!download) {
+            sendError(res, 404, "Descarga no encontrada");
+            return;
+        }
+        if (download->status == "queued" || download->status == "downloading") {
+            sendError(res, 409, "Cancélala antes de quitarla de la lista");
+            return;
+        }
+        db.deleteDownload(*id);
+        sendJson(res, 200, {{"ok", true}});
     });
 }
 
@@ -519,10 +711,10 @@ void registerChannelRoutes(httplib::Server& server, DbManager& db, TelegramClien
 
 }  // namespace
 
-void registerApiRoutes(httplib::Server& server, DbManager& db, TelegramClient& telegram, ChannelSync& sync,
-                       Catalog& catalog) {
-    registerStatusRoutes(server, db, telegram);
-    registerAuthRoutes(server, telegram);
-    registerChannelRoutes(server, db, telegram, sync, catalog);
-    registerCatalogRoutes(server, telegram, catalog);
+void registerApiRoutes(httplib::Server& server, const ApiServices& services) {
+    registerStatusRoutes(server, services.db, services.telegram, services.metadata);
+    registerAuthRoutes(server, services.telegram);
+    registerChannelRoutes(server, services.db, services.telegram, services.sync, services.catalog);
+    registerCatalogRoutes(server, services.telegram, services.catalog, services.metadata, services.tmdb);
+    registerDownloadRoutes(server, services.db, services.catalog, services.downloads);
 }

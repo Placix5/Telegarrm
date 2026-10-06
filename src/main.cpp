@@ -10,14 +10,18 @@
 #include "catalog.hpp"
 #include "channel_sync.hpp"
 #include "db_manager.hpp"
+#include "download_manager.hpp"
 #include "httplib.h"
+#include "metadata.hpp"
 #include "signal_watcher.hpp"
 #include "telegram_client.hpp"
+#include "tmdb_client.hpp"
 
 namespace {
 
 constexpr const char* kDbPath = "db/telegarrm.db";
 constexpr const char* kTdlibDir = "db/tdlib";
+constexpr const char* kTmdbImageDir = "db/tmdb/images";
 constexpr int kPort = 8080;
 
 // Credenciales de la API de Telegram (https://my.telegram.org), leídas del entorno
@@ -71,13 +75,23 @@ int main() {
     // sincronización al arrancar, para no retrasar la web (con miles de mensajes tarda segundos).
     Catalog catalog(db);
 
+    // Metadatos de TMDB (opcionales: sin token, el catálogo usa solo los datos de las fichas)
+    const char* tmdbToken = std::getenv("TELEGARRM_TMDB_TOKEN");
+    TmdbClient tmdb(db, tmdbToken ? tmdbToken : "", kTmdbImageDir);
+    MetadataService metadata(db, catalog, tmdb);
+
     TelegramClient telegram(std::move(*telegramConfig));
-    // Cada cambio en los mensajes de un canal recalcula su parte del catálogo
-    ChannelSync sync(db, telegram, [&catalog](std::int64_t chatId) { catalog.rebuildChannel(chatId); });
+    // Cada cambio en los mensajes de un canal recalcula su parte del catálogo y busca lo nuevo en TMDB
+    ChannelSync sync(db, telegram, [&catalog, &metadata](std::int64_t chatId) {
+        catalog.rebuildChannel(chatId);
+        metadata.requestRun();
+    });
+    // Cola de descargas; TDLib guarda los archivos dentro de su carpeta
+    DownloadManager downloads(db, telegram, kTdlibDir);
 
     // Inicializar el servidor HTTP
     httplib::Server svr;
-    registerApiRoutes(svr, db, telegram, sync, catalog);
+    registerApiRoutes(svr, {db, telegram, sync, catalog, metadata, tmdb, downloads});
 
     // Configurar la carpeta web estática
     if (!svr.set_mount_point("/", "./web")) {
@@ -103,8 +117,11 @@ int main() {
         std::cerr << "Error: no se pudo iniciar el cliente de Telegram." << std::endl;
         return 1;
     }
-    // Sincronización del historial de los canales vigilados (espera a que haya sesión)
+    // Sincronización del historial de los canales vigilados (espera a que haya sesión),
+    // metadatos y descargas, cada uno en su hilo
     sync.start();
+    metadata.start();
+    downloads.start();
 
     std::cout << "Servidor web escuchando en http://localhost:" << kPort << std::endl;
 
@@ -117,6 +134,8 @@ int main() {
     // El vigilante usa svr: hay que pararlo antes de que se destruya. La sincronización usa
     // TelegramClient, así que se para antes que él. La BD se cierra en su destructor.
     signals.stop();
+    downloads.stop();
+    metadata.stop();
     sync.stop();
     telegram.stop();
     std::cout << "Telegarrm detenido." << std::endl;

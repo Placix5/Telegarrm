@@ -12,6 +12,7 @@
     <h1>Telegarrm <small id="version"></small></h1>
     <nav aria-label="Secciones">
       <a href="#/catalogo" data-view="catalog">Catálogo</a>
+      <a href="#/descargas" data-view="downloads">Descargas <span class="count" id="downloads-count" hidden></span></a>
       <a href="#/canales" data-view="channels">Canales</a>
       <a href="#/estado" data-view="status">Estado</a>
     </nav>
@@ -42,6 +43,16 @@
   <div class="view" id="view-detail" hidden>
     <p><a href="#/catalogo" class="back">← Volver al catálogo</a></p>
     <div id="detail-content"></div>
+  </div>
+
+  <!-- Cola de descargas -->
+  <div class="view" id="view-downloads" hidden>
+    <section aria-labelledby="descargas">
+      <h2 id="descargas">Descargas</h2>
+      <p class="hint" id="downloads-empty">No hay descargas. Elige una versión en la ficha de una serie o película y pulsa «Almacenar en disco».</p>
+      <p class="hint" id="downloads-note" hidden>De momento los archivos se guardan en la caché de Telegram de la Raspberry Pi; moverlos a la biblioteca llegará en el siguiente paso.</p>
+      <ul class="download-list" id="download-list"></ul>
+    </section>
   </div>
 
   <!-- Canales vigilados -->
@@ -87,6 +98,12 @@
     </section>
   </div>
 </main>
+
+<footer class="credits">
+  <a href="https://www.themoviedb.org/" target="_blank" rel="noopener"><img src="tmdb-logo.svg" alt="TMDB" width="120"></a>
+  <p>This product uses the TMDB API but is not endorsed or certified by TMDB.<br>
+     <span class="hint">(Este producto usa la API de TMDB, pero TMDB no lo respalda ni lo certifica.)</span></p>
+</footer>
 <script src="app.js"></script>
 </body>
 </html>

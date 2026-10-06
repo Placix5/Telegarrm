@@ -639,11 +639,28 @@ void Catalog::publish() {
         all.insert(all.end(), pointers.begin(), pointers.end());
     }
     std::vector<ItemPtr> items;
+    std::map<std::pair<std::int64_t, std::int64_t>, std::pair<ItemPtr, std::size_t>> index;
     for (Item& item : mergeBlocks(all)) {
-        items.push_back(std::make_shared<const Item>(std::move(item)));
+        ItemPtr shared = std::make_shared<const Item>(std::move(item));
+        for (std::size_t i = 0; i < shared->releases.size(); ++i) {
+            for (const Part& part : shared->releases[i].parts) {
+                index[{shared->releases[i].chatId, part.messageId}] = {shared, i};
+            }
+        }
+        items.push_back(std::move(shared));
     }
     std::lock_guard<std::mutex> lock(mutex_);
     items_ = std::move(items);
+    releaseIndex_ = std::move(index);
+}
+
+std::optional<Catalog::ReleaseRef> Catalog::findRelease(std::int64_t chatId, std::int64_t messageId) const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    const auto it = releaseIndex_.find({chatId, messageId});
+    if (it == releaseIndex_.end()) {
+        return std::nullopt;
+    }
+    return ReleaseRef{it->second.first, &it->second.first->releases[it->second.second]};
 }
 
 std::vector<Catalog::ItemPtr> Catalog::items() const {
