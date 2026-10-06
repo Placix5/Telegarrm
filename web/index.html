@@ -4,40 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Telegarrm</title>
-<style>
-  :root {
-    --bg: #f4f5f7; --card: #ffffff; --text: #1d2129; --muted: #626b7a;
-    --border: #d9dde3; --accent: #2a7bd4; --ok: #1f8a4c; --warn: #b26a00; --err: #c62f2f;
-  }
-  @media (prefers-color-scheme: dark) {
-    :root {
-      --bg: #14171c; --card: #1d2128; --text: #e6e9ee; --muted: #9aa3b1;
-      --border: #313742; --accent: #5aa2f0; --ok: #4cc27f; --warn: #e0a33a; --err: #f07070;
-    }
-  }
-  * { box-sizing: border-box; }
-  body { margin: 0; background: var(--bg); color: var(--text);
-         font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
-  main { max-width: 34rem; margin: 0 auto; padding: 2rem 1rem; }
-  h1 { margin: 0 0 1.5rem; font-size: 1.6rem; }
-  h1 small { color: var(--muted); font-size: 0.9rem; font-weight: normal; }
-  h2 { margin: 0 0 1rem; font-size: 1.1rem; }
-  section { background: var(--card); border: 1px solid var(--border); border-radius: 0.6rem;
-            padding: 1.25rem; margin-bottom: 1rem; }
-  dl { display: grid; grid-template-columns: max-content 1fr; gap: 0.4rem 1rem; margin: 0; }
-  dt { color: var(--muted); }
-  dd { margin: 0; overflow-wrap: anywhere; }
-  .ok { color: var(--ok); } .warn { color: var(--warn); } .err { color: var(--err); }
-  label { display: block; margin-bottom: 0.4rem; }
-  input { width: 100%; padding: 0.6rem 0.7rem; font: inherit; color: var(--text); background: var(--bg);
-          border: 1px solid var(--border); border-radius: 0.4rem; }
-  button { margin-top: 0.8rem; padding: 0.6rem 1.2rem; font: inherit; color: #fff; background: var(--accent);
-           border: 0; border-radius: 0.4rem; cursor: pointer; }
-  button:disabled { opacity: 0.6; cursor: default; }
-  p { margin: 0 0 0.8rem; }
-  .hint { color: var(--muted); font-size: 0.9rem; }
-  #auth-error { margin: 0.8rem 0 0; }
-</style>
+<link rel="stylesheet" href="style.css">
 </head>
 <body>
 <main>
@@ -61,154 +28,25 @@
       <input id="auth-input" required>
       <p class="hint" id="auth-hint" hidden></p>
       <button type="submit" id="auth-submit">Enviar</button>
-      <p id="auth-error" class="err" role="alert" hidden></p>
+      <p id="auth-error" class="err error-box" role="alert" hidden></p>
+    </form>
+  </section>
+
+  <section aria-labelledby="canales" id="channels-section" hidden>
+    <h2 id="canales">Canales vigilados</h2>
+    <p class="hint" id="channels-empty">Todavía no vigilas ningún canal. Elige abajo los canales o grupos donde están tus series y películas.</p>
+    <ul class="channel-list" id="channel-list"></ul>
+
+    <form id="add-form">
+      <label for="chat-select">Añadir canal o grupo</label>
+      <div class="row">
+        <select id="chat-select" disabled><option>Cargando tus chats…</option></select>
+        <button type="submit" id="add-submit" disabled>Añadir</button>
+      </div>
+      <p id="add-error" class="err error-box" role="alert" hidden></p>
     </form>
   </section>
 </main>
-
-<script>
-"use strict";
-
-const POLL_MS = 2000;
-
-// Textos de la conexión con Telegram (connectionState* de TDLib)
-const CONNECTION = {
-  connectionStateReady: ["Conectado", "ok"],
-  connectionStateUpdating: ["Actualizando…", "warn"],
-  connectionStateConnecting: ["Conectando…", "warn"],
-  connectionStateConnectingToProxy: ["Conectando al proxy…", "warn"],
-  connectionStateWaitingForNetwork: ["Esperando red…", "err"],
-};
-
-// Pasos del inicio de sesión (authorizationState* de TDLib)
-const AUTH_STEPS = {
-  authorizationStateWaitPhoneNumber: {
-    endpoint: "/api/telegram/auth/phone", field: "phone_number",
-    text: "Introduce el número de teléfono de tu cuenta de Telegram, con prefijo internacional.",
-    label: "Número de teléfono", type: "tel", placeholder: "+34 600 000 000",
-  },
-  authorizationStateWaitCode: {
-    endpoint: "/api/telegram/auth/code", field: "code",
-    text: "Telegram te ha enviado un código de inicio de sesión (normalmente a la propia app de Telegram).",
-    label: "Código", type: "text", placeholder: "12345", inputmode: "numeric",
-  },
-  authorizationStateWaitPassword: {
-    endpoint: "/api/telegram/auth/password", field: "password",
-    text: "Tu cuenta tiene verificación en dos pasos. Introduce tu contraseña.",
-    label: "Contraseña", type: "password", placeholder: "",
-  },
-};
-
-const AUTH_STATUS = {
-  authorizationStateWaitTdlibParameters: ["Iniciando…", "warn"],
-  authorizationStateWaitPhoneNumber: ["Sin iniciar sesión", "warn"],
-  authorizationStateWaitCode: ["Esperando código", "warn"],
-  authorizationStateWaitPassword: ["Esperando contraseña", "warn"],
-  authorizationStateReady: ["Sesión iniciada", "ok"],
-  authorizationStateLoggingOut: ["Cerrando sesión…", "warn"],
-  authorizationStateClosing: ["Cerrando…", "warn"],
-  authorizationStateClosed: ["Cerrada", "err"],
-};
-
-// Errores habituales de Telegram traducidos
-function translateError(message) {
-  const known = {
-    PHONE_NUMBER_INVALID: "El número de teléfono no es válido.",
-    PHONE_NUMBER_BANNED: "Este número de teléfono está bloqueado en Telegram.",
-    PHONE_CODE_INVALID: "El código no es correcto.",
-    PHONE_CODE_EXPIRED: "El código ha caducado. Vuelve a introducir el teléfono.",
-    PASSWORD_HASH_INVALID: "La contraseña no es correcta.",
-    API_ID_INVALID: "TELEGARRM_API_ID o TELEGARRM_API_HASH no son válidos.",
-  };
-  if (known[message]) return known[message];
-  const flood = /retry after (\d+)/i.exec(message || "");
-  if (flood) return `Demasiados intentos. Espera ${flood[1]} s antes de volver a probar.`;
-  return message || "Error desconocido.";
-}
-
-const $ = (id) => document.getElementById(id);
-
-function setStatus(id, text, cls) {
-  const el = $(id);
-  el.textContent = text;
-  el.className = cls || "";
-}
-
-let currentAuthState = null;
-
-function renderAuthForm(state, telegram) {
-  const step = AUTH_STEPS[state];
-  $("auth-section").hidden = !step;
-  if (!step || state === currentAuthState) return;  // No borrar lo que se está escribiendo
-
-  $("auth-text").textContent = step.text;
-  $("auth-label").textContent = step.label;
-  const input = $("auth-input");
-  input.value = "";
-  input.type = step.type;
-  input.placeholder = step.placeholder;
-  if (step.inputmode) input.setAttribute("inputmode", step.inputmode);
-  else input.removeAttribute("inputmode");
-
-  const hint = telegram.password_hint;
-  $("auth-hint").hidden = !(state === "authorizationStateWaitPassword" && hint);
-  $("auth-hint").textContent = hint ? `Pista: ${hint}` : "";
-  $("auth-error").hidden = true;
-}
-
-async function refresh() {
-  try {
-    const res = await fetch("/api/status", { cache: "no-store" });
-    const data = await res.json();
-    $("version").textContent = `v${data.version}`;
-    setStatus("st-service", "En marcha", "ok");
-    setStatus("st-db", data.database.status === "ok" ? "Conectada" : "Error", data.database.status === "ok" ? "ok" : "err");
-
-    const tg = data.telegram || {};
-    const conn = CONNECTION[tg.connection_state] || [tg.connection_state || "—", ""];
-    setStatus("st-connection", conn[0], conn[1]);
-    const auth = AUTH_STATUS[tg.authorization_state] || [tg.authorization_state || "—", "warn"];
-    setStatus("st-auth", auth[0], auth[1]);
-
-    renderAuthForm(tg.authorization_state, tg);
-    currentAuthState = tg.authorization_state;
-  } catch (e) {
-    setStatus("st-service", "Sin respuesta del servidor", "err");
-  }
-}
-
-$("auth-form").addEventListener("submit", async (event) => {
-  event.preventDefault();
-  const step = AUTH_STEPS[currentAuthState];
-  if (!step) return;
-
-  const button = $("auth-submit");
-  const errorBox = $("auth-error");
-  button.disabled = true;
-  errorBox.hidden = true;
-  try {
-    const res = await fetch(step.endpoint, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      // La contraseña se envía tal cual: puede empezar o acabar en espacio
-      body: JSON.stringify({ [step.field]: step.type === "password" ? $("auth-input").value : $("auth-input").value.trim() }),
-    });
-    if (!res.ok) {
-      const data = await res.json().catch(() => ({}));
-      errorBox.textContent = translateError(data.error);
-      errorBox.hidden = false;
-    }
-  } catch (e) {
-    errorBox.textContent = "No se pudo contactar con el servidor.";
-    errorBox.hidden = false;
-  } finally {
-    button.disabled = false;
-    refresh();
-  }
-});
-
-refresh();
-setInterval(refresh, POLL_MS);
-</script>
+<script src="app.js"></script>
 </body>
 </html>

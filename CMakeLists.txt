@@ -24,6 +24,7 @@ message(STATUS "TDLib ${Td_VERSION}: ${Td_DIR}")
 add_executable(telegarrm
     src/main.cpp
     src/api.cpp
+    src/channel_sync.cpp
     src/db_manager.cpp
     src/signal_watcher.cpp
     src/telegram_client.cpp

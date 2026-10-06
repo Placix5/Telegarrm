@@ -6,6 +6,7 @@
 #include <utility>
 
 #include "api.hpp"
+#include "channel_sync.hpp"
 #include "db_manager.hpp"
 #include "httplib.h"
 #include "signal_watcher.hpp"
@@ -48,7 +49,7 @@ int main() {
     // Debe ir antes de crear cualquier hilo (ver signal_watcher.hpp)
     SignalWatcher signals;
 
-    std::cout << "Iniciando Telegarrm " TELEGARRM_VERSION " (Fase 1)..." << std::endl;
+    std::cout << "Iniciando Telegarrm " TELEGARRM_VERSION "..." << std::endl;
 
     auto telegramConfig = telegramConfigFromEnv();
     if (!telegramConfig) {
@@ -65,10 +66,11 @@ int main() {
     db.setSetting("version", TELEGARRM_VERSION);
 
     TelegramClient telegram(std::move(*telegramConfig));
+    ChannelSync sync(db, telegram);
 
     // Inicializar el servidor HTTP
     httplib::Server svr;
-    registerApiRoutes(svr, db, telegram);
+    registerApiRoutes(svr, db, telegram, sync);
 
     // Configurar la carpeta web estática
     if (!svr.set_mount_point("/", "./web")) {
@@ -94,6 +96,8 @@ int main() {
         std::cerr << "Error: no se pudo iniciar el cliente de Telegram." << std::endl;
         return 1;
     }
+    // Sincronización del historial de los canales vigilados (espera a que haya sesión)
+    sync.start();
 
     std::cout << "Servidor web escuchando en http://localhost:" << kPort << std::endl;
 
@@ -103,8 +107,10 @@ int main() {
     // listen_after_bind() bloquea el hilo principal, actuando como bucle del daemon
     svr.listen_after_bind();
 
-    // El vigilante usa svr: hay que pararlo antes de que se destruya. La BD se cierra en su destructor.
+    // El vigilante usa svr: hay que pararlo antes de que se destruya. La sincronización usa
+    // TelegramClient, así que se para antes que él. La BD se cierra en su destructor.
     signals.stop();
+    sync.stop();
     telegram.stop();
     std::cout << "Telegarrm detenido." << std::endl;
     return 0;

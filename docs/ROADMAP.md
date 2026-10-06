@@ -26,11 +26,13 @@ Todo se gestiona desde el navegador, sin SSH ni terminal.
 - [x] Servicio de usuario `systemd` (`deploy/telegarrm.service`, `EnvironmentFile` con permisos `600`). Falta `loginctl enable-linger` para que arranque sin iniciar sesión.
 
 ## Fase 2: Canales y catálogo (en curso)
-- **Canales**: listar los chats de la cuenta (`getChats`) para elegir desde la web cuáles vigilar (tabla `channels`).
-- **Sincronización**: recorrer el historial (`getChatHistory` paginado, respetando los `FLOOD_WAIT` de Telegram) y guardar mensajes con fichero: id del mensaje, id remoto del fichero, nombre, tamaño, fecha y texto.
-- **Parser**: adaptar `episode_parser` del proyecto antiguo (SxxEyy, 1x01, calidades, códecs) con tests unitarios (`ctest`) construidos con ejemplos reales del canal. Tabla `media`: tipo, título, año, temporada, episodio, calidad, códec, idioma.
-- **API**: `GET/POST/DELETE /api/channels`, `GET /api/catalog` (búsqueda y filtros), `GET /api/catalog/{id}`.
-- **Web**: catálogo en tarjetas con búsqueda y filtros; ficha de serie con temporadas y episodios.
+- [x] **Canales**: listar los chats de la cuenta (`getChats`, incluidos archivados) para elegir desde la web cuáles vigilar (tabla `channels`).
+- [x] **Sincronización**: recorrer el historial (`getChatHistory` paginado, respetando los `FLOOD_WAIT` de Telegram) y guardar los mensajes con texto o fichero: id, fecha, álbum, texto, nombre, tamaño y tipo MIME. Reanudable; mensajes nuevos cada 15 min.
+- [ ] **Parser**: adaptar `episode_parser` del proyecto antiguo (SxxEyy, 1x01, calidades, códecs) con tests unitarios (`ctest`) construidos con ejemplos reales del canal. Tabla `media`: tipo, título, año, temporada, episodio, calidad, códec, idioma.
+- [ ] **API**: `GET /api/catalog` (búsqueda y filtros), `GET /api/catalog/{id}`. (`/api/channels` ya existe.)
+- [ ] **Web**: catálogo en tarjetas con búsqueda y filtros; ficha de serie con temporadas y episodios.
+
+Primera muestra real (canal de una serie): vídeos `Serie #01x01 - Título.mp4` con el mismo texto en el pie, una foto de portada con el nombre de la serie y algunos mensajes de texto con enlaces. Falta ver el formato de los canales de Plácido para cerrar el diseño del parser.
 
 ## Fase 3: Descargas
 - **Rutas** de la biblioteca (series, películas, buffer temporal) configurables desde la web (`settings`).

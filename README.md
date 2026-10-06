@@ -6,11 +6,13 @@ Telegarrm es un servicio daemon (stack ARR) que utiliza Telegram (TDLib) como fu
 - `src/`: Código fuente C++
   - `main.cpp`: arranque del daemon y servidor HTTP
   - `api.cpp`: endpoints REST (`/api/...`)
+  - `channel_sync.cpp`: copia el historial de los canales vigilados en SQLite (clase `ChannelSync`)
   - `db_manager.cpp`: acceso a SQLite (clase `DbManager`)
   - `telegram_client.cpp`: cliente de TDLib en su propio hilo (clase `TelegramClient`)
   - `signal_watcher.cpp`: parada ordenada con SIGINT/SIGTERM (clase `SignalWatcher`)
 - `include/`: Cabeceras y dependencias de un solo archivo (`httplib.h`, `nlohmann/json.hpp`)
-- `web/`: Interfaz web (Frontend)
+- `web/`: Interfaz web (`index.html`, `style.css`, `app.js`, sin dependencias)
+- `deploy/`: Servicio de systemd
 - `db/`: Datos generados al ejecutar: `telegarrm.db` (SQLite) y `tdlib/` (sesión de Telegram)
 - `docs/`: Documentación; la planificación vigente está en [docs/ROADMAP.md](docs/ROADMAP.md)
 - `build/`: Archivos de compilación
@@ -20,7 +22,7 @@ Detalle y tareas en [docs/ROADMAP.md](docs/ROADMAP.md).
 
 - [x] **Fase 0**: Estructura base y servidor HTTP (`cpp-httplib`).
 - [x] **Fase 1**: Motor TDLib en un hilo propio y SQLite para configuración y estado. *Completada.*
-- [ ] **Fase 2**: Canales y catálogo: lectura del historial de los canales elegidos y catálogo en la web.
+- [ ] **Fase 2**: Canales y catálogo: lectura del historial de los canales elegidos y catálogo en la web. *En curso: selección de canales y sincronización listas; falta el catálogo.*
 - [ ] **Fase 3**: Descargas: cola, descompresión y renombrado (núcleo antiguo de C++).
 - [ ] **Fase 4**: Tele-ARR: escucha de mensajes nuevos, reemplazo de calidades y auto-descarga de capítulos en seguimiento.
 
@@ -77,6 +79,12 @@ Logs con `journalctl --user-unit telegarrm -f`; reinicio con `systemctl --user r
 | `POST /api/telegram/auth/phone` | `{"phone_number": "+34..."}` |
 | `POST /api/telegram/auth/code` | `{"code": "12345"}` |
 | `POST /api/telegram/auth/password` | `{"password": "..."}` (verificación en dos pasos) |
+| `GET /api/telegram/chats` | Canales y grupos de la cuenta (incluidos los archivados), con `type` y `role`, para elegir cuáles vigilar |
+| `GET /api/channels` | Canales vigilados y estado de su sincronización |
+| `POST /api/channels` | `{"chat_id": -100...}`: vigilar un canal o grupo; empieza a sincronizarse al momento |
+| `DELETE /api/channels/{id}` | Dejar de vigilarlo (borra sus mensajes guardados, no los de Telegram) |
+| `POST /api/channels/{id}/sync` | Buscar mensajes nuevos ya, sin esperar a la ronda periódica (cada 15 min) |
+| `GET /api/channels/{id}/messages?limit=50&offset=0` | Mensajes guardados, del más reciente al más antiguo |
 
 Ejemplo de `/api/status`:
 ```json
@@ -87,6 +95,12 @@ Ejemplo de `/api/status`:
 Los pasos del inicio de sesión responden `{"ok": true}`, o `{"error": "..."}` con HTTP 400 (dato incorrecto, ej. `PHONE_CODE_INVALID`), 409 (Telegram no espera ese dato ahora) o 504 (Telegram no responde).
 
 ## Historial de cambios
+### Fase 2 (en curso): canales y sincronización
+- Esquema de BD versionado con migraciones (`PRAGMA user_version`); WAL para escribir menos en la tarjeta SD.
+- `ChannelSync` copia el historial de los canales vigilados en la tabla `messages` (texto, nombre, tamaño y tipo de fichero), por lotes de 100. El cursor se guarda en la misma transacción que cada lote, así que tras un reinicio continúa donde lo dejó. Respeta los `FLOOD_WAIT` de Telegram y después busca mensajes nuevos cada 15 min.
+- La web permite elegir los canales vigilados entre los chats de la cuenta, sincronizarlos a mano y quitarlos.
+- Servicio de usuario de systemd (`deploy/telegarrm.service`).
+
 ### Fase 1: TDLib real e inicio de sesión desde la web
 - `TelegramClient` usa TDLib (interfaz JSON, `td_send`/`td_receive`) en su propio hilo. Cada respuesta se asocia a su petición mediante `@extra`, con variantes asíncrona (`send`) y síncrona con timeout (`request`). Al parar, cierra TDLib de forma ordenada (`close`) para que guarde su estado.
 - Credenciales por variables de entorno; sesión en `db/tdlib/` con permisos `0700`.
