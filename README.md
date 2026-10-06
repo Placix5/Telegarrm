@@ -13,10 +13,13 @@ Telegarrm es un servicio daemon (stack ARR) que utiliza Telegram (TDLib) como fu
 - `build/`: Archivos de compilación
 
 ## Fases de Desarrollo
+Detalle en [docs/01_architecture_and_phases.md](docs/01_architecture_and_phases.md).
+
 - [x] **Fase 0**: Estructura base y servidor HTTP (`cpp-httplib`).
-- [ ] **Fase 1**: Frontend básico (Catálogo) y lectura de canal con expresiones regulares.
-- [ ] **Fase 2**: Integración de descargas bajo demanda (Core antiguo de C++).
-- [ ] **Fase 3**: Automatización, escuchador en segundo plano y reemplazo inteligente de calidades.
+- [ ] **Fase 1**: Motor TDLib en un hilo propio y SQLite para configuración y estado. *En curso: SQLite listo; el hilo de TDLib todavía es simulado.*
+- [ ] **Fase 2**: Catálogo y frontend: lectura del historial del canal con expresiones regulares y endpoints para la web.
+- [ ] **Fase 3**: Descarga y cola: descarga, descompresión y renombrado (core antiguo de C++).
+- [ ] **Fase 4**: Tele-ARR: escucha de mensajes nuevos, reemplazo de calidades y auto-descarga de capítulos en seguimiento.
 
 ## Dependencias
 - Compilador con C++17, CMake >= 3.14 y SQLite3 (cabeceras de desarrollo).
