@@ -147,6 +147,23 @@ TelegramClient::Json TelegramClient::connectionState() const {
     return connectionState_;
 }
 
+std::optional<TelegramClient::Json> TelegramClient::fileOfMessage(const Json& message) {
+    static const std::pair<const char*, const char*> kFields[] = {
+        {"messageDocument", "document"}, {"messageVideo", "video"}, {"messageAudio", "audio"}, {"messageAnimation", "animation"}};
+    const Json content = message.value("content", Json::object());
+    const std::string type = typeOf(content);
+    for (const auto& [contentType, field] : kFields) {
+        if (type == contentType) {
+            const Json media = content.value(field, Json::object());
+            const Json file = media.value(field, Json::object());
+            if (file.is_object() && file.contains("id")) {
+                return file;
+            }
+        }
+    }
+    return std::nullopt;
+}
+
 void TelegramClient::addUpdateListener(Handler listener) {
     if (worker_.joinable()) {
         std::cerr << "[Telegram] addUpdateListener debe llamarse antes de start()" << std::endl;

@@ -20,6 +20,7 @@
 #include "download_manager.hpp"
 #include "httplib.h"
 #include "metadata.hpp"
+#include "release_prober.hpp"
 #include "settings.hpp"
 #include "telegram_client.hpp"
 #include "tmdb_client.hpp"
@@ -313,8 +314,22 @@ Json seriesLibraryJson(const Catalog::Item& item, const std::vector<tracking::Ow
     return {{"episodes", count.known}, {"owned", count.owned}, {"missing", missing}};
 }
 
+using Probes = tracking::Probes;
+
+// Calidad comprobada de un archivo (D-042): {"quality", "hdr"}, {"error"} o null si no se ha mirado
+Json probeJson(const Probes& probes, const Catalog::Release& release) {
+    const auto it = probes.find({release.chatId, release.parts.front().messageId});
+    if (it == probes.end()) {
+        return nullptr;
+    }
+    if (!it->second.error.empty()) {
+        return {{"error", it->second.error}};
+    }
+    return {{"quality", it->second.quality}, {"hdr", it->second.hdr}};
+}
+
 Json itemDetailJson(const Catalog::Item& item, const InfoPtr& info, const DbManager::Follow* follow,
-                    const std::vector<tracking::Owned>& owned) {
+                    const std::vector<tracking::Owned>& owned, const Probes& probes) {
     Json detail = itemSummaryJson(item, info, follow);
     detail["follow"] = follow ? followJson(*follow) : Json(nullptr);
     detail["library"] = item.kind == "series" ? seriesLibraryJson(item, owned) : Json(nullptr);
@@ -362,6 +377,7 @@ Json itemDetailJson(const Catalog::Item& item, const InfoPtr& info, const DbMana
                             {"air_date", episode ? nullable(episode->airDate) : Json(nullptr)},
                             {"date", release.date},
                             {"topic_id", release.topicId},
+                            {"probe", probeJson(probes, release)},
                             {"parts", parts}});
     }
     detail["releases"] = releases;
@@ -424,10 +440,29 @@ void registerCatalogRoutes(httplib::Server& server, DbManager& db, TelegramClien
             return;
         }
         const FollowIndex follows = followIndex(db, catalog.items(), metadata);
-        const tracking::OwnedByItem owned = tracking::ownedByItem(catalog, db.listDownloads());
-        const auto itemOwned = owned.find({item->chatId, item->anchorMessageId});
-        sendJson(res, 200, itemDetailJson(*item, metadata.lookup(*item), findFollow(follows, *item),
-                                          itemOwned != owned.end() ? itemOwned->second : std::vector<tracking::Owned>{}));
+        // Lo que se tiene: descargas y vídeos que ya están en la biblioteca (D-041)
+        const AppSettings settings = loadSettings(db);
+        const std::vector<library::DiskVideo> disk = library::videosOnDisk(
+            item->kind == "series" ? settings.seriesDir : settings.moviesDir, tracking::workInfo(*item, metadata));
+        const std::vector<tracking::Owned> owned =
+            tracking::ownedVersions(*item, tracking::ownedByItem(catalog, db.listDownloads()), disk);
+        const tracking::Probes probes = db.listProbes();
+        const Catalog::Item effective = tracking::applyProbes(*item, probes);
+        Json detail = itemDetailJson(*item, metadata.lookup(*item), findFollow(follows, *item), owned, probes);
+        if (item->kind == "series") {
+            detail["library"] = seriesLibraryJson(effective, owned);  // Lo que falta, con la calidad comprobada
+        }
+        Json onDisk = Json::array();
+        for (const library::DiskVideo& video : disk) {
+            onDisk.push_back({{"file", std::filesystem::path(video.path).filename().string()},
+                              {"season", video.episode > 0 ? Json(video.season) : Json(nullptr)},
+                              {"episode", video.episode > 0 ? Json(video.episode) : Json(nullptr)},
+                              {"episode_end", video.episodeEnd > video.episode ? Json(video.episodeEnd) : Json(nullptr)},
+                              {"quality", nullable(video.quality)},
+                              {"hdr", video.hdr}});
+        }
+        detail["on_disk"] = onDisk;
+        sendJson(res, 200, detail);
     });
 
     // Portada: la foto de la ficha (TDLib la descarga la primera vez y la guarda en su caché). Si la
@@ -522,6 +557,26 @@ Json downloadJson(const DbManager::Download& d, const std::optional<DownloadMana
             {"updated_at", d.updatedAt}};
 }
 
+void registerProbeRoutes(httplib::Server& server, Catalog& catalog, ReleaseProber& prober) {
+    // Calidad real de un archivo del catálogo sin descargarlo entero (D-042): {"quality", "hdr"}
+    server.Post(R"(/api/releases/(-?\d+)/(\d+)/probe)", [&catalog, &prober](const httplib::Request& req,
+                                                                         httplib::Response& res) {
+        const auto chatId = parseId(req.matches[1].str());
+        const auto messageId = parseId(req.matches[2].str());
+        const auto ref = (chatId && messageId) ? catalog.findRelease(*chatId, *messageId) : std::nullopt;
+        if (!ref) {
+            sendError(res, 404, "Ese archivo no está en el catálogo");
+            return;
+        }
+        const ReleaseProber::Result result = prober.probe(*ref->release);
+        if (!result.ok) {
+            sendError(res, 409, result.error);
+            return;
+        }
+        sendJson(res, 200, {{"quality", result.info.quality}, {"hdr", result.info.hdr.value_or(false)}});
+    });
+}
+
 void registerDownloadRoutes(httplib::Server& server, DbManager& db, Catalog& catalog, DownloadManager& downloads) {
     server.Get("/api/downloads", [&db, &downloads](const httplib::Request&, httplib::Response& res) {
         Json result = Json::array();
@@ -545,7 +600,10 @@ void registerDownloadRoutes(httplib::Server& server, DbManager& db, Catalog& cat
             sendError(res, 404, "Ese archivo no está en el catálogo");
             return;
         }
-        const DbManager::AddDownloadResult added = db.addDownload(makeDownload(*ref->item, *ref->release));
+        // Con la calidad comprobada del archivo, si se ha mirado (D-042)
+        const Catalog::Item effective = tracking::applyProbes(*ref->item, db.listProbes());
+        const auto index = static_cast<std::size_t>(ref->release - ref->item->releases.data());
+        const DbManager::AddDownloadResult added = db.addDownload(makeDownload(effective, effective.releases[index]));
         if (added.duplicate) {
             sendJson(res, 409, {{"error", "Ya está en la cola, descargándose o descargado"}, {"id", added.id}});
             return;
@@ -781,8 +839,8 @@ void registerFollowRoutes(httplib::Server& server, DbManager& db, Catalog& catal
                           Tracker& tracker, DownloadManager& downloads) {
     // Descargar los episodios que faltan de una serie (o la serie completa si no se tiene ninguno):
     // {"max_quality": ""}. La mejor versión de cada episodio que no está ya en cola ni descargado (D-040).
-    server.Post(R"(/api/catalog/(-?\d+)/(\d+)/download)", [&db, &catalog, &downloads](const httplib::Request& req,
-                                                                                    httplib::Response& res) {
+    server.Post(R"(/api/catalog/(-?\d+)/(\d+)/download)", [&db, &catalog, &metadata, &downloads](
+                                                                  const httplib::Request& req, httplib::Response& res) {
         const Json body = req.body.empty() ? Json::object() : Json::parse(req.body, nullptr, false);
         if (!body.is_object()) {
             sendError(res, 400, "El cuerpo debe ser un objeto JSON");
@@ -799,13 +857,16 @@ void registerFollowRoutes(httplib::Server& server, DbManager& db, Catalog& catal
             sendError(res, 404, "Serie no encontrada en el catálogo");
             return;
         }
-        const tracking::OwnedByItem owned = tracking::ownedByItem(catalog, db.listDownloads());
-        const auto itemOwned = owned.find({item->chatId, item->anchorMessageId});
-        const std::vector<std::size_t> chosen = tracking::missingEpisodes(
-            *item, itemOwned != owned.end() ? itemOwned->second : std::vector<tracking::Owned>{}, *maxQuality);
+        const AppSettings settings = loadSettings(db);
+        const std::vector<tracking::Owned> owned = tracking::ownedVersions(
+            *item, tracking::ownedByItem(catalog, db.listDownloads()),
+            library::videosOnDisk(settings.seriesDir, tracking::workInfo(*item, metadata)));
+        // Con la calidad comprobada de cada archivo, si se ha mirado (D-042)
+        const Catalog::Item effective = tracking::applyProbes(*item, db.listProbes());
+        const std::vector<std::size_t> chosen = tracking::missingEpisodes(effective, owned, *maxQuality);
         std::int64_t total = 0;
         for (const std::size_t index : chosen) {
-            total += item->releases[index].size;
+            total += effective.releases[index].size;
         }
         if (chosen.empty()) {
             sendJson(res, 200, {{"queued", 0}, {"size", 0}});
@@ -813,7 +874,6 @@ void registerFollowRoutes(httplib::Server& server, DbManager& db, Catalog& catal
         }
 
         // Que quepa en la biblioteca de series con el margen de los ajustes (se importan de una en una)
-        const AppSettings settings = loadSettings(db);
         if (settings.seriesDir.empty()) {
             sendError(res, 409, "Define la biblioteca de series en Ajustes");
             return;
@@ -829,8 +889,8 @@ void registerFollowRoutes(httplib::Server& server, DbManager& db, Catalog& catal
         int queued = 0;
         std::int64_t size = 0;
         for (const std::size_t index : chosen) {
-            const Catalog::Release& release = item->releases[index];
-            if (db.addDownload(makeDownload(*item, release)).ok) {
+            const Catalog::Release& release = effective.releases[index];
+            if (db.addDownload(makeDownload(effective, release)).ok) {
                 ++queued;
                 size += release.size;
             }
@@ -1091,6 +1151,7 @@ void registerApiRoutes(httplib::Server& server, const ApiServices& services) {
     registerChannelRoutes(server, services.db, services.telegram, services.sync, services.catalog);
     registerCatalogRoutes(server, services.db, services.telegram, services.catalog, services.metadata, services.tmdb);
     registerDownloadRoutes(server, services.db, services.catalog, services.downloads);
+    registerProbeRoutes(server, services.catalog, services.prober);
     registerFollowRoutes(server, services.db, services.catalog, services.metadata, services.tracker, services.downloads);
     registerSettingsRoutes(server, services.db, services);
 }

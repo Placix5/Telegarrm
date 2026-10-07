@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -160,6 +161,16 @@ public:
         std::optional<std::int64_t> downloadId;
     };
 
+    // Calidad real de un archivo lógico (D-042)
+    struct Probe {
+        std::int64_t chatId = 0;
+        std::int64_t messageId = 0;  // Primera parte
+        std::string quality;         // Vacía si no se pudo leer
+        bool hdr = false;
+        std::string error;
+        std::int64_t probedAt = 0;
+    };
+
     struct AddDownloadResult {
         bool ok = false;
         bool duplicate = false;  // Ya está en la cola, descargándose o descargado
@@ -224,6 +235,13 @@ public:
     bool deleteDownload(std::int64_t id);
     // Calidad real del vídeo (ffprobe, D-039)
     bool setDownloadQuality(std::int64_t id, const std::string& quality, bool hdr);
+
+    // ¿Hay una descarga en curso (descargando o importando) con ese mensaje entre sus partes?
+    bool isDownloadingMessage(std::int64_t chatId, std::int64_t messageId);
+
+    // Calidad real de los archivos (chat, primera parte)
+    bool saveProbe(const Probe& probe);
+    std::map<std::pair<std::int64_t, std::int64_t>, Probe> listProbes();
 
     // Seguimiento
     std::optional<std::int64_t> addFollow(const Follow& follow);

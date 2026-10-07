@@ -12,6 +12,8 @@
 #include "library.hpp"
 #include "media_parser.hpp"
 #include "metadata.hpp"
+#include "release_prober.hpp"
+#include "settings.hpp"
 
 namespace tracking {
 namespace {
@@ -134,7 +136,10 @@ Plan plan(const Catalog::Item& item, const Rule& rule, const std::vector<Owned>&
         action.release = bestIndex;
         int previousRank = -1;
         for (const Owned* version : have) {
-            (version->status == "queued" ? action.cancel : action.replaces).push_back(version->downloadId);
+            // Los vídeos de la biblioteca sin descarga los sustituye la importación (D-041)
+            if (version->downloadId != 0) {
+                (version->status == "queued" ? action.cancel : action.replaces).push_back(version->downloadId);
+            }
             if (version->rank > previousRank) {
                 previousRank = version->rank;
                 action.previousLabel = version->label;
@@ -233,6 +238,57 @@ OwnedByItem ownedByItem(const Catalog& catalog, const std::vector<DbManager::Dow
     return result;
 }
 
+Catalog::Item applyProbes(const Catalog::Item& item, const Probes& probes) {
+    Catalog::Item effective = item;
+    for (Release& release : effective.releases) {
+        const auto it = probes.find({release.chatId, release.parts.front().messageId});
+        if (it != probes.end() && it->second.error.empty() && !it->second.quality.empty()) {
+            release.quality = it->second.quality;
+            release.hdr = it->second.hdr;
+        }
+    }
+    return effective;
+}
+
+std::vector<std::size_t> candidateReleases(const Catalog::Item& item, const Rule& rule,
+                                           const std::function<bool(const Release&)>& handled) {
+    std::vector<std::size_t> candidates;
+    for (std::size_t i = 0; i < item.releases.size(); ++i) {
+        const Release& release = item.releases[i];
+        if ((item.kind == "series" && release.episode == 0) || release.date < rule.since ||
+            hasTag(release.tags, "3D") || handled(release)) {
+            continue;
+        }
+        candidates.push_back(i);
+    }
+    return candidates;
+}
+
+library::WorkInfo workInfo(const Catalog::Item& item, const MetadataService& metadata) {
+    library::WorkInfo work{item.title, item.year, item.tmdbId};
+    if (const auto info = metadata.lookup(item)) {
+        work.title = info->title.empty() ? item.title : info->title;
+        work.year = info->year ? info->year : item.year;
+        work.tmdbId = static_cast<long>(info->providerId);
+    }
+    return work;
+}
+
+std::vector<Owned> ownedVersions(const Catalog::Item& item, const OwnedByItem& downloads,
+                                 const std::vector<library::DiskVideo>& disk) {
+    std::vector<Owned> owned;
+    const auto it = downloads.find({item.chatId, item.anchorMessageId});
+    if (it != downloads.end()) {
+        owned = it->second;
+    }
+    for (const library::DiskVideo& video : disk) {
+        owned.push_back({0, "completed", versionRank(video.quality, video.hdr, {}),
+                         library::versionLabel(video.quality, video.hdr, {}), video.season, video.episode,
+                         video.episodeEnd});
+    }
+    return owned;
+}
+
 std::vector<FollowMatch> matchFollows(const std::vector<Catalog::ItemPtr>& items,
                                       const std::vector<DbManager::Follow>& follows, const MetadataService& metadata) {
     std::map<std::pair<std::int64_t, std::int64_t>, Catalog::ItemPtr> byBlock;
@@ -291,6 +347,9 @@ DbManager::Follow followFor(const Catalog::Item& item, const MetadataService& me
 
 namespace {
 
+// Comprobaciones de calidad por pasada (unos segundos); las que falten, en la siguiente
+constexpr int kMaxProbesPerRun = 10;
+
 // Revisión periódica: más frecuente mientras haya archivos a medio publicar
 constexpr auto kWaitingInterval = std::chrono::minutes(5);
 constexpr auto kIdleInterval = std::chrono::minutes(30);
@@ -301,8 +360,9 @@ std::int64_t nowSeconds() {
 
 }  // namespace
 
-Tracker::Tracker(DbManager& db, Catalog& catalog, MetadataService& metadata, DownloadManager& downloads)
-    : db_(db), catalog_(catalog), metadata_(metadata), downloads_(downloads) {}
+Tracker::Tracker(DbManager& db, Catalog& catalog, MetadataService& metadata, DownloadManager& downloads,
+                 ReleaseProber& prober)
+    : db_(db), catalog_(catalog), metadata_(metadata), downloads_(downloads), prober_(prober) {}
 
 Tracker::~Tracker() {
     stop();
@@ -390,6 +450,9 @@ bool Tracker::evaluate() {
 
     bool waiting = false;
     const std::int64_t now = nowSeconds();
+    const AppSettings settings = loadSettings(db_);
+    tracking::Probes probes = db_.listProbes();
+    int probesLeft = kMaxProbesPerRun;
     for (const tracking::FollowMatch& match : tracking::matchFollows(items, follows, metadata_)) {
         if (!match.item) {
             continue;  // Ya no está en el catálogo (ej. se quitó el canal)
@@ -412,13 +475,37 @@ bool Tracker::evaluate() {
             db_.updateFollowWork(current);
         }
 
-        const auto owned = ownedByItem.find({item.chatId, item.anchorMessageId});
-        const tracking::Plan plan =
-            tracking::plan(item, {match.follow.createdAt, match.follow.maxQuality},
-                           owned != ownedByItem.end() ? owned->second : std::vector<tracking::Owned>{}, handled, now);
+        // Lo descargado y lo que ya está en la biblioteca (aunque venga de un canal que ya no se vigila)
+        const std::string root = item.kind == "series" ? settings.seriesDir : settings.moviesDir;
+        const std::vector<tracking::Owned> owned = tracking::ownedVersions(
+            item, ownedByItem, library::videosOnDisk(root, tracking::workInfo(item, metadata_)));
+
+        // Antes de decidir, la calidad real de lo que podría pedir (D-042): leer el principio de cada
+        // archivo cuesta un segundo y evita fiarse del nombre
+        const tracking::Rule rule{match.follow.createdAt, match.follow.maxQuality};
+        for (const std::size_t index : tracking::candidateReleases(item, rule, handled)) {
+            const Catalog::Release& release = item.releases[index];
+            const std::pair<std::int64_t, std::int64_t> key{release.chatId, release.parts.front().messageId};
+            if (probes.count(key)) {
+                continue;
+            }
+            if (probesLeft == 0) {
+                waiting = true;  // Se sigue en la próxima pasada
+                break;
+            }
+            --probesLeft;
+            const ReleaseProber::Result result = prober_.probe(release);
+            if (result.ok) {
+                probes[key] = {key.first, key.second, result.info.quality, result.info.hdr.value_or(false), "", now};
+            } else {
+                probes[key] = {key.first, key.second, "", false, result.error, now};  // En esta pasada no se repite
+            }
+        }
+        const Catalog::Item effective = tracking::applyProbes(item, probes);
+        const tracking::Plan plan = tracking::plan(effective, rule, owned, handled, now);
         waiting = waiting || plan.waiting;
         for (const tracking::Action& action : plan.actions) {
-            enqueue(match.follow, item, action);
+            enqueue(match.follow, effective, action);
         }
     }
     return waiting;

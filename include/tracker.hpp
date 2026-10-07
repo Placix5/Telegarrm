@@ -13,9 +13,11 @@
 
 #include "catalog.hpp"
 #include "db_manager.hpp"
+#include "library.hpp"
 
 class DownloadManager;
 class MetadataService;
+class ReleaseProber;
 
 // Seguimiento (Fase 4, docs/DECISIONS.md D-035): descarga sola los episodios nuevos de las series
 // seguidas y las películas seguidas, y pide las versiones mejores de lo que ya se tiene.
@@ -33,7 +35,7 @@ bool releaseComplete(const Catalog::Release& release, std::int64_t now);
 
 // Versión de una obra seguida que ya se tiene o se está bajando
 struct Owned {
-    std::int64_t downloadId = 0;
+    std::int64_t downloadId = 0;  // 0 = un vídeo de la biblioteca que no viene de una descarga
     std::string status;  // queued / downloading / importing / completed
     int rank = 0;
     std::string label;   // "1080p", "4K HDR"... (para el historial)
@@ -82,6 +84,23 @@ EpisodeCount countEpisodes(const Catalog::Item& item, const std::vector<Owned>& 
 using OwnedByItem = std::map<std::pair<std::int64_t, std::int64_t>, std::vector<Owned>>;
 OwnedByItem ownedByItem(const Catalog& catalog, const std::vector<DbManager::Download>& downloads);
 
+// Calidad comprobada de cada archivo (chat, primera parte), D-042
+using Probes = std::map<std::pair<std::int64_t, std::int64_t>, DbManager::Probe>;
+// Copia de la obra con la calidad comprobada de sus archivos en lugar de la del nombre
+Catalog::Item applyProbes(const Catalog::Item& item, const Probes& probes);
+// Archivos que el seguimiento podría pedir de una obra: publicados después de seguirla, sin descarga
+// previa y sin 3D (la calidad máxima se aplica después, con la calidad ya comprobada)
+std::vector<std::size_t> candidateReleases(const Catalog::Item& item, const Rule& rule,
+                                           const std::function<bool(const Catalog::Release&)>& handled);
+
+// Título, año e identificador de TMDB de una obra para la biblioteca: los de TMDB si los hay; si no,
+// los del catálogo
+library::WorkInfo workInfo(const Catalog::Item& item, const MetadataService& metadata);
+// Lo que se tiene de una obra (D-041): sus descargas en cola, en curso o terminadas, más los vídeos
+// que ya hay en su carpeta de la biblioteca (downloadId 0)
+std::vector<Owned> ownedVersions(const Catalog::Item& item, const OwnedByItem& downloads,
+                                 const std::vector<library::DiskVideo>& disk);
+
 // Obra del catálogo de cada seguimiento: por cualquiera de sus fichas; si no, por TMDB o por la
 // clave de obra (si el catálogo cambia la ficha principal). item es nullptr si ya no está.
 struct FollowMatch {
@@ -100,7 +119,8 @@ DbManager::Follow followFor(const Catalog::Item& item, const MetadataService& me
 // sigue algo y cada pocos minutos mientras haya archivos a medio publicar.
 class Tracker {
 public:
-    Tracker(DbManager& db, Catalog& catalog, MetadataService& metadata, DownloadManager& downloads);
+    Tracker(DbManager& db, Catalog& catalog, MetadataService& metadata, DownloadManager& downloads,
+            ReleaseProber& prober);
     ~Tracker();
 
     Tracker(const Tracker&) = delete;
@@ -121,6 +141,7 @@ private:
     Catalog& catalog_;
     MetadataService& metadata_;
     DownloadManager& downloads_;
+    ReleaseProber& prober_;
     std::thread worker_;
 
     std::mutex mutex_;  // Protege stopRequested_ y runRequested_

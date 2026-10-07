@@ -102,6 +102,7 @@ Desplegar una versión nueva del programa no necesita `sudo`: `cmake --build bui
 | `GET /api/catalog` | Obras (series y películas) de todos los canales: título, títulos alternativos, año, versiones disponibles (`qualities`, `hdr`), idiomas, géneros, temas, `airing` (en emisión), `followed` (en seguimiento), temporadas, episodios, tamaño en bytes y datos de TMDB |
 | `GET /api/catalog/{chat}/{ficha}` | Obra completa: sinopsis, ficha original, seguimiento (`follow`) y sus archivos lógicos (`releases`) con calidad, HDR, etiquetas de versión, temporada y episodio, y sus partes. Vale cualquier ficha de la obra |
 | `POST /api/catalog/{chat}/{ficha}/download` | `{"max_quality": ""}`: en una serie, pone en cola los episodios que faltan (la mejor versión de cada uno). Si no se tiene ninguno, la serie completa. 409 si no cabe en la biblioteca. La ficha de una serie trae el resumen en `library` |
+| `POST /api/releases/{chat}/{mensaje}/probe` | Calidad real de un archivo del catálogo leyendo solo sus primeros MB (D-042): `{"quality", "hdr"}`, o 409 con el motivo. La ficha trae el resultado en `releases[].probe` y lo que ya hay en la biblioteca en `on_disk` |
 | `GET /api/catalog/{chat}/{ficha}/poster` | Portada: la foto de la ficha (de Telegram) o, si no hay, la carátula de TMDB; se guardan tras la primera vez |
 | `GET /api/downloads` | Cola de descargas con su progreso (`downloaded_size`, `bytes_per_second`, `import_percent`, `library_path`; `status`: queued, downloading, importing, completed —en la biblioteca—, failed, cancelled, replaced —sustituida por una versión mejor—), su origen (`origin`: manual o auto) y las descargas a las que sustituye (`replaces`) |
 | `POST /api/downloads` | `{"chat_id": -100..., "message_id": ...}` (cualquier parte de un archivo del catálogo): 201, o 409 si ya está en la cola o descargado |
@@ -136,6 +137,8 @@ Los pasos del inicio de sesión responden `{"ok": true}`, o `{"error": "..."}` c
 - Migración v7: tablas `follows`, `auto_releases` y `activity`; en `downloads`, origen, seguimiento, sustituciones y archivos colocados. Tests: 343 comprobaciones.
 - Comprobado en la Pi: un episodio nuevo de una serie seguida (860 MB, 20 s), una mejora de 1080p a 4K HDR que borró la versión anterior y, con un canal de prueba, un episodio subido en directo que se descargó solo unos 30 s después.
 - Calidad real de cada vídeo con `ffprobe` (D-039): manda sobre el nombre y la ficha.
+- La biblioteca cuenta como descargado lo que ya hay en la carpeta de cada obra, y un episodio importado sustituye a sus otras versiones (D-041).
+- Calidad real antes de descargar (D-042): se leen los primeros MB de cada archivo (también dentro de ZIP y RAR) sin descargarlo entero.
 - «Serie completa» (D-040): en la ficha de una serie, cuántos episodios se tienen y un botón para descargar los que faltan o la serie entera, en la mejor versión de cada uno.
 - Sin ficha, el nombre de la serie se toma del texto que repiten los episodios («1x01 - Ultimate Spiderman.mkv», D-038).
 

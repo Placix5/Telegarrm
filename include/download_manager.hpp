@@ -9,6 +9,7 @@
 #include <optional>
 #include <string>
 #include <thread>
+#include <vector>
 
 #include "catalog.hpp"
 #include "db_manager.hpp"
@@ -62,9 +63,10 @@ private:
     Outcome process(DbManager::Download& download, std::string& error);
     // Importa a la biblioteca una descarga terminada
     Outcome importToLibrary(DbManager::Download& download, std::string& error);
-    // Tras importar una versión mejor: borra (o conserva) las que sustituye. Devuelve el texto para
-    // el historial; vacío si no había nada que sustituir.
-    std::string replaceOlder(const DbManager::Download& download);
+    // Tras importar: borra (o conserva) las versiones que sustituye, las que pidió el seguimiento y las
+    // que la importación encontró en la carpeta (superseded, D-041). Devuelve el texto para el
+    // historial; vacío si no había nada que sustituir.
+    std::string replaceOlder(const DbManager::Download& download, const std::vector<std::string>& superseded);
     // Corrige con ffprobe la calidad de las descargas importadas antes de D-039 (una sola vez)
     void probeCompletedDownloads();
     // Historial de las descargas automáticas y de las sustituciones
@@ -86,6 +88,9 @@ private:
 
     std::atomic<std::int64_t> activeId_{0};
     std::atomic<std::int64_t> cancelId_{0};
+    // Versiones anteriores que encontró la última importación (solo las usa el hilo de descargas)
+    std::vector<std::string> superseded_;
+
     mutable std::mutex progressMutex_;  // Protege progress_
     Progress progress_;
 };

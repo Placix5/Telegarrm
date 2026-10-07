@@ -8,6 +8,7 @@
 #include <fstream>
 #include <functional>
 #include <iostream>
+#include <iterator>
 #include <set>
 #include <sstream>
 #include <string>
@@ -994,6 +995,11 @@ void testTrackingSeries() {
     owned[0].status = "queued";
     plan = tracking::plan(items[0], rule, owned, handledIds({21, 31}), 3600);
     CHECK(plan.actions.size() == 1 && plan.actions[0].cancel.size() == 1 && plan.actions[0].replaces.empty());
+    // Un vídeo de la biblioteca que no viene de una descarga también se mejora; lo sustituye la importación
+    owned[0] = {0, "completed", tracking::versionRank("1080p", false, {}), "1080p", 4, 9, 0};
+    plan = tracking::plan(items[0], rule, owned, handledIds({21, 31}), 3600);
+    CHECK(plan.actions.size() == 1 && plan.actions[0].type == Action::Type::Upgrade && plan.actions[0].replaces.empty() &&
+          plan.actions[0].previousLabel == "1080p");
     // Una versión igual o peor no es una mejora
     owned[0] = {7, "completed", tracking::versionRank("2160p", true, {}), "4K HDR", 4, 9, 0};
     plan = tracking::plan(items[0], rule, owned, handledIds({21, 31}), 3600);
@@ -1254,6 +1260,39 @@ void testLibraryProbe() {
     request.quality = "1080p";
     request.parts = {video.string()};
     request.libraryRoot = (base / "series").string();
+    // Antes de importarlo: el principio del vídeo dentro de un ZIP, con deflate (lo normal en ZIP), sin
+    // comprimir y con otro archivo delante, como en la comprobación previa a la descarga (D-042)
+    const std::string sevenZip = library::findSevenZip();
+    if (!sevenZip.empty()) {
+        writeFile(base / "zip" / "info.nfo", 300, 'n');
+        const std::vector<std::vector<std::string>> archives = {
+            {"a", "-tzip", (base / "deflate.zip").string(), video.string()},
+            {"a", "-tzip", "-mx=0", (base / "store.zip").string(), video.string()},
+            {"a", "-tzip", "-mx=0", (base / "nfo.zip").string(), (base / "zip" / "info.nfo").string(), video.string()},
+        };
+        for (std::vector<std::string> args : archives) {
+            args.insert(args.begin(), sevenZip);
+            args.insert(args.begin() + 2, "-bso0");
+            const process::Result packed = process::run(args, nullptr, nullptr);
+            CHECK(packed.started && packed.exitCode == 0);
+        }
+        for (const char* name : {"deflate.zip", "store.zip", "nfo.zip"}) {
+            std::ifstream in(base / name, std::ios::binary);
+            const std::string data((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+            std::string reason;
+            const auto prefix = library::videoFromPrefix(data.substr(0, data.size() * 3 / 4), reason);
+            CHECK(prefix.has_value());
+            if (prefix) {
+                std::ofstream(base / "prefijo.mkv", std::ios::binary) << *prefix;
+                const auto info = library::probeVideo((base / "prefijo.mkv").string(), nullptr, true);
+                CHECK(info && info->quality == "720p");
+            }
+            if (!prefix) {
+                std::cerr << "    " << name << ": " << reason << std::endl;
+            }
+        }
+    }
+
     const library::ImportResult result = library::importRelease(request, nullptr, nullptr);
     CHECK(result.ok);
     CHECK(result.probed && result.probed->quality == "720p");
@@ -1302,6 +1341,122 @@ void testMissingEpisodes() {
     CHECK(movies.size() == 1 && tracking::missingEpisodes(movies[0], {}, "").empty());
 }
 
+
+void testLibraryOnDisk() {
+    namespace fs = std::filesystem;
+    const fs::path base = fs::temp_directory_path() / ("telegarrm_disk_" + std::to_string(::getpid()));
+    fs::remove_all(base);
+    const fs::path series = base / "series";
+    // Carpeta con el identificador de TMDB pero otro nombre (ej. creada por otra herramienta)
+    const fs::path folder = series / "Ultimate Spiderman [tmdbid=34391]";
+    writeFile(folder / "Season 01" / "Ultimate Spider-Man S01E01 - 720p.mkv", 10, 'a');
+    writeFile(folder / "Season 01" / "Ultimate Spider-Man S01E02-E03 - 1080p.mkv", 10, 'b');
+    writeFile(folder / "Season 01" / "Ultimate Spider-Man S01E01 - 720p.Spanish.srt", 10, 'c');
+    writeFile(folder / ".telegarrm" / "5" / "Ultimate Spider-Man S01E04.mkv", 10, 'd');  // Temporal: no cuenta
+    writeFile(series / "Otra serie (2020)" / "Season 01" / "Otra serie S01E01.mkv", 10, 'e');
+
+    const library::WorkInfo work{"Ultimate Spider-Man", 2012, 34391};
+    CHECK_EQ(library::findWorkFolder(series.string(), work), folder.string());
+    CHECK_EQ(library::findWorkFolder(series.string(), {"Otra serie", 2020, 0}), (series / "Otra serie (2020)").string());
+    CHECK_EQ(library::findWorkFolder(series.string(), {"No existe", 2020, 99}), "");
+    CHECK_EQ(library::findWorkFolder("", work), "");
+
+    auto videos = library::videosOnDisk(series.string(), work);
+    std::sort(videos.begin(), videos.end(),
+              [](const library::DiskVideo& a, const library::DiskVideo& b) { return a.episode < b.episode; });
+    CHECK_EQ(static_cast<int>(videos.size()), 2);
+    if (videos.size() == 2) {
+        CHECK(videos[0].season == 1 && videos[0].episode == 1 && videos[0].quality == "720p");
+        CHECK(videos[1].episode == 2 && videos[1].episodeEnd == 3 && videos[1].quality == "1080p");
+    }
+
+    // Lo que hay en la biblioteca cuenta como descargado (aunque no venga de ninguna descarga)
+    const std::vector<Message> messages = {
+        video(1, "1x01 - Ultimate Spiderman.mkv", 100), video(2, "1x02 - Ultimate Spiderman.mkv", 100),
+        video(3, "1x03 - Ultimate Spiderman.mkv", 100), video(4, "1x04 - Ultimate Spiderman.mkv", 100)};
+    const auto items = build(-5530696118, "Prueba Claude", messages);
+    CHECK_EQ(static_cast<int>(items.size()), 1);
+    if (items.size() == 1) {
+        const std::vector<tracking::Owned> owned = tracking::ownedVersions(items[0], {}, videos);
+        CHECK(owned.size() == 2 && owned[0].downloadId == 0);
+        const auto missing = tracking::missingEpisodes(items[0], owned, "");
+        CHECK(missing.size() == 1 && items[0].releases[missing[0]].episode == 4);
+        CHECK_EQ(tracking::countEpisodes(items[0], owned).owned, 3);
+    }
+    fs::remove_all(base);
+}
+
+void testImportSupersedes() {
+    namespace fs = std::filesystem;
+    const fs::path base = fs::temp_directory_path() / ("telegarrm_supersede_" + std::to_string(::getpid()));
+    fs::remove_all(base);
+    const fs::path season = base / "series" / "Ultimate Spider-Man (2012) [tmdbid-34391]" / "Season 01";
+    // Ya en la biblioteca: el 1x01 con otra etiqueta y sus subtítulos, y el 1x02
+    writeFile(season / "Ultimate Spider-Man S01E01 - 1080p.mkv", 50, 'a');
+    writeFile(season / "Ultimate Spider-Man S01E01 - 1080p.Spanish.srt", 5, 'b');
+    writeFile(season / "Ultimate Spider-Man S01E02.mkv", 50, 'c');
+    writeFile(base / "descargas" / "1x01 - Ultimate Spiderman.mkv", 60, 'd');
+
+    library::ImportRequest request;
+    request.id = 12;
+    request.kind = "series";
+    request.work = {"Ultimate Spider-Man", 2012, 34391};
+    request.season = 1;
+    request.episode = 1;
+    request.quality = "720p";
+    request.parts = {(base / "descargas" / "1x01 - Ultimate Spiderman.mkv").string()};
+    request.libraryRoot = (base / "series").string();
+    request.replaceOthers = true;
+    library::ImportResult result = library::importRelease(request, nullptr, nullptr);
+    CHECK(result.ok);
+    auto superseded = result.superseded;
+    std::sort(superseded.begin(), superseded.end());
+    CHECK(superseded == (Strings{(season / "Ultimate Spider-Man S01E01 - 1080p.Spanish.srt").string(),
+                                 (season / "Ultimate Spider-Man S01E01 - 1080p.mkv").string()}));
+    // No se borra aquí: lo hace el gestor de descargas (según Ajustes)
+    CHECK(fs::exists(season / "Ultimate Spider-Man S01E01 - 1080p.mkv"));
+
+    // Películas: a mano se pueden tener varias versiones
+    const fs::path movies = base / "peliculas";
+    writeFile(movies / "Dune (2021)" / "Dune (2021) - 1080p.mkv", 50, 'e');
+    writeFile(base / "descargas" / "Dune 4K.mkv", 80, 'f');
+    library::ImportRequest movie;
+    movie.id = 13;
+    movie.kind = "movie";
+    movie.work = {"Dune", 2021, 0};
+    movie.quality = "2160p";
+    movie.parts = {(base / "descargas" / "Dune 4K.mkv").string()};
+    movie.libraryRoot = movies.string();
+    result = library::importRelease(movie, nullptr, nullptr);
+    CHECK(result.ok && result.superseded.empty());
+    // ...salvo que sea una mejora del seguimiento
+    writeFile(base / "descargas" / "Dune 4K HDR.mkv", 90, 'g');
+    movie.hdr = true;
+    movie.parts = {(base / "descargas" / "Dune 4K HDR.mkv").string()};
+    movie.replaceOthers = true;
+    result = library::importRelease(movie, nullptr, nullptr);
+    CHECK(result.ok && result.superseded.size() == 2);
+    fs::remove_all(base);
+}
+
+
+void testFindVideoStart() {
+    const std::string ebml("\x1A\x45\xDF\xA3\xA3\x42\x86\x81\x01\x42\x82\x88matroska", 20);
+    CHECK(library::findVideoStart(ebml + "datos") == std::optional<std::size_t>(0));
+    // Dentro de un ZIP sin comprimir: cabecera local (PK\3\4...), nombre y después el MKV
+    const std::string zip = std::string("PK\x03\x04\x0A\x00\x00\x00", 8) + std::string(22, '\0') + "Peli (2020) 1080p.mkv";
+    CHECK(library::findVideoStart(zip + ebml) == std::optional<std::size_t>(zip.size()));
+    // Una firma EBML suelta sin "matroska" detrás no cuenta
+    CHECK(!library::findVideoStart(std::string("\x1A\x45\xDF\xA3", 4) + std::string(80, 'x')));
+    const std::string mp4 = std::string("\x00\x00\x00\x20", 4) + "ftypisom";
+    CHECK(library::findVideoStart("Rar!\x1A\x07" + mp4) == std::optional<std::size_t>(6));
+    CHECK(library::findVideoStart(std::string("RIFF\x10\x00\x00\x00" "AVI LIST", 16)) == std::optional<std::size_t>(0));
+    CHECK(!library::findVideoStart("RIFF\x10"));  // Cortado: no se lee fuera de los datos
+    CHECK(!library::findVideoStart("texto sin vídeo"));
+    // Vídeo Flash con extensión .mp4 (real: "Gente Hablando - S01E05.mp4" empieza por 46 4C 56 01)
+    CHECK(library::findVideoStart(std::string("FLV\x01\x05\x00\x00\x00\x09", 9)) == std::optional<std::size_t>(0));
+}
+
 int main() {
     testEpisodes();
     testFichas();
@@ -1334,6 +1489,9 @@ int main() {
     testVideoQuality();
     testLibraryProbe();
     testMissingEpisodes();
+    testLibraryOnDisk();
+    testImportSupersedes();
+    testFindVideoStart();
 
     std::cout << (checks - failures) << "/" << checks << " comprobaciones correctas" << std::endl;
     return failures == 0 ? 0 : 1;

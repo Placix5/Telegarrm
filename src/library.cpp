@@ -7,12 +7,16 @@
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
+#include <fstream>
+#include <map>
+#include <mutex>
 #include <regex>
 #include <set>
 #include <system_error>
 #include <utility>
 
 #include <nlohmann/json.hpp>
+#include <zlib.h>
 
 #include "media_parser.hpp"
 #include "process.hpp"
@@ -30,8 +34,8 @@ constexpr int kMaxDuplicates = 99;
 // Carpeta temporal de descompresión, oculta dentro de la biblioteca (mismo disco que el destino)
 constexpr const char* kTemporaryDir = ".telegarrm";
 
-const std::set<std::string> kVideoExtensions = {".mkv", ".mp4", ".avi", ".m4v", ".ts",   ".m2ts",
-                                                ".wmv", ".mov", ".mpg", ".mpeg", ".webm"};
+const std::set<std::string> kVideoExtensions = {".mkv", ".mp4", ".avi",  ".m4v",  ".ts",   ".m2ts",
+                                                ".wmv", ".mov", ".mpg", ".mpeg", ".webm", ".flv"};
 const std::set<std::string> kSubtitleExtensions = {".srt", ".ass", ".ssa", ".sub", ".idx", ".vtt", ".sup"};
 
 std::string lowerExtension(const fs::path& path) {
@@ -324,7 +328,178 @@ std::optional<VideoInfo> parseProbe(const std::string& output) {
     return info;
 }
 
-std::optional<VideoInfo> probeVideo(const std::string& path, const std::function<bool()>& shouldStop) {
+std::optional<std::size_t> findVideoStart(const std::string& data) {
+    std::optional<std::size_t> start;
+    const auto earliest = [&start](std::size_t position) {
+        if (!start || position < *start) {
+            start = position;
+        }
+    };
+    // Matroska/WebM: cabecera EBML (1A 45 DF A3) con su tipo de documento poco después
+    static const std::string kEbml("\x1A\x45\xDF\xA3", 4);
+    for (std::size_t at = data.find(kEbml); at != std::string::npos; at = data.find(kEbml, at + 1)) {
+        const std::string head = data.substr(at, 64);
+        if (head.find("matroska") != std::string::npos || head.find("webm") != std::string::npos) {
+            earliest(at);
+            break;
+        }
+    }
+    // MP4/MOV: caja "ftyp", precedida de su tamaño (cuatro bytes, el primero a 0)
+    for (std::size_t at = data.find("ftyp"); at != std::string::npos; at = data.find("ftyp", at + 1)) {
+        if (at >= 4 && data[at - 4] == '\0') {
+            earliest(at - 4);
+            break;
+        }
+    }
+    // FLV (hay vídeos Flash con extensión .mp4)
+    for (std::size_t at = data.find("FLV\x01"); at != std::string::npos; at = data.find("FLV\x01", at + 1)) {
+        earliest(at);
+        break;
+    }
+    // AVI: "RIFF" + tamaño + "AVI "
+    for (std::size_t at = data.find("RIFF"); at != std::string::npos; at = data.find("RIFF", at + 1)) {
+        if (at + 12 <= data.size() && data.compare(at + 8, 4, "AVI ") == 0) {
+            earliest(at);
+            break;
+        }
+    }
+    return start;
+}
+
+namespace {
+
+// Lo que se descomprime como mucho del principio de un vídeo: basta para su cabecera
+constexpr std::size_t kMaxInflated = 16'000'000;
+
+std::uint32_t littleEndian(const std::string& data, std::size_t at, int bytes) {
+    std::uint32_t value = 0;
+    for (int i = bytes - 1; i >= 0; --i) {
+        value = (value << 8) | static_cast<unsigned char>(data[at + static_cast<std::size_t>(i)]);
+    }
+    return value;
+}
+
+// Descomprime un flujo deflate (sin cabecera, como en ZIP) hasta donde lleguen los datos
+std::string inflatePrefix(const std::string& compressed) {
+    z_stream stream{};
+    if (inflateInit2(&stream, -MAX_WBITS) != Z_OK) {
+        return "";
+    }
+    std::string out;
+    char buffer[65536];
+    stream.next_in = reinterpret_cast<Bytef*>(const_cast<char*>(compressed.data()));
+    stream.avail_in = static_cast<uInt>(compressed.size());
+    int status = Z_OK;
+    while (status == Z_OK && out.size() < kMaxInflated) {
+        stream.next_out = reinterpret_cast<Bytef*>(buffer);
+        stream.avail_out = sizeof(buffer);
+        status = inflate(&stream, Z_NO_FLUSH);
+        out.append(buffer, sizeof(buffer) - stream.avail_out);
+        if (status == Z_BUF_ERROR || (stream.avail_in == 0 && stream.avail_out != 0)) {
+            break;  // Se acabaron los datos descargados: vale con lo que haya salido
+        }
+    }
+    inflateEnd(&stream);
+    return out;
+}
+
+}  // namespace
+
+std::optional<std::string> videoFromPrefix(const std::string& data, std::string& reason) {
+    // ZIP: se recorren las cabeceras locales hasta la del vídeo (puede haber un .nfo antes)
+    static const std::string kZipHeader("PK\x03\x04", 4);
+    for (std::size_t at = 0; data.compare(0, 4, kZipHeader) == 0 && at + 30 <= data.size() &&
+                             data.compare(at, 4, kZipHeader) == 0;) {
+        const std::uint32_t flags = littleEndian(data, at + 6, 2);
+        const std::uint32_t method = littleEndian(data, at + 8, 2);
+        const std::uint32_t compressedSize = littleEndian(data, at + 18, 4);
+        const std::size_t nameLength = littleEndian(data, at + 26, 2);
+        const std::size_t extraLength = littleEndian(data, at + 28, 2);
+        const std::size_t start = at + 30 + nameLength + extraLength;
+        if (start > data.size()) {
+            break;
+        }
+        const std::string name = data.substr(at + 30, nameLength);
+        if (kVideoExtensions.count(lowerExtension(fs::path(name)))) {
+            if (flags & 1) {
+                reason = "El ZIP tiene contraseña";
+                return std::nullopt;
+            }
+            std::string video;
+            if (method == 0) {
+                video = data.substr(start);
+            } else if (method == 8) {
+                video = inflatePrefix(data.substr(start));
+            } else {
+                reason = "El ZIP usa un método de compresión que no se puede leer por partes (" + std::to_string(method) + ")";
+                return std::nullopt;
+            }
+            const auto videoStart = findVideoStart(video);
+            if (!videoStart) {
+                reason = "No se reconoce el vídeo dentro del ZIP";
+                return std::nullopt;
+            }
+            return video.substr(*videoStart);
+        }
+        // Otro archivo antes del vídeo: se salta si su tamaño consta en la cabecera
+        if ((flags & 8) || compressedSize == 0xFFFFFFFF) {
+            break;
+        }
+        at = start + compressedSize;
+    }
+
+    // MKV, MP4 o AVI sueltos, o dentro de un comprimido que los guarda sin comprimir
+    if (const auto start = findVideoStart(data)) {
+        return data.substr(*start);
+    }
+    if (data.compare(0, 4, "Rar!") == 0) {
+        reason = "El RAR comprime el vídeo";
+        return std::nullopt;
+    }
+    // Para entender formatos nuevos: cómo empieza el archivo
+    char hex[4];
+    std::string head;
+    for (std::size_t i = 0; i < std::min<std::size_t>(12, data.size()); ++i) {
+        std::snprintf(hex, sizeof(hex), "%02X", static_cast<unsigned char>(data[i]));
+        head += (i ? " " : "") + std::string(hex);
+    }
+    reason = "No se encuentra el vídeo en los primeros MB (el archivo empieza por " + head + ")";
+    return std::nullopt;
+}
+
+std::optional<std::string> videoFromPrefixWith7z(const std::string& data, const std::string& extension,
+                                                 std::string& reason) {
+    const std::string sevenZip = findSevenZip();
+    if (sevenZip.empty()) {
+        reason = "Falta 7-Zip para leer el comprimido";
+        return std::nullopt;
+    }
+    std::error_code ec;
+    const fs::path temporary = fs::temp_directory_path() / ("telegarrm-prefijo-" + std::to_string(::getpid()) + extension);
+    {
+        std::ofstream out(temporary, std::ios::binary | std::ios::trunc);
+        out.write(data.data(), static_cast<std::streamsize>(data.size()));
+    }
+    // -so: lo descomprimido sale por la salida estándar; sin mensajes (-bs*0) no se mezcla con nada
+    std::string video;
+    bool enough = false;
+    process::run({sevenZip, "e", "-so", "-bso0", "-bse0", "-bsp0", "-y", "--", temporary.string()},
+                 [&](const std::string& chunk) {
+                     video += chunk;
+                     enough = video.size() >= kMaxInflated;
+                 },
+                 [&enough] { return enough; });
+    fs::remove(temporary, ec);
+    const auto start = findVideoStart(video);
+    if (!start) {
+        reason = "7-Zip no puede descomprimir el principio del comprimido";
+        return std::nullopt;
+    }
+    return video.substr(*start);
+}
+
+std::optional<VideoInfo> probeVideo(const std::string& path, const std::function<bool()>& shouldStop, bool partial,
+                                    std::string* diagnostics) {
     static const std::string ffprobe = findFfprobe();
     if (ffprobe.empty()) {
         return std::nullopt;
@@ -336,10 +511,123 @@ std::optional<VideoInfo> probeVideo(const std::string& path, const std::function
                                               "stream=width,height,color_transfer:stream_side_data=side_data_type",
                                               "-of", "json", input},
                                              nullptr, shouldStop);
-    if (!run.started || run.stopped || run.exitCode != 0) {
+    std::optional<VideoInfo> info;
+    if (run.started && !run.stopped && (run.exitCode == 0 || partial)) {
+        info = parseProbe(run.output);
+    }
+    if (!info && diagnostics) {
+        // La primera línea con texto (sin la ruta del archivo, que no aporta)
+        std::string text = run.output.substr(0, run.output.find('{'));
+        const auto colon = text.find(": ");
+        if (text.compare(0, 5, "file:") == 0 && colon != std::string::npos) {
+            text = text.substr(colon + 2);
+        }
+        *diagnostics = text.substr(0, text.find('\n'));
+    }
+    return info;
+}
+
+bool isSubtitle(const std::string& path) {
+    return kSubtitleExtensions.count(lowerExtension(fs::path(path))) > 0;
+}
+
+std::optional<VideoInfo> probeVideoCached(const std::string& path) {
+    struct Entry {
+        std::uintmax_t size = 0;
+        fs::file_time_type modified;
+        std::optional<VideoInfo> info;
+    };
+    static std::mutex mutex;
+    static std::map<std::string, Entry> cache;
+    std::error_code ec;
+    const std::uintmax_t size = fs::file_size(path, ec);
+    const fs::file_time_type modified = fs::last_write_time(path, ec);
+    if (ec) {
         return std::nullopt;
     }
-    return parseProbe(run.output);
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        const auto it = cache.find(path);
+        if (it != cache.end() && it->second.size == size && it->second.modified == modified) {
+            return it->second.info;
+        }
+    }
+    const std::optional<VideoInfo> info = probeVideo(path);
+    std::lock_guard<std::mutex> lock(mutex);
+    cache[path] = {size, modified, info};
+    return info;
+}
+
+std::string findWorkFolder(const std::string& root, const WorkInfo& work) {
+    std::error_code ec;
+    if (root.empty() || !fs::is_directory(root, ec)) {
+        return "";
+    }
+    const fs::path exact = fs::path(root) / sanitizeName(workFolderName(work));
+    if (fs::is_directory(exact, ec)) {
+        return exact.string();
+    }
+    if (work.tmdbId > 0) {
+        // Jellyfin entiende "[tmdbid-N]" y "[tmdbid=N]"
+        const std::string id = std::to_string(work.tmdbId);
+        for (auto it = fs::directory_iterator(root, ec); !ec && it != fs::directory_iterator(); it.increment(ec)) {
+            const std::string name = lower(it->path().filename().string());
+            if ((name.find("[tmdbid-" + id + "]") != std::string::npos ||
+                 name.find("[tmdbid=" + id + "]") != std::string::npos) &&
+                it->is_directory(ec)) {
+                return it->path().string();
+            }
+        }
+    }
+    // Sin TMDB, carpetas como "Serie (2012)" o "Serie"
+    for (const std::string& name : {titleWithYear(work), sanitizeName(work.title)}) {
+        if (fs::is_directory(fs::path(root) / name, ec)) {
+            return (fs::path(root) / name).string();
+        }
+    }
+    return "";
+}
+
+std::vector<DiskVideo> videosOnDisk(const std::string& root, const WorkInfo& work) {
+    std::vector<DiskVideo> videos;
+    const std::string folder = findWorkFolder(root, work);
+    if (folder.empty()) {
+        return videos;
+    }
+    std::error_code ec;
+    for (auto it = fs::recursive_directory_iterator(folder, ec); !ec && it != fs::recursive_directory_iterator();
+         it.increment(ec)) {
+        const std::string name = it->path().filename().string();
+        if (it->is_directory(ec)) {
+            // "Season 01" sí; carpetas ocultas (temporales) y más profundas, no
+            if (!name.empty() && name.front() == '.') {
+                it.disable_recursion_pending();
+            } else if (it.depth() >= 1) {
+                it.disable_recursion_pending();
+            }
+            continue;
+        }
+        if (!it->is_regular_file(ec) || !kVideoExtensions.count(lowerExtension(it->path()))) {
+            continue;
+        }
+        DiskVideo video;
+        video.path = it->path().string();
+        if (const auto episode = media::parseEpisode(name)) {
+            video.season = episode->season;
+            video.episode = episode->episode;
+            video.episodeEnd = episode->episodeEnd;
+        }
+        video.quality = media::detectQuality(name);
+        video.hdr = media::detectHdr(name);
+        if (video.quality.empty()) {
+            if (const auto probed = probeVideoCached(video.path)) {
+                video.quality = probed->quality;
+                video.hdr = probed->hdr.value_or(false);
+            }
+        }
+        videos.push_back(std::move(video));
+    }
+    return videos;
 }
 
 std::string findSevenZip() {
@@ -511,7 +799,53 @@ ImportResult importRelease(const ImportRequest& request, const std::function<voi
         result.files.push_back(placed->string());
     }
 
-    // 5) Limpieza: partes del comprimido y carpeta temporal (los vídeos sueltos ya se han movido)
+    // 5) Otras versiones de lo importado en la misma carpeta (D-041): se devuelven para que el gestor
+    //    de descargas las sustituya
+    if (request.replaceOthers) {
+        std::set<fs::path> placed;
+        for (const std::string& file : result.files) {
+            placed.insert(fs::path(file));
+        }
+        std::set<fs::path> superseded;
+        for (std::size_t i = 0; i < videos.size() && i < result.files.size(); ++i) {
+            const fs::path target(result.files[i]);  // Los vídeos van primero en moves
+            const auto placedEpisode = media::parseEpisode(target.filename().string());
+            if (request.kind == "series" && !placedEpisode) {
+                continue;  // Extras
+            }
+            for (auto it = fs::directory_iterator(target.parent_path(), ec); !ec && it != fs::directory_iterator();
+                 it.increment(ec)) {
+                const fs::path other = it->path();
+                if (placed.count(other) || !it->is_regular_file(ec) || !kVideoExtensions.count(lowerExtension(other))) {
+                    continue;
+                }
+                if (request.kind == "series") {
+                    const auto episode = media::parseEpisode(other.filename().string());
+                    if (!episode || episode->season != placedEpisode->season ||
+                        std::max(episode->episode, episode->episodeEnd) < placedEpisode->episode ||
+                        episode->episode > std::max(placedEpisode->episode, placedEpisode->episodeEnd)) {
+                        continue;  // Otro episodio
+                    }
+                }
+                superseded.insert(other);
+                // Sus subtítulos: "Serie S01E01 - 1080p.Spanish.srt"
+                const std::string prefix = other.stem().string() + ".";
+                for (auto sub = fs::directory_iterator(other.parent_path(), ec); !ec && sub != fs::directory_iterator();
+                     sub.increment(ec)) {
+                    const std::string name = sub->path().filename().string();
+                    if (!placed.count(sub->path()) && name.compare(0, prefix.size(), prefix) == 0 &&
+                        kSubtitleExtensions.count(lowerExtension(sub->path()))) {
+                        superseded.insert(sub->path());
+                    }
+                }
+            }
+        }
+        for (const fs::path& file : superseded) {
+            result.superseded.push_back(file.string());
+        }
+    }
+
+    // 6) Limpieza: partes del comprimido y carpeta temporal (los vídeos sueltos ya se han movido)
     if (request.archive) {
         for (const std::string& part : request.parts) {
             fs::remove(part, ec);

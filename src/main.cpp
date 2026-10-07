@@ -14,6 +14,7 @@
 #include "download_manager.hpp"
 #include "httplib.h"
 #include "metadata.hpp"
+#include "release_prober.hpp"
 #include "settings.hpp"
 #include "signal_watcher.hpp"
 #include "telegram_client.hpp"
@@ -106,18 +107,13 @@ int main() {
     // Cola de descargas; TDLib guarda los archivos en el búfer y después se importan a la biblioteca.
     // Para los nombres: título, año e identificador de TMDB si los hay; si no, los del catálogo.
     DownloadManager downloads(db, telegram, downloadDir, [&catalog, &metadata](const DbManager::Download& download) {
-        library::WorkInfo work{download.title, std::nullopt, 0};
-        if (const auto ref = catalog.findRelease(download.chatId, download.messageId)) {
-            const Catalog::Item& item = *ref->item;
-            const auto info = metadata.lookup(item);
-            work.title = info && !info->title.empty() ? info->title : item.title;
-            work.year = info && info->year ? info->year : item.year;
-            work.tmdbId = info ? static_cast<long>(info->providerId) : item.tmdbId;
-        }
-        return work;
+        const auto ref = catalog.findRelease(download.chatId, download.messageId);
+        return ref ? tracking::workInfo(*ref->item, metadata) : library::WorkInfo{download.title, std::nullopt, 0};
     });
+    // Calidad real de los archivos sin descargarlos enteros (D-042)
+    ReleaseProber prober(db, telegram);
     // Seguimiento: pone en cola los episodios nuevos y las versiones mejores de lo que se sigue
-    Tracker tracker(db, catalog, metadata, downloads);
+    Tracker tracker(db, catalog, metadata, downloads, prober);
     // Cada cambio en los mensajes de un canal (también los que llegan en tiempo real) recalcula su parte
     // del catálogo, busca lo nuevo en TMDB y revisa las obras seguidas
     ChannelSync sync(db, telegram, [&catalog, &metadata, &tracker](std::int64_t chatId) {
@@ -129,7 +125,8 @@ int main() {
     // Inicializar el servidor HTTP
     httplib::Server svr;
     std::atomic<bool> restartRequested{false};
-    registerApiRoutes(svr, {db, telegram, sync, catalog, metadata, tmdb, downloads, tracker, downloadDir, downloadDirWarning,
+    registerApiRoutes(svr, {db, telegram, sync, catalog, metadata, tmdb, downloads, tracker, prober, downloadDir,
+                            downloadDirWarning,
                             [&svr, &restartRequested] {
                                 restartRequested = true;
                                 svr.stop();  // Termina listen_after_bind() tras responder a la petición

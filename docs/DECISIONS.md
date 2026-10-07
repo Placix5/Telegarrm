@@ -523,3 +523,43 @@ Formato: **Contexto** (qué problema había), **Decisión**, **Alternativas desc
   - Un episodio cuenta como «tenido» si alguna de sus versiones está en cola, descargándose, importándose o en la biblioteca. Una descarga fallida o cancelada no cuenta.
   - Lo elige el servidor (`POST /api/catalog/{chat}/{ficha}/download`) con la misma lógica que el seguimiento (`tracking::missingEpisodes`), probada con tests. Antes comprueba que caben en la biblioteca de series con el margen de *Ajustes*.
 - **Verificación**: en la Pi, la serie de prueba muestra «Tienes 1 de 2 episodios conocidos» y el botón para el que falta. Westworld (35 episodios, 143 GB) se rechaza porque no cabe en los 101 GB libres, sin poner nada en cola.
+
+## D-041: La biblioteca dice qué episodios se tienen
+*07/10/2026 · Fase 4*
+
+- **Contexto**: «Descargar el episodio que falta» bajó otra vez el 1x01 de *Ultimate Spider-Man*, que ya estaba en la biblioteca. Era una descarga del canal original, que Plácido había quitado: su archivo ya no estaba en el catálogo y «lo que se tiene» solo salía de las descargas que el catálogo reconoce. Quedaron dos archivos idénticos con etiquetas distintas: «- 1080p», de la ficha falsa del canal original, y «- 720p», leída del vídeo (D-039).
+- **Decisión**:
+  - **Lo que se tiene** de una obra son sus descargas en curso o terminadas más los vídeos que ya hay en su carpeta de la biblioteca. La carpeta se busca por `[tmdbid-N]` (también `[tmdbid=N]`, la otra forma que entiende Jellyfin) o, si no, por su nombre. Así cuentan los archivos de canales quitados, los copiados a mano y los de otras herramientas.
+    - El episodio sale del nombre del archivo (`S01E01`, `1x01`…).
+    - La calidad sale de la etiqueta del nombre o, si no la lleva, del propio vídeo con ffprobe. Ese análisis se guarda en memoria por ruta, tamaño y fecha.
+    - Lo usan el recuadro «Serie completa» (D-040) y el seguimiento (D-035).
+  - **Un archivo por episodio**: al importar un episodio, los otros vídeos del mismo episodio en esa carpeta, con sus subtítulos, se sustituyen. Se borran salvo que *Ajustes* diga conservarlos (`keep_replaced`), y las descargas que los colocaron pasan a *Sustituida*. Así, si se cuela un duplicado, se queda el más reciente, como pidió Plácido.
+  - En **películas** sí puede haber varias versiones a propósito (1080p y 4K). Solo se sustituyen cuando la descarga la pidió el seguimiento como mejora.
+  - La ficha marca los episodios que ya están en la biblioteca, con su calidad.
+- **Descartado**: guardar en cada descarga el identificador de TMDB para reconocerla sin el catálogo. No cubre los archivos que no vienen de una descarga, y la carpeta de la biblioteca sí.
+
+## D-042: Calidad real antes de descargar
+*07/10/2026 · Fase 4*
+
+- **Contexto**: Plácido preguntó si se puede saber la calidad de un archivo antes de descargarlo, en vez de fiarse de lo que dice el canal. Ya había fichas que mentían (D-039).
+- **Decisión**: TDLib permite descargar solo un trozo de un archivo (`downloadFile` con `offset` y `limit`). `ReleaseProber` pide los primeros 4 MB de la primera parte, saca de ahí el principio del vídeo, lo analiza con ffprobe (D-039) y borra el trozo del búfer (`cancelDownloadFile` y `deleteFile`).
+  - **Dónde está el vídeo** en esos bytes:
+    - Un MKV, MP4, AVI o FLV suelto: está al principio.
+    - Un ZIP: se recorren sus cabeceras locales hasta el vídeo. Si lo guarda sin comprimir se copia; si usa deflate (casi todos los de los canales), se descomprime con zlib lo que haya.
+    - Un RAR: si guarda el vídeo sin comprimir, está tal cual; si lo comprime, 7-Zip descomprime el principio aunque el archivo esté cortado (`7z e -so`, sin shell) y entrega lo que puede.
+  - **Si no basta**:
+    - Un vídeo suelto pide además un principio de 16 MB y su final. En un MP4 va primero el final (su índice suele estar ahí); en el resto, primero el principio largo (los MKV pueden llevar adjuntos delante).
+    - Dentro de un comprimido solo se puede pedir el principio largo.
+    - TDLib guarda cada trozo en su sitio, así que ffprobe analiza el archivo a medias.
+  - **Resultado**: tabla `release_probes`, por chat y primera parte. Al importar se guarda también la calidad leída del vídeo entero. Los fallos del propio archivo se recuerdan y los de red no.
+  - **Dónde se usa**:
+    - La ficha muestra la calidad comprobada con «✓», con un botón «?» por versión y «Comprobar calidades» por temporada o película.
+    - «Serie completa» (D-040) y la descarga manual eligen con ella.
+    - El seguimiento (D-035) comprueba antes de decidir lo que podría pedir (como mucho 10 archivos por pasada), así que las mejoras y la calidad máxima se aplican sobre la calidad real.
+  - Nunca se comprueba un archivo que se está descargando: otra petición `downloadFile` cambiaría su rango. Las comprobaciones van de una en una y con menos prioridad que las descargas.
+- **Verificación** (07/10/2026), con 23 archivos variados de *Las Cositas* sin descargar:
+  - Todos se leen. Tardan de 0,5 a 1,5 s; los que necesitan el principio largo, alrededor de 1,3 s.
+  - Detecta el HDR de los 4K (*The Mandalorian and Grogu*, *Muppets*).
+  - Descubre fichas falsas: *Padre no hay más que uno* dice 1080p y es 4K. Y los dos «.mp4» de *Gente Hablando* son en realidad FLV.
+  - El búfer queda limpio después de cada comprobación.
+- **Descartado**: descargar entero para mirar (llenaría el búfer) y fiarse del tamaño o de la duración.

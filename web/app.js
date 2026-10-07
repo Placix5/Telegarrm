@@ -273,12 +273,83 @@ function episodeLabel(release) {
 }
 
 // Versiones de un episodio: "1080p · 1,2 GB" y su botón de descarga
+// Calidad comprobada en el propio archivo (D-042): la versión con esa calidad; si no, la del nombre
+function realRelease(release) {
+  const probe = release.probe;
+  return probe && probe.quality ? Object.assign({}, release, { quality: probe.quality, hdr: probe.hdr }) : release;
+}
+
+const isProbed = (release) => Boolean(release.probe && release.probe.quality);
+
+function renderQuality(node, release) {
+  const real = realRelease(release);
+  const named = versionLabel(release);
+  node.textContent = versionLabel(real);
+  if (isProbed(release)) {
+    node.title = `Calidad comprobada en el propio archivo${versionLabel(real) !== named ? ` (el nombre decía ${named})` : ""}`;
+  } else {
+    node.title = release.probe && release.probe.error ? `No se pudo comprobar: ${release.probe.error}`
+      : "Calidad según el nombre o la ficha (sin comprobar)";
+  }
+}
+
+// Etiqueta de versión y, en el mismo hueco, un ✓ si la calidad está comprobada o un botón «?» que la
+// comprueba leyendo solo el principio del archivo
+function qualityControls(release) {
+  const label = el("strong", "quality-label");
+  const mark = el("span", "probe-mark", "✓");
+  const button = el("button", "probe secondary small", "?");
+  const update = () => {
+    renderQuality(label, release);
+    mark.title = label.title;
+    mark.hidden = !isProbed(release);
+    button.hidden = isProbed(release);
+    button.title = release.probe && release.probe.error
+      ? `${label.title}. Pulsa para volver a intentarlo.`
+      : "Comprobar la calidad real (lee solo el principio del archivo, sin descargarlo)";
+  };
+  button.addEventListener("click", async () => {
+    button.disabled = true;
+    button.textContent = "…";
+    try {
+      release.probe = await api(`/api/releases/${release.chat_id}/${release.message_id}/probe`, { method: "POST" });
+    } catch (e) {
+      release.probe = { error: e.message };
+    }
+    button.disabled = false;
+    button.textContent = "?";
+    update();
+  });
+  update();
+  return [label, mark, button];
+}
+
+// Comprueba de una en una las versiones sin comprobar y después rehace la ficha (agrupa por calidad real)
+function probeAllButton(releases, onDone) {
+  const pending = releases.filter((release) => !release.probe);
+  const button = el("button", "secondary small", "Comprobar calidades");
+  button.title = "Lee el principio de cada archivo para saber su calidad real, sin descargarlo";
+  button.hidden = pending.length === 0;
+  button.addEventListener("click", async () => {
+    button.disabled = true;
+    for (let i = 0; i < pending.length; i++) {
+      button.textContent = `Comprobando ${i + 1} de ${pending.length}…`;
+      try {
+        pending[i].probe = await api(`/api/releases/${pending[i].chat_id}/${pending[i].message_id}/probe`, { method: "POST" });
+      } catch (e) {
+        pending[i].probe = { error: e.message };
+      }
+    }
+    onDone();
+  });
+  return button;
+}
+
 function versionsElement(releases) {
   const box = el("div", "versions");
   for (const release of releases) {
     const chip = el("span", "version");
-    chip.append(el("strong", "", versionLabel(release)), el("span", "", formatSize(release.size)),
-      downloadButton(release, true));
+    chip.append(...qualityControls(release), el("span", "", formatSize(release.size)), downloadButton(release, true));
     const parts = release.parts.length > 1 ? ` (${release.parts.length} partes)` : "";
     chip.title = `${release.name}${parts}`;
     box.append(chip);
@@ -294,8 +365,23 @@ function table(headers) {
   return node;
 }
 
+// Calidad para mostrar de un vídeo de la biblioteca: "720p", "4K HDR"
+const diskLabel = (video) => (video.quality ? qualityLabel(video.quality) + (video.hdr ? " HDR" : "") : "calidad desconocida");
+
+// Episodios que ya están en la biblioteca (D-041): "temporada:episodio" -> calidad
+function episodesOnDisk(item) {
+  const episodes = new Map();
+  for (const video of item.on_disk || []) {
+    if (video.episode === null) continue;
+    for (let episode = video.episode; episode <= (video.episode_end || video.episode); episode++) {
+      episodes.set(`${video.season}:${episode}`, diskLabel(video));
+    }
+  }
+  return episodes;
+}
+
 // Series: una fila por episodio con todas sus versiones; título y sinopsis de TMDB si los hay
-function episodesTable(releases) {
+function episodesTable(releases, onDisk) {
   const node = table([["Episodio"], ["Título"], ["Versiones"]]);
   const byEpisode = new Map();
   for (const release of releases) {
@@ -313,6 +399,8 @@ function episodesTable(releases) {
       text.title = overview;
       titleCell.append(text);
     }
+    const stored = onDisk.get(`${versions[0].season}:${versions[0].episode}`);
+    if (stored) titleCell.append(el("div", "on-disk", `✓ En tu biblioteca · ${stored}`));
     const cell = el("td");
     cell.append(versionsElement(versions));
     row.append(el("td", "episode", label), titleCell, cell);
@@ -323,10 +411,10 @@ function episodesTable(releases) {
 
 // Botones para descargar una temporada entera en una versión: el primer archivo de cada episodio
 // con esa versión (los archivos ya vienen ordenados de mejor a peor)
-function seasonActions(releases) {
+function seasonActions(releases, onProbed) {
   const byVersion = new Map();
   for (const release of releases) {
-    const label = versionLabel(release);
+    const label = versionLabel(realRelease(release));
     const episodes = byVersion.get(label) || new Map();
     if (!episodes.has(episodeLabel(release))) episodes.set(episodeLabel(release), release);
     byVersion.set(label, episodes);
@@ -350,6 +438,7 @@ function seasonActions(releases) {
     });
     box.append(button);
   }
+  box.append(probeAllButton(releases, onProbed));
   return box;
 }
 
@@ -363,7 +452,9 @@ function versionsTable(releases) {
     const parts = release.parts.length > 1 ? ` · ${release.parts.length} partes` : "";
     const action = el("td");
     action.append(downloadButton(release, false));
-    row.append(el("td", "", versionLabel(release)), name, el("td", "", formatDate(release.date).split(",")[0]),
+    const version = el("td", "version-cell");
+    version.append(...qualityControls(release));
+    row.append(version, name, el("td", "", formatDate(release.date).split(",")[0]),
       el("td", "num", formatSize(release.size) + parts), action);
     node.append(row);
   }
@@ -426,6 +517,11 @@ async function loadDetail(chatId, anchorId) {
   detail.append(posterElement(item), info);
 
   const files = el("div", "files");
+  const onDisk = episodesOnDisk(item);
+  const reload = () => loadDetail(chatId, anchorId);
+  if (item.kind === "movie" && (item.on_disk || []).length) {
+    info.append(el("p", "on-disk", `✓ En tu biblioteca: ${item.on_disk.map(diskLabel).join(", ")}`));
+  }
   if (item.kind === "series") {
     const bySeason = new Map();
     const loose = [];
@@ -437,11 +533,13 @@ async function loadDetail(chatId, anchorId) {
       const episodes = new Set(releases.map(episodeLabel)).size;
       const size = releases.reduce((sum, release) => sum + release.size, 0);
       files.append(el("h3", "", `Temporada ${season} · ${plural(episodes, "episodio", "episodios")} · ${formatSize(size)}`),
-        seasonActions(releases), episodesTable(releases));
+        seasonActions(releases, reload), episodesTable(releases, onDisk));
     }
     if (loose.length) files.append(el("h3", "", "Otros archivos"), versionsTable(loose));
   } else {
-    files.append(el("h3", "", "Versiones"), versionsTable(item.releases));
+    const actions = el("div", "season-actions");
+    actions.append(probeAllButton(item.releases, reload));
+    files.append(el("h3", "", "Versiones"), actions, versionsTable(item.releases));
   }
 
   container.replaceChildren(detail, files);

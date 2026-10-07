@@ -92,6 +92,7 @@ form > button { margin-top: 0.8rem; }
 .follow-box .hint { flex-basis: 100%; margin: 0; }
 .series-box { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; margin-bottom: 0.8rem; }
 .series-box .hint { flex-basis: 100%; margin: 0; }
+.on-disk { color: var(--ok); font-size: 0.85rem; margin-top: 0.15rem; }
 .series-box select { width: auto; padding-top: 0.3rem; padding-bottom: 0.3rem; font-size: 0.9rem; }
 .synopsis { margin: 0.6rem 0 0.8rem; }
 .versions { display: flex; flex-wrap: wrap; gap: 0.35rem; }
@@ -104,6 +105,11 @@ form > button { margin-top: 0.8rem; }
 button.download { width: 9.5rem; padding: 0.25rem 0.5rem; font-size: 0.85rem; line-height: 1.3; text-align: center;
                   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
 button.download.wide { width: 11rem; }
+button.probe { width: 1.6rem; padding: 0.1rem 0; font-size: 0.8rem; line-height: 1.3; }
+.probe-mark { display: inline-block; width: 1.6rem; text-align: center; color: var(--ok); font-weight: 700; }
+.probe-mark[hidden] { display: none; }
+.version-cell { white-space: nowrap; }
+.version-cell button.probe, .version-cell .probe-mark { margin-left: 0.4rem; }
 .episode-overview { color: var(--muted); font-size: 0.85rem; margin-top: 0.15rem;
                     display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .season-actions { display: flex; flex-wrap: wrap; gap: 0.4rem; align-items: center; margin: -0.2rem 0 0.6rem; }

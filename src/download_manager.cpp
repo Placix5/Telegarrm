@@ -4,6 +4,7 @@
 #include <cstdio>
 #include <filesystem>
 #include <iostream>
+#include <set>
 #include <system_error>
 #include <utility>
 #include <vector>
@@ -37,24 +38,6 @@ bool isError(const std::optional<Json>& response) {
 
 std::string errorText(const std::optional<Json>& response) {
     return response ? response->value("message", "error desconocido") : std::string("Telegram no responde");
-}
-
-// Objeto "file" de TDLib de un mensaje con documento, vídeo, audio o animación
-std::optional<Json> fileOfMessage(const Json& message) {
-    static const std::pair<const char*, const char*> kFields[] = {
-        {"messageDocument", "document"}, {"messageVideo", "video"}, {"messageAudio", "audio"}, {"messageAnimation", "animation"}};
-    const Json content = message.value("content", Json::object());
-    const std::string type = typeOf(content);
-    for (const auto& [contentType, field] : kFields) {
-        if (type == contentType) {
-            const Json media = content.value(field, Json::object());
-            const Json file = media.value(field, Json::object());
-            if (file.is_object() && file.contains("id")) {
-                return file;
-            }
-        }
-    }
-    return std::nullopt;
 }
 
 // Tamaño en unidades del SI con coma decimal: "12,3 GB", "251 MB"
@@ -281,7 +264,7 @@ DownloadManager::Outcome DownloadManager::process(DbManager::Download& download,
             error = "No se pudo leer el mensaje de la parte " + stored.fileName + ": " + errorText(message);
             return Outcome::Failed;
         }
-        const auto file = fileOfMessage(*message);
+        const auto file = TelegramClient::fileOfMessage(*message);
         if (!file) {
             error = "El mensaje de la parte " + stored.fileName + " ya no tiene archivo";
             return Outcome::Failed;
@@ -425,6 +408,9 @@ DownloadManager::Outcome DownloadManager::importToLibrary(DbManager::Download& d
     }
     request.libraryRoot = download.kind == "series" ? settings.seriesDir : settings.moviesDir;
     request.minFreeBytes = settings.minFreeBytes;
+    // Un episodio sustituye siempre a las otras versiones del mismo episodio; una película, solo si es
+    // una mejora del seguimiento (a mano se pueden tener varias versiones, D-041)
+    request.replaceOthers = download.kind == "series" || download.origin == "auto";
 
     const library::ImportResult result = library::importRelease(
         request,
@@ -451,8 +437,14 @@ DownloadManager::Outcome DownloadManager::importToLibrary(DbManager::Download& d
     }
     download.libraryPath = result.libraryPath;
     download.libraryFiles = result.files;
+    superseded_ = result.superseded;
     db_.setDownloadLibrary(download.id, result.libraryPath, result.files);
-    // La calidad real del vídeo manda sobre la del nombre (D-039): es la que compara el seguimiento
+    // La calidad real del vídeo manda sobre la del nombre (D-039): es la que compara el seguimiento.
+    // También queda como calidad comprobada del archivo en el catálogo (D-042).
+    if (result.probed) {
+        db_.saveProbe({download.chatId, download.messageId, result.probed->quality,
+                       result.probed->hdr.value_or(download.hdr), "", 0});
+    }
     if (result.probed && (result.probed->quality != download.quality || result.probed->hdr != download.hdr)) {
         std::cout << "[Descargas] #" << download.id << ": el vídeo es "
                   << library::versionLabel(result.probed->quality, result.probed->hdr.value_or(false), {})
@@ -501,38 +493,60 @@ void DownloadManager::probeCompletedDownloads() {
     }
 }
 
-std::string DownloadManager::replaceOlder(const DbManager::Download& download) {
+std::string DownloadManager::replaceOlder(const DbManager::Download& download, const std::vector<std::string>& superseded) {
     const AppSettings settings = loadSettings(db_);
-    std::vector<std::string> labels;
-    std::size_t removed = 0;
-    bool unknownFiles = false;
-    for (const std::int64_t id : download.replaces) {
-        // Solo las que llegaron a la biblioteca (una que falló o se canceló no tiene nada que borrar)
-        const auto old = db_.getDownload(id);
-        if (!old || old->status != "completed") {
+    const std::set<std::string> supersededFiles(superseded.begin(), superseded.end());
+
+    // Descargas anteriores: las que el seguimiento pidió sustituir y las que colocaron los archivos
+    // que la importación ha encontrado como versiones anteriores (D-041). Solo las que llegaron a la
+    // biblioteca: una que falló o se canceló no tiene nada que borrar.
+    std::vector<DbManager::Download> older;
+    for (const DbManager::Download& other : db_.listDownloads()) {
+        if (other.id == download.id || other.status != "completed") {
             continue;
         }
-        if (!settings.keepReplaced) {
-            if (old->libraryFiles.empty()) {
-                unknownFiles = true;  // Descargas anteriores a la versión 7 de la BD
-            } else {
-                removed += library::removeFiles(old->libraryFiles, {settings.moviesDir, settings.seriesDir},
-                                                download.libraryFiles);
-            }
+        const bool listed = std::find(download.replaces.begin(), download.replaces.end(), other.id) != download.replaces.end();
+        const bool placedThem = std::any_of(other.libraryFiles.begin(), other.libraryFiles.end(),
+                                            [&](const std::string& file) { return supersededFiles.count(file) > 0; });
+        if (listed || placedThem) {
+            older.push_back(other);
         }
-        db_.setDownloadStatus(id, "replaced");
-        labels.push_back(library::versionLabel(old->quality, old->hdr, old->tags));
-        std::cout << "[Descargas] #" << id << " sustituida por #" << download.id << std::endl;
     }
-    if (labels.empty()) {
+    if (older.empty() && superseded.empty()) {
         return "";
     }
 
-    std::string previous;
-    for (const std::string& label : labels) {
-        previous += (previous.empty() ? "" : ", ") + (label.empty() ? std::string("calidad desconocida") : label);
+    std::vector<std::string> files(superseded.begin(), superseded.end());
+    std::vector<std::string> previous;  // Para el historial: versión de cada descarga o nombre del archivo suelto
+    std::set<std::string> described;
+    for (const DbManager::Download& old : older) {
+        files.insert(files.end(), old.libraryFiles.begin(), old.libraryFiles.end());
+        const std::string label = library::versionLabel(old.quality, old.hdr, old.tags);
+        previous.push_back("la versión " + (label.empty() ? std::string("de calidad desconocida") : label));
+        described.insert(old.libraryFiles.begin(), old.libraryFiles.end());
     }
-    std::string message = describeDownload(download) + " ya está en la biblioteca y sustituye a la versión " + previous;
+    for (const std::string& file : superseded) {
+        if (!described.count(file) && !library::isSubtitle(file)) {
+            previous.push_back(std::filesystem::path(file).filename().string());
+        }
+    }
+    bool unknownFiles = false;
+    std::size_t removed = 0;
+    if (!settings.keepReplaced) {
+        unknownFiles = std::any_of(older.begin(), older.end(),
+                                   [](const DbManager::Download& old) { return old.libraryFiles.empty(); });
+        removed = library::removeFiles(files, {settings.moviesDir, settings.seriesDir}, download.libraryFiles);
+    }
+    for (const DbManager::Download& old : older) {
+        db_.setDownloadStatus(old.id, "replaced");
+        std::cout << "[Descargas] #" << old.id << " sustituida por #" << download.id << std::endl;
+    }
+
+    std::string list;
+    for (std::size_t i = 0; i < previous.size(); ++i) {
+        list += (i == 0 ? "" : i + 1 == previous.size() ? " y " : ", ") + previous[i];
+    }
+    std::string message = describeDownload(download) + " ya está en la biblioteca y sustituye a " + list;
     if (settings.keepReplaced) {
         return message + ", que se conserva (Ajustes).";
     }
@@ -549,9 +563,11 @@ void DownloadManager::logOutcome(const DbManager::Download& download, Outcome ou
     activity.followId = download.followId;
     activity.downloadId = download.id;
     if (outcome == Outcome::Completed) {
-        const std::string replaced = download.replaces.empty() ? "" : replaceOlder(download);
+        const std::string replaced = replaceOlder(download, superseded_);
+        superseded_.clear();
         if (!replaced.empty()) {
-            activity.type = "upgraded";
+            // Mejora pedida por el seguimiento, o un duplicado que sustituye a la versión anterior
+            activity.type = download.origin == "auto" ? "upgraded" : "replaced";
             activity.message = replaced;
         } else if (download.origin == "auto") {
             activity.type = "completed";

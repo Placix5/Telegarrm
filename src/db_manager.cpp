@@ -176,6 +176,18 @@ constexpr Migration kMigrations[] = {
         ALTER TABLE downloads ADD COLUMN replaces      TEXT NOT NULL DEFAULT '';  -- Descargas que sustituye
         ALTER TABLE downloads ADD COLUMN library_files TEXT NOT NULL DEFAULT '';  -- Archivos colocados
     )SQL"},
+    {8, R"SQL(
+        -- Calidad real de cada archivo lógico, leída antes de descargarlo o al importarlo (D-042)
+        CREATE TABLE release_probes (
+            chat_id    INTEGER NOT NULL,
+            message_id INTEGER NOT NULL,  -- Primera parte
+            quality    TEXT    NOT NULL DEFAULT '',
+            hdr        INTEGER NOT NULL DEFAULT 0,
+            error      TEXT    NOT NULL DEFAULT '',  -- Si no se pudo leer
+            probed_at  INTEGER NOT NULL,
+            PRIMARY KEY (chat_id, message_id)
+        ) WITHOUT ROWID;
+    )SQL"},
 };
 
 // Finaliza automáticamente las sentencias preparadas.
@@ -1434,4 +1446,71 @@ std::vector<DbManager::Activity> DbManager::listActivity(int limit, std::int64_t
         entries.push_back(std::move(a));
     }
     return entries;
+}
+
+// --- Calidad real de los archivos (D-042) ---
+
+bool DbManager::saveProbe(const Probe& p) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!db_) {
+        return false;
+    }
+    StmtPtr stmt = prepare(db_.get(), R"SQL(
+        INSERT OR REPLACE INTO release_probes (chat_id, message_id, quality, hdr, error, probed_at)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6);
+    )SQL");
+    if (!stmt) {
+        return false;
+    }
+    sqlite3_bind_int64(stmt.get(), 1, p.chatId);
+    sqlite3_bind_int64(stmt.get(), 2, p.messageId);
+    bindText(stmt.get(), 3, p.quality);
+    sqlite3_bind_int(stmt.get(), 4, p.hdr ? 1 : 0);
+    bindText(stmt.get(), 5, p.error);
+    sqlite3_bind_int64(stmt.get(), 6, p.probedAt > 0 ? p.probedAt : now());
+    if (sqlite3_step(stmt.get()) != SQLITE_DONE) {
+        logError(db_.get(), "guardar la calidad comprobada");
+        return false;
+    }
+    return true;
+}
+
+std::map<std::pair<std::int64_t, std::int64_t>, DbManager::Probe> DbManager::listProbes() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    std::map<std::pair<std::int64_t, std::int64_t>, Probe> probes;
+    if (!db_) {
+        return probes;
+    }
+    StmtPtr stmt = prepare(db_.get(), "SELECT chat_id, message_id, quality, hdr, error, probed_at FROM release_probes;");
+    if (!stmt) {
+        return probes;
+    }
+    while (sqlite3_step(stmt.get()) == SQLITE_ROW) {
+        Probe p;
+        p.chatId = sqlite3_column_int64(stmt.get(), 0);
+        p.messageId = sqlite3_column_int64(stmt.get(), 1);
+        p.quality = columnText(stmt.get(), 2);
+        p.hdr = sqlite3_column_int(stmt.get(), 3) != 0;
+        p.error = columnText(stmt.get(), 4);
+        p.probedAt = sqlite3_column_int64(stmt.get(), 5);
+        probes.emplace(std::make_pair(p.chatId, p.messageId), std::move(p));
+    }
+    return probes;
+}
+
+bool DbManager::isDownloadingMessage(std::int64_t chatId, std::int64_t messageId) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!db_) {
+        return false;
+    }
+    StmtPtr stmt = prepare(db_.get(), R"SQL(
+        SELECT 1 FROM downloads d JOIN download_parts p ON p.download_id = d.id
+        WHERE d.chat_id = ?1 AND p.message_id = ?2 AND d.status IN ('downloading', 'importing') LIMIT 1;
+    )SQL");
+    if (!stmt) {
+        return false;
+    }
+    sqlite3_bind_int64(stmt.get(), 1, chatId);
+    sqlite3_bind_int64(stmt.get(), 2, messageId);
+    return sqlite3_step(stmt.get()) == SQLITE_ROW;
 }

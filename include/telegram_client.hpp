@@ -57,6 +57,9 @@ public:
     // Último objeto connectionState* recibido (ej. connectionStateReady)
     Json connectionState() const;
 
+    // Objeto "file" de un mensaje con documento, vídeo, audio o animación (std::nullopt si no tiene)
+    static std::optional<Json> fileOfMessage(const Json& message);
+
     // Recibe cada actualización de TDLib (updateNewMessage...) en el hilo receptor: debe volver
     // enseguida y no puede llamar a request(). Se registra antes de start().
     void addUpdateListener(Handler listener);

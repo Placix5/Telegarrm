@@ -18,6 +18,7 @@ endif()
 find_package(Threads REQUIRED)   # cpp-httplib y los hilos de Telegram y sincronización
 find_package(SQLite3 REQUIRED)   # Módulo FindSQLite3 (CMake >= 3.14)
 find_package(OpenSSL 3 REQUIRED) # HTTPS para TMDB con cpp-httplib (ya lo necesita TDLib)
+find_package(ZLIB REQUIRED)      # Leer el principio de un vídeo dentro de un ZIP comprimido (D-042)
 
 # TDLib (interfaz JSON). Se busca en las rutas estándar y en ~/td/tdlib; si está en
 # otro sitio, indicar -DTd_DIR=<prefijo>/lib/cmake/Td.
@@ -47,6 +48,7 @@ add_library(telegarrm_core STATIC
     src/media_parser.cpp
     src/metadata.cpp
     src/process.cpp
+    src/release_prober.cpp
     src/settings.cpp
     src/tmdb_client.cpp
     src/signal_watcher.cpp
@@ -59,7 +61,7 @@ target_include_directories(telegarrm_core PUBLIC include)
 target_compile_definitions(telegarrm_core PUBLIC TELEGARRM_VERSION="${PROJECT_VERSION}")
 # Igual en todas las unidades que incluyen httplib.h (si no, violaría la regla de una definición)
 target_compile_definitions(telegarrm_core PUBLIC CPPHTTPLIB_OPENSSL_SUPPORT)
-target_link_libraries(telegarrm_core PUBLIC Threads::Threads ${TELEGARRM_SQLITE_TARGET} Td::TdJson
+target_link_libraries(telegarrm_core PUBLIC Threads::Threads ${TELEGARRM_SQLITE_TARGET} Td::TdJson ZLIB::ZLIB
                       OpenSSL::SSL OpenSSL::Crypto)
 
 add_executable(telegarrm src/main.cpp)

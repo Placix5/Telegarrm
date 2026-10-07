@@ -11,6 +11,7 @@ class ChannelSync;
 class DbManager;
 class DownloadManager;
 class MetadataService;
+class ReleaseProber;
 class TelegramClient;
 class TmdbClient;
 class Tracker;
@@ -25,6 +26,7 @@ struct ApiServices {
     TmdbClient& tmdb;
     DownloadManager& downloads;
     Tracker& tracker;
+    ReleaseProber& prober;
     // Búfer de descargas con el que arrancó TDLib (para saber si un cambio exige reiniciar)
     std::string activeDownloadDir;
     // Aviso si la carpeta configurada no se pudo usar al arrancar (vacío = sin aviso)
