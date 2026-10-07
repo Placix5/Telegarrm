@@ -155,6 +155,7 @@ Los pasos del inicio de sesión responden `{"ok": true}`, o `{"error": "..."}` c
 - «Añadidas recientemente»: fila con las 12 obras con publicaciones más recientes, con «hace 2 h», «ayer»…
 - Avisos en directo (D-043): si se está viendo la ficha de una obra y llega algo nuevo de ella por Telegram, aparece un aviso en la esquina con un botón para actualizar la ficha. El catálogo anota las novedades y la web las consulta con el sondeo de `/api/status` que ya hacía.
 - Barras de desplazamiento y controles nativos con el tema del sistema (claro u oscuro).
+- Confirmaciones propias en lugar de las del navegador (D-044): explican qué va a pasar y resumen los datos (episodios, tamaño, calidad). Lo destructivo va en rojo y con el foco en «Cancelar». Los errores salen como avisos en la esquina.
 
 ### Fase 4: seguimiento (Tele-ARR)
 - **Tiempo real** (D-036): los canales vigilados se abren en TDLib (`openChat`) y cada `updateNewMessage` dispara una sincronización rápida. Los avisos se agrupan para no saturar TDLib.

@@ -147,6 +147,25 @@ button.toast-close:hover { color: var(--text); }
   .toast.leaving { transition: none; }
 }
 
+/* Confirmaciones */
+dialog.dialog { width: min(28rem, calc(100vw - 2rem)); padding: 1.4rem 1.5rem 1.2rem; color: var(--text);
+                background: var(--card); border: 1px solid var(--border); border-radius: 0.8rem;
+                box-shadow: 0 1rem 3rem rgba(0, 0, 0, 0.35); }
+dialog.dialog[open] { animation: dialog-in 0.15s ease-out; }
+dialog.dialog::backdrop { background: rgba(10, 14, 20, 0.55); }
+dialog.dialog h2 { margin: 0 0 0.6rem; font-size: 1.15rem; overflow-wrap: anywhere; }
+.dialog-body p { color: var(--muted); margin-bottom: 0.8rem; }
+.dialog-facts { background: var(--bg); border-radius: 0.5rem; padding: 0.7rem 0.9rem; margin: 0;
+                font-variant-numeric: tabular-nums; }
+.dialog-actions { display: flex; justify-content: flex-end; gap: 0.6rem; margin-top: 1.2rem; }
+.dialog-actions button { margin: 0; }
+button.danger-solid { color: #fff; background: var(--err); border-color: var(--err); }
+@keyframes dialog-in { from { opacity: 0; transform: scale(0.97); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) {
+  dialog.dialog[open] { animation: none; }
+}
+.toast.error { border-left-color: var(--err); }
+
 /* Descargas */
 .count { display: inline-block; min-width: 1.3rem; padding: 0 0.35rem; border-radius: 1rem; background: var(--accent);
          color: #fff; font-size: 0.75rem; text-align: center; }

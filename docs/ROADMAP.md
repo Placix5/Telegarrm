@@ -66,6 +66,7 @@ Formato real visto: canales de una serie con una ficha (foto + pie con título, 
 - [x] El logo de la cabecera lleva al catálogo.
 - [x] «Añadidas recientemente» encima del catálogo (las 12 obras con publicaciones más recientes).
 - [x] Aviso emergente si llega algo nuevo de la obra que se está viendo (D-043): novedades del catálogo consultadas con el sondeo de `/api/status`, sin conexiones permanentes.
+- [x] Confirmaciones con el estilo de la página, con un resumen de lo que se va a hacer, y errores como avisos en la esquina, en lugar de los cuadros del navegador (D-044).
 
 ## Siguientes pasos
 Por decidir con Plácido; ninguno está empezado.

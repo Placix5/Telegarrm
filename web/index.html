@@ -176,7 +176,19 @@
   <p>This product uses the TMDB API but is not endorsed or certified by TMDB.<br>
      <span class="hint">(Este producto usa la API de TMDB, pero TMDB no lo respalda ni lo certifica.)</span></p>
 </footer>
-<!-- Avisos emergentes (novedades de la obra que se está viendo) -->
+<!-- Confirmaciones con el estilo de la página (en lugar de las del navegador) -->
+<dialog class="dialog" id="dialog" aria-labelledby="dialog-title">
+  <form method="dialog">
+    <h2 id="dialog-title"></h2>
+    <div class="dialog-body" id="dialog-body"></div>
+    <div class="dialog-actions">
+      <button value="cancel" class="secondary" id="dialog-cancel">Cancelar</button>
+      <button value="ok" id="dialog-ok">Aceptar</button>
+    </div>
+  </form>
+</dialog>
+
+<!-- Avisos emergentes (novedades de la obra que se está viendo y errores) -->
 <div class="toasts" id="toasts"></div>
 <script src="app.js"></script>
 </body>

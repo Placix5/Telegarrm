@@ -49,6 +49,7 @@ Formato: **Contexto** (qué problema había), **Decisión**, **Alternativas desc
 | [D-041](#d-041-la-biblioteca-dice-qué-episodios-se-tienen) | La biblioteca dice qué episodios se tienen | Vigente |
 | [D-042](#d-042-calidad-real-antes-de-descargar) | Calidad real antes de descargar | Vigente |
 | [D-043](#d-043-novedades-en-la-web-fase-41) | Novedades en la web (Fase 4.1) | Vigente |
+| [D-044](#d-044-confirmaciones-y-errores-con-el-estilo-de-la-página) | Confirmaciones y errores con el estilo de la página | Vigente |
 
 ---
 
@@ -597,3 +598,15 @@ Formato: **Contexto** (qué problema había), **Decisión**, **Alternativas desc
   - Tests con el catálogo real sobre una BD temporal: un episodio nuevo es novedad; la segunda parte de un RAR ya conocido, no; tampoco lo antiguo ni un canal nuevo.
   - En la Pi, la fila de recientes y el aviso se ven bien en Chrome (modo oscuro).
 - **Descartado**: Server-Sent Events o WebSocket. `cpp-httplib` atiende cada conexión con un hilo de su grupo (8 en la Pi) y una conexión abierta por pestaña lo agotaría; además complica la parada ordenada. El sondeo ya existía y apenas añade carga.
+
+## D-044: Confirmaciones y errores con el estilo de la página
+*07/10/2026 · Fase 4.1, petición de Plácido*
+
+- **Contexto**: la confirmación de «Descargar la serie completa» era el `confirm()` del navegador. Plácido lo veía «muy cutre y disonante con el resto de la página»: una caja gris del sistema, sin el tema oscuro y con una pregunta escueta. Lo mismo pasaba con las otras cinco confirmaciones y con los nueve `alert()` de error.
+- **Decisión**:
+  - **Confirmaciones**: un único `<dialog>` modal con el estilo de la página (tarjeta, fondo atenuado, botones de la casa) y `confirmDialog()`, que devuelve una promesa.
+    - Cada confirmación explica qué va a pasar y resume los datos: episodios, tamaño, calidad, lo que ya se tiene.
+    - En lo que no tiene vuelta atrás (dejar de seguir, cancelar una descarga, dejar de vigilar un canal), el botón es rojo y el foco empieza en «Cancelar».
+    - Esc o pulsar fuera cancela. El `<dialog>` nativo da gratis el foco atrapado y la accesibilidad.
+  - **Errores**: avisos en la esquina, como los de novedades (D-043), con borde rojo.
+- **Descartado**: una librería de diálogos (D-016: la web no tiene dependencias).

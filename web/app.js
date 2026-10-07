@@ -456,7 +456,14 @@ function seasonActions(releases, onProbed) {
     button.addEventListener("click", async () => {
       const pending = chosen.filter((release) => !activeDownload(release));
       if (!pending.length) return;
-      if (!confirm(`¿Descargar ${plural(pending.length, "episodio", "episodios")} en ${label}?`)) return;
+      const ok = await confirmDialog({
+        title: "Almacenar la temporada",
+        text: "Se pondrán en cola los episodios de esta versión que no estén ya descargados ni en la cola.",
+        facts: [["Episodios", formatNumber(pending.length)],
+          ["Tamaño", formatSize(pending.reduce((sum, release) => sum + release.size, 0))], ["Versión", label]],
+        confirmText: "Descargar",
+      });
+      if (!ok) return;
       button.disabled = true;
       for (const release of pending) await enqueue(release);
       button.disabled = false;
@@ -595,9 +602,18 @@ async function setFollowQuality(follow, select) {
     const updated = await api(`/api/follows/${follow.id}`, { method: "PUT", body: JSON.stringify({ max_quality: select.value }) });
     follow.max_quality = updated.max_quality;
   } catch (e) {
-    alert(e.message);
+    toastError(e.message);
     select.value = follow.max_quality;
   }
+}
+
+function confirmUnfollow(title) {
+  return confirmDialog({
+    title: `Dejar de seguir «${title}»`,
+    text: "No se descargará nada más de forma automática. Lo que ya tienes se queda en la biblioteca.",
+    confirmText: "Dejar de seguir",
+    danger: true,
+  });
 }
 
 // Botón «Seguir» de la ficha, con la calidad máxima y lo que hace
@@ -609,7 +625,7 @@ function followControls(item) {
     const button = el("button", follow ? "secondary small" : "small", follow ? "✓ Siguiendo" : "Seguir");
     if (follow) button.title = "Dejar de seguir";
     button.addEventListener("click", async () => {
-      if (follow && !confirm(`¿Dejar de seguir «${item.title}»? Lo descargado se queda en la biblioteca.`)) return;
+      if (follow && !(await confirmUnfollow(item.title))) return;
       button.disabled = true;
       try {
         if (follow) {
@@ -622,7 +638,7 @@ function followControls(item) {
         }
         lastCatalogJson = null;  // La marca «Siguiendo» del catálogo ha cambiado
       } catch (e) {
-        alert(e.message);
+        toastError(e.message);
       }
       render();
     });
@@ -666,14 +682,26 @@ function seriesBox(item) {
   };
   button.addEventListener("click", async () => {
     const missing = library.missing[select.value];
-    if (!confirm(`¿Descargar ${plural(missing.episodes, "episodio", "episodios")} (${formatSize(missing.size)})?`)) return;
+    const quality = select.value ? `La mejor versión de cada episodio, hasta ${select.value}`
+      : "La mejor versión de cada episodio";
+    const facts = [["Episodios", formatNumber(missing.episodes) +
+      (missing.files !== missing.episodes ? ` (en ${plural(missing.files, "archivo", "archivos")})` : "")],
+    ["Tamaño", formatSize(missing.size)], ["Calidad", quality]];
+    if (library.owned) facts.push(["Ya tienes", `${formatNumber(library.owned)} de ${plural(library.episodes, "episodio", "episodios")}`]);
+    const ok = await confirmDialog({
+      title: library.owned ? "Descargar los episodios que faltan" : "Descargar la serie completa",
+      text: `Se pondrán en cola de «${item.title}» los episodios que no tienes. Se descargan de uno en uno y, al terminar cada uno, pasa a la biblioteca.`,
+      facts,
+      confirmText: "Descargar",
+    });
+    if (!ok) return;
     button.disabled = true;
     try {
       await api(`/api/catalog/${item.chat_id}/${item.anchor_id}/download`, {
         method: "POST", body: JSON.stringify({ max_quality: select.value }),
       });
     } catch (e) {
-      alert(e.message);
+      toastError(e.message);
     }
     await refreshDownloads();
     loadDetail(item.chat_id, item.anchor_id);  // Vuelve a contar lo que falta
@@ -767,7 +795,7 @@ async function enqueue(release) {
   try {
     await api("/api/downloads", { method: "POST", body: JSON.stringify({ chat_id: release.chat_id, message_id: release.message_id }) });
   } catch (e) {
-    alert(e.message);
+    toastError(e.message);
   }
   await refreshDownloads();
 }
@@ -776,7 +804,7 @@ async function downloadAction(id, action, method) {
   try {
     await api(action ? `/api/downloads/${id}/${action}` : `/api/downloads/${id}`, { method });
   } catch (e) {
-    alert(e.message);
+    toastError(e.message);
   }
   await refreshDownloads();
 }
@@ -839,8 +867,15 @@ function renderDownloads() {
       actions.append(button);
     };
     if (IN_PROGRESS.includes(d.status)) {
-      action("Cancelar", "danger", () => {
-        if (confirm("¿Cancelar la descarga? Se borrará lo descargado hasta ahora.")) downloadAction(d.id, "cancel", "POST");
+      action("Cancelar", "danger", async () => {
+        const ok = await confirmDialog({
+          title: "Cancelar la descarga",
+          text: `${downloadTitle(d)}: se borrará lo descargado hasta ahora.`,
+          confirmText: "Cancelar la descarga",
+          cancelText: "Seguir descargando",
+          danger: true,
+        });
+        if (ok) downloadAction(d.id, "cancel", "POST");
       });
     }
     if (d.status === "failed" || d.status === "cancelled") action("Reintentar", "secondary", () => downloadAction(d.id, "retry", "POST"));
@@ -900,12 +935,12 @@ function renderFollows(follows) {
     const actions = el("div", "channel-actions");
     const remove = el("button", "danger small", "Dejar de seguir");
     remove.addEventListener("click", async () => {
-      if (!confirm(`¿Dejar de seguir «${follow.title}»? Lo descargado se queda en la biblioteca.`)) return;
+      if (!(await confirmUnfollow(follow.title))) return;
       try {
         await api(`/api/follows/${follow.id}`, { method: "DELETE" });
         lastCatalogJson = null;
       } catch (e) {
-        alert(e.message);
+        toastError(e.message);
       }
       loadActivity();
     });
@@ -959,7 +994,7 @@ $("activity-more").addEventListener("click", async () => {
     renderActivity();
     if (more.length < 100) $("activity-more").hidden = true;
   } catch (e) {
-    alert(e.message);
+    toastError(e.message);
   }
 });
 
@@ -970,8 +1005,8 @@ $("activity-more").addEventListener("click", async () => {
 let lastEventId = null;  // Última novedad vista (null hasta el primer sondeo: lo anterior no se avisa)
 
 // Aviso en la esquina: no roba el foco, se cierra solo y se puede cerrar o seguir su acción
-function showToast(title, text, actionText, onAction) {
-  const toast = el("div", "toast");
+function showToast(title, text, actionText, onAction, kind) {
+  const toast = el("div", kind ? `toast ${kind}` : "toast");
   toast.setAttribute("role", "status");
   const body = el("div", "toast-body");
   body.append(el("strong", "", title), el("p", "", text));
@@ -1000,6 +1035,43 @@ function showToast(title, text, actionText, onAction) {
     timer = setTimeout(close, TOAST_MS / 3);
   });
 }
+
+// Aviso de error en la esquina (en lugar de los avisos del navegador)
+function toastError(message) {
+  showToast("No se ha podido completar", message, null, null, "error");
+}
+
+// Confirmación con el estilo de la página (D-044), en lugar de la del navegador: título, explicación y
+// un resumen de lo que se va a hacer. Devuelve una promesa con true si se acepta. Esc o pulsar fuera cancela.
+function confirmDialog({ title, text, facts = [], confirmText = "Aceptar", cancelText = "Cancelar", danger = false }) {
+  const dialog = $("dialog");
+  if (dialog.open) dialog.close("cancel");  // Uno cada vez: el anterior se da por cancelado
+  $("dialog-title").textContent = title;
+  const body = $("dialog-body");
+  body.replaceChildren();
+  if (text) body.append(el("p", "", text));
+  if (facts.length) {
+    const list = el("dl", "dialog-facts");
+    for (const [key, value] of facts) list.append(el("dt", "", key), el("dd", "", value));
+    body.append(list);
+  }
+  const ok = $("dialog-ok");
+  ok.textContent = confirmText;
+  ok.className = danger ? "danger-solid" : "";
+  $("dialog-cancel").textContent = cancelText;
+  dialog.returnValue = "";
+  return new Promise((resolve) => {
+    dialog.addEventListener("close", () => resolve(dialog.returnValue === "ok"), { once: true });
+    dialog.showModal();
+    // En lo que no tiene vuelta atrás, el foco empieza en «Cancelar»
+    (danger ? $("dialog-cancel") : ok).focus();
+  });
+}
+
+// Pulsar fuera del cuadro (en el fondo) es cancelar
+$("dialog").addEventListener("click", (event) => {
+  if (event.target === $("dialog")) $("dialog").close("cancel");
+});
 
 // "el 1x03 (720p)", "los episodios 1x03 y 1x04", "una versión 4K HDR"
 function describeNews(event) {
@@ -1275,17 +1347,23 @@ async function syncChannel(id, button) {
   try {
     await api(`/api/channels/${id}/sync`, { method: "POST" });
   } catch (e) {
-    alert(e.message);
+    toastError(e.message);
   }
   refreshChannels();
 }
 
 async function removeChannel(channel) {
-  if (!confirm(`¿Dejar de vigilar «${channel.title}»? Se borrarán sus mensajes guardados (no los de Telegram).`)) return;
+  const ok = await confirmDialog({
+    title: `Dejar de vigilar «${channel.title}»`,
+    text: "Se borrarán los mensajes que Telegarrm tiene guardados de este canal (no los de Telegram) y sus obras saldrán del catálogo. Lo descargado se queda en la biblioteca.",
+    confirmText: "Dejar de vigilar",
+    danger: true,
+  });
+  if (!ok) return;
   try {
     await api(`/api/channels/${channel.id}`, { method: "DELETE" });
   } catch (e) {
-    alert(e.message);
+    toastError(e.message);
   }
   lastCatalogJson = null;  // El catálogo ha cambiado
   await refreshChannels();
