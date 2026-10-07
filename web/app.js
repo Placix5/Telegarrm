@@ -336,7 +336,10 @@ function seasonActions(releases) {
   for (const [label, episodes] of byVersion) {
     const chosen = [...episodes.values()];
     const size = chosen.reduce((sum, release) => sum + release.size, 0);
-    const button = el("button", "secondary small", `Almacenar en ${label} (${formatSize(size)})`);
+    // "Almacenar en 1080p (12 GB)"; sin calidad conocida, "Almacenar (calidad desconocida, 12 GB)"
+    const text = label.startsWith("Calidad desconocida")
+      ? `Almacenar (${label.toLowerCase()}, ${formatSize(size)})` : `Almacenar en ${label} (${formatSize(size)})`;
+    const button = el("button", "secondary small", text);
     button.addEventListener("click", async () => {
       const pending = chosen.filter((release) => !activeDownload(release));
       if (!pending.length) return;
@@ -387,6 +390,7 @@ async function loadDetail(chatId, anchorId) {
     if (text) badges.append(el("span", "badge", String(text)));
   }
   info.append(title, badges, followControls(item));
+  if (item.library) info.append(seriesBox(item));
   const tmdb = item.tmdb;
   if (tmdb && tmdb.original_title && normalize(tmdb.original_title) !== normalize(item.title)) {
     info.append(el("p", "hint", `Título original: ${tmdb.original_title}`));
@@ -503,6 +507,51 @@ function followControls(item) {
     box.append(el("p", "hint", text));
   };
   render();
+  return box;
+}
+
+// Serie completa (D-040): cuántos episodios se tienen y botón para descargar los que faltan, en la
+// mejor versión de cada uno dentro de la calidad elegida
+function seriesBox(item) {
+  const library = item.library;
+  const box = el("div", "series-box");
+  if (library.owned >= library.episodes) {
+    box.append(el("p", "hint ok", `✓ Tienes los ${plural(library.episodes, "episodio conocido", "episodios conocidos")} (descargados o en cola).`));
+    return box;
+  }
+  const summary = library.owned
+    ? `Tienes ${formatNumber(library.owned)} de ${plural(library.episodes, "episodio conocido", "episodios conocidos")} (descargados o en cola).`
+    : `${plural(library.episodes, "episodio conocido", "episodios conocidos")}; no tienes ninguno.`;
+  const button = el("button", "small", "");
+  const select = qualitySelect(item.follow ? item.follow.max_quality : "", () => update());
+  const update = () => {
+    const missing = library.missing[select.value];
+    button.disabled = !missing.episodes;
+    if (!missing.episodes) {
+      button.textContent = "Los que faltan solo están en más calidad";
+      return;
+    }
+    const size = formatSize(missing.size);
+    if (!library.owned) button.textContent = `Descargar la serie completa (${plural(missing.episodes, "episodio", "episodios")}, ${size})`;
+    else if (missing.episodes === 1) button.textContent = `Descargar el episodio que falta (${size})`;
+    else button.textContent = `Descargar los ${formatNumber(missing.episodes)} episodios que faltan (${size})`;
+  };
+  button.addEventListener("click", async () => {
+    const missing = library.missing[select.value];
+    if (!confirm(`¿Descargar ${plural(missing.episodes, "episodio", "episodios")} (${formatSize(missing.size)})?`)) return;
+    button.disabled = true;
+    try {
+      await api(`/api/catalog/${item.chat_id}/${item.anchor_id}/download`, {
+        method: "POST", body: JSON.stringify({ max_quality: select.value }),
+      });
+    } catch (e) {
+      alert(e.message);
+    }
+    await refreshDownloads();
+    loadDetail(item.chat_id, item.anchor_id);  // Vuelve a contar lo que falta
+  });
+  update();
+  box.append(el("p", "hint", summary), select, button);
   return box;
 }
 

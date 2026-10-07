@@ -12,6 +12,8 @@
 #include <system_error>
 #include <utility>
 
+#include <nlohmann/json.hpp>
+
 #include "media_parser.hpp"
 #include "process.hpp"
 
@@ -253,6 +255,93 @@ std::size_t removeFiles(const std::vector<std::string>& files, const std::vector
     return removed;
 }
 
+std::string findFfprobe() {
+    for (const char* candidate : {"/usr/bin/ffprobe", "/usr/local/bin/ffprobe"}) {
+        if (::access(candidate, X_OK) == 0) {
+            return candidate;
+        }
+    }
+    return "";
+}
+
+std::string qualityFromSize(int width, int height) {
+    if (width <= 0 || height <= 0) {
+        return "";
+    }
+    if (width >= 3200 || height >= 1800) {
+        return "2160p";
+    }
+    if (width >= 1600 || height >= 900) {
+        return "1080p";
+    }
+    if (width >= 1100 || height >= 650) {
+        return "720p";
+    }
+    if (height >= 540) {
+        return "576p";
+    }
+    return height >= 400 ? "480p" : "360p";
+}
+
+std::optional<VideoInfo> parseProbe(const std::string& output) {
+    // La salida puede llevar avisos antes del JSON: se toma de la primera llave a la última
+    const auto begin = output.find('{');
+    const auto end = output.rfind('}');
+    if (begin == std::string::npos || end == std::string::npos || end < begin) {
+        return std::nullopt;
+    }
+    const nlohmann::json doc = nlohmann::json::parse(output.substr(begin, end - begin + 1), nullptr, false);
+    if (!doc.is_object() || !doc.contains("streams") || !doc["streams"].is_array() || doc["streams"].empty() ||
+        !doc["streams"][0].is_object()) {
+        return std::nullopt;
+    }
+    const nlohmann::json& stream = doc["streams"][0];
+    const auto number = [&stream](const char* field) {
+        const auto it = stream.find(field);
+        return it != stream.end() && it->is_number_integer() ? it->get<int>() : 0;
+    };
+    VideoInfo info;
+    info.quality = qualityFromSize(number("width"), number("height"));
+    if (info.quality.empty()) {
+        return std::nullopt;
+    }
+    const auto transfer = stream.find("color_transfer");
+    const std::string colorTransfer = transfer != stream.end() && transfer->is_string() ? transfer->get<std::string>() : "";
+    bool dolbyVision = false;
+    const auto sideData = stream.find("side_data_list");
+    if (sideData != stream.end() && sideData->is_array()) {
+        for (const nlohmann::json& entry : *sideData) {
+            const std::string type = entry.is_object() ? entry.value("side_data_type", "") : "";
+            dolbyVision = dolbyVision || type.find("DOVI") != std::string::npos ||
+                          type.find("Dolby Vision") != std::string::npos;
+        }
+    }
+    if (dolbyVision || colorTransfer == "smpte2084" || colorTransfer == "arib-std-b67") {
+        info.hdr = true;  // HDR10/HDR10+ (PQ), HLG o Dolby Vision
+    } else if (!colorTransfer.empty() && colorTransfer != "unknown") {
+        info.hdr = false;
+    }
+    return info;
+}
+
+std::optional<VideoInfo> probeVideo(const std::string& path, const std::function<bool()>& shouldStop) {
+    static const std::string ffprobe = findFfprobe();
+    if (ffprobe.empty()) {
+        return std::nullopt;
+    }
+    std::error_code ec;
+    // "file:" y la ruta absoluta: ningún nombre se toma por una opción ni por otro protocolo
+    const std::string input = "file:" + fs::absolute(path, ec).string();
+    const process::Result run = process::run({ffprobe, "-v", "error", "-select_streams", "v:0", "-show_entries",
+                                              "stream=width,height,color_transfer:stream_side_data=side_data_type",
+                                              "-of", "json", input},
+                                             nullptr, shouldStop);
+    if (!run.started || run.stopped || run.exitCode != 0) {
+        return std::nullopt;
+    }
+    return parseProbe(run.output);
+}
+
 std::string findSevenZip() {
     for (const char* candidate : {"/usr/bin/7z", "/usr/bin/7zz", "/usr/local/bin/7z", "/usr/local/bin/7zz", "/usr/bin/7za"}) {
         if (::access(candidate, X_OK) == 0) {
@@ -374,11 +463,19 @@ ImportResult importRelease(const ImportRequest& request, const std::function<voi
         return result;
     }
 
-    // 3) Destinos con nombres para Jellyfin
+    // 3) Destinos con nombres para Jellyfin. La resolución y el HDR, los del propio vídeo si ffprobe
+    //    los puede leer (D-039); si no, los del nombre o la ficha.
     const fs::path workDir = root / sanitizeName(workFolderName(request.work));
     std::vector<std::pair<fs::path, fs::path>> moves;
     for (const fs::path& video : videos) {
         const std::string extension = lowerExtension(video);
+        const std::optional<VideoInfo> probed = probeVideo(video.string(), shouldStop);
+        const std::string quality = probed ? probed->quality : request.quality;
+        const bool hdr = probed && probed->hdr ? *probed->hdr : request.hdr;
+        const std::string versionLabel = library::versionLabel(quality, hdr, request.tags);
+        if (probed && fs::file_size(video, ec) == largest) {
+            result.probed = VideoInfo{quality, hdr};
+        }
         fs::path target;
         if (request.kind == "series") {
             auto episode = media::parseEpisode(video.filename().string());
@@ -387,10 +484,10 @@ ImportResult importRelease(const ImportRequest& request, const std::function<voi
             }
             target = episode ? workDir / seasonFolderName(episode->season) /
                                    episodeFileName(request.work, episode->season, episode->episode, episode->episodeEnd,
-                                                   request.versionLabel, extension)
+                                                   versionLabel, extension)
                              : workDir / "extras" / sanitizeName(video.filename().string());
         } else {
-            target = videos.size() == 1 ? workDir / movieFileName(request.work, request.versionLabel, extension)
+            target = videos.size() == 1 ? workDir / movieFileName(request.work, versionLabel, extension)
                                         : workDir / sanitizeName(video.filename().string());
         }
         moves.emplace_back(video, target);

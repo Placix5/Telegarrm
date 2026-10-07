@@ -4,9 +4,11 @@
 #include <condition_variable>
 #include <cstdint>
 #include <functional>
+#include <map>
 #include <mutex>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 #include "catalog.hpp"
@@ -63,6 +65,22 @@ struct Plan {
 // descarga (aunque fallara o se cancelara) o si el seguimiento ya lo puso en cola: nunca se repite.
 Plan plan(const Catalog::Item& item, const Rule& rule, const std::vector<Owned>& owned,
           const std::function<bool(const Catalog::Release&)>& handled, std::int64_t now);
+
+// Episodios que faltan de una serie (D-040): la mejor versión de cada episodio que no se tiene ni
+// se está bajando, dentro de la calidad máxima y sin 3D. Índices en item.releases, por episodio.
+std::vector<std::size_t> missingEpisodes(const Catalog::Item& item, const std::vector<Owned>& owned,
+                                         const std::string& maxQuality);
+// Episodios distintos de una serie y cuántos se tienen (o se están bajando)
+struct EpisodeCount {
+    int known = 0;
+    int owned = 0;
+};
+EpisodeCount countEpisodes(const Catalog::Item& item, const std::vector<Owned>& owned);
+
+// Versiones que se tienen de cada obra del catálogo (por chat y ficha de la obra), a partir de las
+// descargas en cola, en curso o en la biblioteca
+using OwnedByItem = std::map<std::pair<std::int64_t, std::int64_t>, std::vector<Owned>>;
+OwnedByItem ownedByItem(const Catalog& catalog, const std::vector<DbManager::Download>& downloads);
 
 // Obra del catálogo de cada seguimiento: por cualquiera de sus fichas; si no, por TMDB o por la
 // clave de obra (si el catálogo cambia la ficha principal). item es nullptr si ya no está.

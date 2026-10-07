@@ -27,11 +27,21 @@ struct ImportRequest {
     int season = 0;                     // Episodio del archivo lógico (0 = sin episodio)
     int episode = 0;
     int episodeEnd = 0;
-    std::string versionLabel;           // "4K HDR", "1080p REMUX"...; vacío = sin etiqueta
+    // Versión según el nombre o la ficha. La resolución y el HDR los corrige lo que diga el propio
+    // vídeo (ffprobe, D-039); las etiquetas (REMUX...) salen solo del nombre.
+    std::string quality;
+    bool hdr = false;
+    std::vector<std::string> tags;
     bool archive = false;               // Hay que descomprimir
     std::vector<std::string> parts;     // Rutas locales, en orden (la primera abre el comprimido)
     std::string libraryRoot;            // Biblioteca de películas o de series
     std::int64_t minFreeBytes = 0;      // Espacio que debe quedar libre tras descomprimir
+};
+
+// Calidad real de un vídeo, leída con ffprobe (D-039)
+struct VideoInfo {
+    std::string quality;      // "2160p", "1080p"...
+    std::optional<bool> hdr;  // std::nullopt = ffprobe no da información de color
 };
 
 struct ImportResult {
@@ -40,6 +50,7 @@ struct ImportResult {
     std::string error;                  // En castellano
     std::string libraryPath;            // Carpeta de la obra en la biblioteca
     std::vector<std::string> files;     // Archivos colocados
+    std::optional<VideoInfo> probed;    // Calidad real del vídeo principal (el mayor), si se pudo leer
 };
 
 // Descomprime (si hace falta) y coloca los vídeos en la biblioteca. Si todo va bien, borra las
@@ -73,5 +84,14 @@ std::string versionLabel(const std::string& quality, bool hdr, const std::vector
 
 // Ruta de 7-Zip (vacío si no está instalado)
 std::string findSevenZip();
+// Ruta de ffprobe, del paquete ffmpeg (vacío si no está instalado)
+std::string findFfprobe();
+
+// Analiza un vídeo con ffprobe (sin shell). std::nullopt si no está instalado o no lo reconoce.
+std::optional<VideoInfo> probeVideo(const std::string& path, const std::function<bool()>& shouldStop = nullptr);
+// Interpreta la salida JSON de ffprobe (función pura, con tests)
+std::optional<VideoInfo> parseProbe(const std::string& output);
+// "1080p" a partir del tamaño de la imagen; mira también el ancho (1920x800 es 1080p)
+std::string qualityFromSize(int width, int height);
 
 }  // namespace library

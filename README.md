@@ -37,7 +37,7 @@ Detalle y tareas en [docs/ROADMAP.md](docs/ROADMAP.md).
 - Compilador con C++17, CMake >= 3.14, SQLite3 y TDLib >= 1.8.
 - Paquetes en Debian / Raspberry Pi OS:
   ```bash
-  sudo apt install build-essential cmake git libsqlite3-dev gperf zlib1g-dev libssl-dev 7zip 7zip-rar
+  sudo apt install build-essential cmake git libsqlite3-dev gperf zlib1g-dev libssl-dev 7zip 7zip-rar ffmpeg
   ```
 - TDLib (solo la librería JSON compartida) en `~/td/tdlib`, donde CMake lo encuentra automáticamente. En una Raspberry Pi 5 tarda unos 30 minutos:
   ```bash
@@ -101,6 +101,7 @@ Desplegar una versión nueva del programa no necesita `sudo`: `cmake --build bui
 | `GET /api/channels/{id}/topics` | Temas de un grupo con temas, con cuántos mensajes tiene cada uno |
 | `GET /api/catalog` | Obras (series y películas) de todos los canales: título, títulos alternativos, año, versiones disponibles (`qualities`, `hdr`), idiomas, géneros, temas, `airing` (en emisión), `followed` (en seguimiento), temporadas, episodios, tamaño en bytes y datos de TMDB |
 | `GET /api/catalog/{chat}/{ficha}` | Obra completa: sinopsis, ficha original, seguimiento (`follow`) y sus archivos lógicos (`releases`) con calidad, HDR, etiquetas de versión, temporada y episodio, y sus partes. Vale cualquier ficha de la obra |
+| `POST /api/catalog/{chat}/{ficha}/download` | `{"max_quality": ""}`: en una serie, pone en cola los episodios que faltan (la mejor versión de cada uno). Si no se tiene ninguno, la serie completa. 409 si no cabe en la biblioteca. La ficha de una serie trae el resumen en `library` |
 | `GET /api/catalog/{chat}/{ficha}/poster` | Portada: la foto de la ficha (de Telegram) o, si no hay, la carátula de TMDB; se guardan tras la primera vez |
 | `GET /api/downloads` | Cola de descargas con su progreso (`downloaded_size`, `bytes_per_second`, `import_percent`, `library_path`; `status`: queued, downloading, importing, completed —en la biblioteca—, failed, cancelled, replaced —sustituida por una versión mejor—), su origen (`origin`: manual o auto) y las descargas a las que sustituye (`replaces`) |
 | `POST /api/downloads` | `{"chat_id": -100..., "message_id": ...}` (cualquier parte de un archivo del catálogo): 201, o 409 si ya está en la cola o descargado |
@@ -133,7 +134,10 @@ Los pasos del inicio de sesión responden `{"ok": true}`, o `{"error": "..."}` c
 - Mejoras (D-037): una versión con más resolución, HDR o REMUX sustituye a la descargada. La anterior se borra cuando la nueva ya está en la biblioteca, o se conserva si así se elige en *Ajustes*.
 - Pestaña *Actividad*: obras seguidas y el historial de lo que el sistema hace solo. Filtro «En seguimiento» en el catálogo; las descargas automáticas se distinguen en *Descargas*.
 - Migración v7: tablas `follows`, `auto_releases` y `activity`; en `downloads`, origen, seguimiento, sustituciones y archivos colocados. Tests: 343 comprobaciones.
-- Comprobado en la Pi: un episodio nuevo de una serie seguida (860 MB, 20 s) y una mejora de 1080p a 4K HDR que borró la versión anterior.
+- Comprobado en la Pi: un episodio nuevo de una serie seguida (860 MB, 20 s), una mejora de 1080p a 4K HDR que borró la versión anterior y, con un canal de prueba, un episodio subido en directo que se descargó solo unos 30 s después.
+- Calidad real de cada vídeo con `ffprobe` (D-039): manda sobre el nombre y la ficha.
+- «Serie completa» (D-040): en la ficha de una serie, cuántos episodios se tienen y un botón para descargar los que faltan o la serie entera, en la mejor versión de cada uno.
+- Sin ficha, el nombre de la serie se toma del texto que repiten los episodios («1x01 - Ultimate Spiderman.mkv», D-038).
 
 ### Fase 3: descargas e importación a la biblioteca
 - Importación (D-034): al terminar, cada descarga se descomprime si hace falta (7-Zip, sin shell), se eligen los vídeos y subtítulos y se mueven a la biblioteca con nombres para Jellyfin (`Título (Año) [tmdbid-N]/…`, `Season 01/Serie S01E01 - 1080p.mkv`), y se libera el búfer. Comprobado en la Pi con un ZIP (451 MB) y un RAR de 2 partes (1,86 GB, descomprimido en ~20 s); los RAR necesitan el paquete `7zip-rar`.

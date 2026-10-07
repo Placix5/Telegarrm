@@ -145,6 +145,94 @@ Plan plan(const Catalog::Item& item, const Rule& rule, const std::vector<Owned>&
     return result;
 }
 
+namespace {
+
+// Episodios (temporada, episodio) que cubre lo que se tiene
+std::set<std::pair<int, int>> ownedEpisodes(const std::vector<Owned>& owned) {
+    std::set<std::pair<int, int>> episodes;
+    for (const Owned& version : owned) {
+        for (int episode = version.episode; version.episode > 0 && episode <= std::max(version.episode, version.episodeEnd);
+             ++episode) {
+            episodes.emplace(version.season, episode);
+        }
+    }
+    return episodes;
+}
+
+}  // namespace
+
+std::vector<std::size_t> missingEpisodes(const Catalog::Item& item, const std::vector<Owned>& owned,
+                                         const std::string& maxQuality) {
+    std::vector<std::size_t> chosen;
+    if (item.kind != "series") {
+        return chosen;
+    }
+    // La mejor versión que cabe de cada episodio (por su primer episodio si trae varios)
+    std::map<std::pair<int, int>, std::size_t> best;
+    for (std::size_t i = 0; i < item.releases.size(); ++i) {
+        const Release& release = item.releases[i];
+        if (release.episode == 0 || !withinQuality(release.quality, maxQuality) || hasTag(release.tags, "3D")) {
+            continue;
+        }
+        const auto key = std::make_pair(release.season, release.episode);
+        const auto it = best.find(key);
+        if (it == best.end() || versionRank(release.quality, release.hdr, release.tags) >
+                                    versionRank(item.releases[it->second].quality, item.releases[it->second].hdr,
+                                                item.releases[it->second].tags)) {
+            best[key] = i;
+        }
+    }
+    // En orden de temporada y episodio; un archivo con varios episodios (1x01-02) cubre todos los suyos
+    std::set<std::pair<int, int>> covered = ownedEpisodes(owned);
+    for (const auto& [key, index] : best) {
+        if (covered.count(key)) {
+            continue;
+        }
+        const Release& release = item.releases[index];
+        for (int episode = release.episode; episode <= std::max(release.episode, release.episodeEnd); ++episode) {
+            covered.emplace(release.season, episode);
+        }
+        chosen.push_back(index);
+    }
+    return chosen;
+}
+
+EpisodeCount countEpisodes(const Catalog::Item& item, const std::vector<Owned>& owned) {
+    std::set<std::pair<int, int>> known;
+    for (const Release& release : item.releases) {
+        for (int episode = release.episode; release.episode > 0 && episode <= std::max(release.episode, release.episodeEnd);
+             ++episode) {
+            known.emplace(release.season, episode);
+        }
+    }
+    const std::set<std::pair<int, int>> have = ownedEpisodes(owned);
+    EpisodeCount count;
+    count.known = static_cast<int>(known.size());
+    for (const auto& episode : known) {
+        count.owned += have.count(episode) ? 1 : 0;
+    }
+    return count;
+}
+
+OwnedByItem ownedByItem(const Catalog& catalog, const std::vector<DbManager::Download>& downloads) {
+    static const std::set<std::string> kOwnedStatuses = {"queued", "downloading", "importing", "completed"};
+    OwnedByItem result;
+    for (const DbManager::Download& download : downloads) {
+        if (!kOwnedStatuses.count(download.status)) {
+            continue;
+        }
+        const auto ref = catalog.findRelease(download.chatId, download.messageId);
+        if (!ref) {
+            continue;
+        }
+        result[{ref->item->chatId, ref->item->anchorMessageId}].push_back(
+            {download.id, download.status, versionRank(download.quality, download.hdr, download.tags),
+             library::versionLabel(download.quality, download.hdr, download.tags), download.season, download.episode,
+             download.episodeEnd});
+    }
+    return result;
+}
+
 std::vector<FollowMatch> matchFollows(const std::vector<Catalog::ItemPtr>& items,
                                       const std::vector<DbManager::Follow>& follows, const MetadataService& metadata) {
     std::map<std::pair<std::int64_t, std::int64_t>, Catalog::ItemPtr> byBlock;
@@ -206,8 +294,6 @@ namespace {
 // Revisión periódica: más frecuente mientras haya archivos a medio publicar
 constexpr auto kWaitingInterval = std::chrono::minutes(5);
 constexpr auto kIdleInterval = std::chrono::minutes(30);
-
-const std::set<std::string> kOwnedStatuses = {"queued", "downloading", "importing", "completed"};
 
 std::int64_t nowSeconds() {
     return static_cast<std::int64_t>(std::time(nullptr));
@@ -300,20 +386,7 @@ bool Tracker::evaluate() {
     };
 
     // Versiones que se tienen de cada obra (por su identificador en el catálogo)
-    std::map<std::pair<std::int64_t, std::int64_t>, std::vector<tracking::Owned>> ownedByItem;
-    for (const DbManager::Download& download : downloads) {
-        if (!kOwnedStatuses.count(download.status)) {
-            continue;
-        }
-        const auto ref = catalog_.findRelease(download.chatId, download.messageId);
-        if (!ref) {
-            continue;
-        }
-        ownedByItem[{ref->item->chatId, ref->item->anchorMessageId}].push_back(
-            {download.id, download.status, tracking::versionRank(download.quality, download.hdr, download.tags),
-             library::versionLabel(download.quality, download.hdr, download.tags), download.season, download.episode,
-             download.episodeEnd});
-    }
+    const tracking::OwnedByItem ownedByItem = tracking::ownedByItem(catalog_, downloads);
 
     bool waiting = false;
     const std::int64_t now = nowSeconds();

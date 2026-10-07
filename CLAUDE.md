@@ -25,7 +25,7 @@ El proyecto anterior (CLI) está en `~/TelegramDownloader`: de ahí se migran el
 7.  **Localización**: unidades del SI (kB/MB/GB, MB/s, base 1000), fechas `dd/mm/aaaa`, hora `Europe/Madrid`.
 
 ## Comandos de Proyecto
-*   **Dependencias** (Debian / Raspberry Pi OS): `sudo apt install build-essential cmake libsqlite3-dev gperf zlib1g-dev libssl-dev 7zip 7zip-rar`, más TDLib compilado en `~/td/tdlib` (ver README). 7-Zip lo usa la importación a la biblioteca; `7zip-rar` añade el códec de RAR.
+*   **Dependencias** (Debian / Raspberry Pi OS): `sudo apt install build-essential cmake libsqlite3-dev gperf zlib1g-dev libssl-dev 7zip 7zip-rar ffmpeg`, más TDLib compilado en `~/td/tdlib` (ver README). 7-Zip lo usa la importación a la biblioteca (`7zip-rar` añade el códec de RAR); `ffprobe` (de `ffmpeg`) lee la calidad real de cada vídeo.
 *   **Compilar**: `cmake -S . -B build && cmake --build build`
 *   **Tests**: `ctest --test-dir build` (parser y catálogo, con casos reales en `tests/parser_tests.cpp`). Cada formato nuevo de canal que se descubra se añade como caso de test.
 *   **Ejecutar**: `TELEGARRM_API_ID=... TELEGARRM_API_HASH=... [TELEGARRM_TMDB_TOKEN=...] ./build/telegarrm` desde la raíz del proyecto: las rutas `db/` y `web/` son relativas al directorio actual.

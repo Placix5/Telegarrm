@@ -185,6 +185,7 @@ void DownloadManager::run() {
     if (const int requeued = db_.requeueInterruptedDownloads()) {
         std::cout << "[Descargas] " << requeued << " descargas interrumpidas vuelven a la cola" << std::endl;
     }
+    probeCompletedDownloads();
 
     while (!stopping()) {
         if (!telegramReady()) {
@@ -415,7 +416,9 @@ DownloadManager::Outcome DownloadManager::importToLibrary(DbManager::Download& d
     request.season = download.season;
     request.episode = download.episode;
     request.episodeEnd = download.episodeEnd;
-    request.versionLabel = library::versionLabel(download.quality, download.hdr, download.tags);
+    request.quality = download.quality;
+    request.hdr = download.hdr;
+    request.tags = download.tags;
     request.archive = download.archive;
     for (const DbManager::DownloadPart& part : download.parts) {
         request.parts.push_back(part.localPath);
@@ -449,7 +452,53 @@ DownloadManager::Outcome DownloadManager::importToLibrary(DbManager::Download& d
     download.libraryPath = result.libraryPath;
     download.libraryFiles = result.files;
     db_.setDownloadLibrary(download.id, result.libraryPath, result.files);
+    // La calidad real del vídeo manda sobre la del nombre (D-039): es la que compara el seguimiento
+    if (result.probed && (result.probed->quality != download.quality || result.probed->hdr != download.hdr)) {
+        std::cout << "[Descargas] #" << download.id << ": el vídeo es "
+                  << library::versionLabel(result.probed->quality, result.probed->hdr.value_or(false), {})
+                  << " (el nombre decía " << (download.quality.empty() ? "nada" : download.quality) << ")" << std::endl;
+        download.quality = result.probed->quality;
+        download.hdr = result.probed->hdr.value_or(download.hdr);
+        db_.setDownloadQuality(download.id, download.quality, download.hdr);
+    }
     return Outcome::Completed;
+}
+
+void DownloadManager::probeCompletedDownloads() {
+    // Una vez (D-039): las descargas importadas antes de leer la calidad del propio vídeo
+    constexpr const char* kSetting = "quality_probe_version";
+    if (db_.getSetting(kSetting).value_or("") == "1" || library::findFfprobe().empty()) {
+        return;
+    }
+    int corrected = 0;
+    for (const DbManager::Download& download : db_.listDownloads()) {
+        if (stopping()) {
+            return;  // Se termina en el siguiente arranque
+        }
+        if ((download.status != "completed" && download.status != "replaced") || download.libraryFiles.empty()) {
+            continue;
+        }
+        // El vídeo principal: el primero que exista de los colocados (los subtítulos no se reconocen)
+        for (const std::string& file : download.libraryFiles) {
+            const auto probed = library::probeVideo(file, [this] { return stopping(); });
+            if (!probed) {
+                continue;
+            }
+            const bool hdr = probed->hdr.value_or(download.hdr);
+            if (probed->quality != download.quality || hdr != download.hdr) {
+                db_.setDownloadQuality(download.id, probed->quality, hdr);
+                std::cout << "[Descargas] #" << download.id << " (" << download.name << "): el vídeo es "
+                          << library::versionLabel(probed->quality, hdr, {}) << ", no "
+                          << (download.quality.empty() ? "calidad desconocida" : download.quality) << std::endl;
+                ++corrected;
+            }
+            break;
+        }
+    }
+    db_.setSetting(kSetting, "1");
+    if (corrected > 0) {
+        std::cout << "[Descargas] Calidad corregida en " << corrected << " descargas según el propio vídeo" << std::endl;
+    }
 }
 
 std::string DownloadManager::replaceOlder(const DbManager::Download& download) {

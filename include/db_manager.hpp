@@ -222,6 +222,8 @@ public:
     // Carpeta de la obra y archivos colocados en la biblioteca
     bool setDownloadLibrary(std::int64_t id, const std::string& libraryPath, const std::vector<std::string>& files);
     bool deleteDownload(std::int64_t id);
+    // Calidad real del vídeo (ffprobe, D-039)
+    bool setDownloadQuality(std::int64_t id, const std::string& quality, bool hdr);
 
     // Seguimiento
     std::optional<std::int64_t> addFollow(const Follow& follow);

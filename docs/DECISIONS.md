@@ -495,3 +495,31 @@ Formato: **Contexto** (qué problema había), **Decisión**, **Alternativas desc
 - **Contexto**: Plácido creó el canal «Prueba Claude» para probar el seguimiento y subió `1x01 - Ultimate Spiderman.mkv`, sin ficha. En el formato `1x01 - Texto`, el texto tras el marcador puede ser la serie o el título del episodio. Sin ficha ni nombre de serie en el fichero, el catálogo usaba el nombre del canal: la serie se llamaba «Prueba Claude» y TMDB no la encontraba. En el canal original funcionaba porque había ficha y el canal se llamaba como la serie.
 - **Decisión**: sin ficha ni nombre de serie en los ficheros, si el texto tras el marcador se repite en más de la mitad de los episodios, y como mínimo en dos, es el nombre de la serie. Si el canal se llama igual, se queda el título del canal, que suele estar mejor escrito («Spider-Man»). Con un solo episodio no se puede saber y sigue mandando el canal.
 - **Consecuencias**: la obra no cambia de identidad al cambiar de nombre (la identifica su primer archivo), así que un seguimiento hecho antes de que llegue el segundo episodio sigue funcionando y su título se actualiza solo.
+
+## D-039: Calidad real del vídeo con ffprobe
+*07/10/2026 · Fase 4*
+
+- **Contexto**: la calidad salía solo del nombre del fichero o de la ficha. Los dos episodios de *Ultimate Spider-Man* de la biblioteca resultaron ser 720p (1280×720). El 1x01 se había importado como «1080p» porque así lo decía la ficha del canal original, y el 1x02 como «calidad desconocida». Para el seguimiento (D-035) «desconocida» es la peor calidad, así que un 720p publicado después habría pasado por mejora.
+- **Decisión**:
+  - Al importar, cada vídeo se analiza con `ffprobe` (paquete `ffmpeg`), lanzado sin shell (D-018). Se usan el ancho y el alto del primer flujo de vídeo y su transferencia de color.
+  - **Resolución**: se mira también el ancho, por las películas panorámicas (1920×800 es 1080p). 2160p desde 3200 de ancho o 1800 de alto; 1080p desde 1600 o 900; 720p desde 1100 o 650; después 576p, 480p y 360p.
+  - **HDR**: transferencia PQ (`smpte2084`) o HLG (`arib-std-b67`), o metadatos de Dolby Vision. Si ffprobe no da información de color, se mantiene lo que diga el nombre.
+  - Lo que diga el archivo manda sobre el nombre y la ficha. Se usa para el nombre en la biblioteca («- 720p») y se guarda en la descarga, que es lo que compara el seguimiento. Las etiquetas (REMUX, Extendida…) siguen saliendo del nombre.
+  - Las descargas ya terminadas se analizan una vez al arrancar (ajuste `quality_probe_version`) para corregir su calidad en la BD. Sus archivos no se renombran.
+  - Sin `ffprobe`, todo sigue como antes (calidad del nombre).
+- **Descartado**: `mediainfo`, que añade otra dependencia. `ffprobe` ya viene con `ffmpeg`, que Plácido instaló el 07/10/2026.
+- **Verificación**:
+  - Tests con salidas reales de ffprobe (720p, 4K PQ, Dolby Vision, archivo roto) y una importación con un vídeo de 1280×720 generado con `ffmpeg` y llamado «1080p»: queda como `S01E02 - 720p.mkv`.
+  - En la Pi, al arrancar se corrigieron los dos episodios de *Ultimate Spider-Man* (720p). El resto (1080p, 4K HDR) ya era correcto.
+  - Cada análisis tarda unos 0,1 s y funciona dentro del aislamiento de systemd.
+
+## D-040: Descargar los episodios que faltan (o la serie completa)
+*07/10/2026 · Fase 4*
+
+- **Contexto**: Plácido quiere saber si tiene todos los episodios de una serie y, si no, descargar los que faltan de una vez, sin ir temporada por temporada. También pidió un botón de serie completa.
+- **Decisión**:
+  - Son el mismo botón. En la ficha de una serie, el recuadro «Serie completa» dice cuántos episodios conocidos hay descargados o en cola y ofrece «Descargar los N que faltan». Si no se tiene ninguno, el botón dice «Descargar la serie completa».
+  - Por cada episodio que falta se elige su mejor versión dentro de la calidad elegida (la del seguimiento si se sigue la serie) y sin 3D. Un archivo con varios episodios (1x01-02) cubre todos los que trae.
+  - Un episodio cuenta como «tenido» si alguna de sus versiones está en cola, descargándose, importándose o en la biblioteca. Una descarga fallida o cancelada no cuenta.
+  - Lo elige el servidor (`POST /api/catalog/{chat}/{ficha}/download`) con la misma lógica que el seguimiento (`tracking::missingEpisodes`), probada con tests. Antes comprueba que caben en la biblioteca de series con el margen de *Ajustes*.
+- **Verificación**: en la Pi, la serie de prueba muestra «Tienes 1 de 2 episodios conocidos» y el botón para el que falta. Westworld (35 episodios, 143 GB) se rechaza porque no cabe en los 101 GB libres, sin poner nada en cola.

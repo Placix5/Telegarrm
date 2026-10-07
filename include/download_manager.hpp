@@ -65,6 +65,8 @@ private:
     // Tras importar una versión mejor: borra (o conserva) las que sustituye. Devuelve el texto para
     // el historial; vacío si no había nada que sustituir.
     std::string replaceOlder(const DbManager::Download& download);
+    // Corrige con ffprobe la calidad de las descargas importadas antes de D-039 (una sola vez)
+    void probeCompletedDownloads();
     // Historial de las descargas automáticas y de las sustituciones
     void logOutcome(const DbManager::Download& download, Outcome outcome, const std::string& error);
     bool telegramReady() const;

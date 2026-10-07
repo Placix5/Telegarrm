@@ -801,7 +801,7 @@ void testLibraryImport() {
     movie.id = 1;
     movie.kind = "movie";
     movie.work = {"Batman: El regreso", 2012, 123};
-    movie.versionLabel = "1080p";
+    movie.quality = "1080p";
     movie.parts = {(buffer / "documents" / "Peli.Original.1080p.mkv").string()};
     movie.libraryRoot = movies.string();
     const library::ImportResult moved = library::importRelease(movie, nullptr, nullptr);
@@ -1192,6 +1192,116 @@ void testRemoveReplacedFiles() {
     fs::remove_all(base);
 }
 
+
+void testVideoQuality() {
+    CHECK_EQ(library::qualityFromSize(3840, 2160), "2160p");
+    CHECK_EQ(library::qualityFromSize(3840, 1600), "2160p");  // Panorámica
+    CHECK_EQ(library::qualityFromSize(1920, 1080), "1080p");
+    CHECK_EQ(library::qualityFromSize(1920, 800), "1080p");
+    CHECK_EQ(library::qualityFromSize(1280, 720), "720p");
+    CHECK_EQ(library::qualityFromSize(1280, 534), "720p");
+    CHECK_EQ(library::qualityFromSize(720, 576), "576p");
+    CHECK_EQ(library::qualityFromSize(720, 480), "480p");
+    CHECK_EQ(library::qualityFromSize(640, 360), "360p");
+    CHECK_EQ(library::qualityFromSize(0, 0), "");
+
+    // Salidas reales de ffprobe en la Pi (07/10/2026)
+    const auto spiderMan = library::parseProbe(
+        R"({"programs":[],"stream_groups":[],"streams":[{"codec_name":"h264","width":1280,"height":720}]})");
+    CHECK(spiderMan && spiderMan->quality == "720p" && !spiderMan->hdr);
+    const auto muppets = library::parseProbe(
+        R"({"streams":[{"codec_name":"hevc","width":3840,"height":2160,"color_space":"bt2020nc",)"
+        R"("color_transfer":"smpte2084","color_primaries":"bt2020"}]})");
+    CHECK(muppets && muppets->quality == "2160p" && muppets->hdr == std::optional<bool>(true));
+    const auto sdr = library::parseProbe(R"({"streams":[{"width":1920,"height":1080,"color_transfer":"bt709"}]})");
+    CHECK(sdr && sdr->hdr == std::optional<bool>(false));
+    const auto dolby = library::parseProbe(
+        R"({"streams":[{"width":3840,"height":2160,"side_data_list":[{"side_data_type":"DOVI configuration record"}]}]})");
+    CHECK(dolby && dolby->hdr == std::optional<bool>(true));
+    // Avisos antes del JSON, archivo no reconocido y salida rota
+    CHECK(library::parseProbe("[mkv] aviso\n{\"streams\":[{\"width\":1280,\"height\":720}]}").has_value());
+    CHECK(!library::parseProbe("roto.mkv: Invalid data found when processing input\n{}"));
+    CHECK(!library::parseProbe("{\"streams\":[{\"width\":"));
+}
+
+void testLibraryProbe() {
+    namespace fs = std::filesystem;
+    const char* ffmpeg = "/usr/bin/ffmpeg";
+    if (library::findFfprobe().empty() || ::access(ffmpeg, X_OK) != 0) {
+        std::cout << "(ffmpeg no está instalado: se omite la prueba con vídeos reales)" << std::endl;
+        return;
+    }
+    const fs::path base = fs::temp_directory_path() / ("telegarrm_probe_" + std::to_string(::getpid()));
+    fs::remove_all(base);
+    fs::create_directories(base / "descargas");
+    fs::create_directories(base / "series");
+    // Un fotograma de 1280x720, aunque el nombre y la ficha digan 1080p
+    const fs::path video = base / "descargas" / "1x02 - Ultimate Spiderman 1080p.mkv";
+    const process::Result made = process::run({ffmpeg, "-v", "error", "-y", "-f", "lavfi", "-i",
+                                               "color=c=black:s=1280x720:d=0.04", "-frames:v", "1", "-c:v", "ffv1",
+                                               video.string()},
+                                              nullptr, nullptr);
+    CHECK(made.started && made.exitCode == 0);
+    const auto probed = library::probeVideo(video.string());
+    CHECK(probed && probed->quality == "720p");
+
+    library::ImportRequest request;
+    request.id = 2;
+    request.kind = "series";
+    request.work = {"Ultimate Spider-Man", 2012, 34391};
+    request.season = 1;
+    request.episode = 2;
+    request.quality = "1080p";
+    request.parts = {video.string()};
+    request.libraryRoot = (base / "series").string();
+    const library::ImportResult result = library::importRelease(request, nullptr, nullptr);
+    CHECK(result.ok);
+    CHECK(result.probed && result.probed->quality == "720p");
+    CHECK(fs::exists(base / "series" / "Ultimate Spider-Man (2012) [tmdbid-34391]" / "Season 01" /
+                     "Ultimate Spider-Man S01E02 - 720p.mkv"));
+    fs::remove_all(base);
+}
+
+void testMissingEpisodes() {
+    const std::vector<Message> messages = {
+        video(1, "Mi Serie 1x01 1080p.mkv", 1000),
+        video(2, "Mi Serie 1x01 4K.mkv", 4000),
+        video(3, "Mi Serie 1x02 1080p.mkv", 1000),
+        video(4, "Mi Serie 1x03-04 1080p.mkv", 2000),
+        video(5, "Mi Serie 1x04 720p.mkv", 500),
+        video(6, "Mi Serie 2x01 4K 3D.mkv", 5000),
+        video(7, "Mi Serie 2x01 1080p.mkv", 1000),
+    };
+    const auto items = build(-400, "Canal", messages);
+    CHECK_EQ(static_cast<int>(items.size()), 1);
+    if (items.size() != 1) {
+        return;
+    }
+    const Catalog::Item& item = items[0];
+    const auto firstParts = [&item](const std::vector<std::size_t>& chosen) {
+        std::vector<std::int64_t> ids;
+        for (const std::size_t index : chosen) {
+            ids.push_back(item.releases[index].parts.front().messageId);
+        }
+        return ids;
+    };
+
+    // Sin nada descargado: la serie completa, la mejor versión de cada episodio. El 1x03-04 cubre el
+    // 1x04 y el 3D nunca se elige solo
+    CHECK(firstParts(tracking::missingEpisodes(item, {}, "")) == (std::vector<std::int64_t>{2, 3, 4, 7}));
+    // Hasta 1080p
+    CHECK(firstParts(tracking::missingEpisodes(item, {}, "1080p")) == (std::vector<std::int64_t>{1, 3, 4, 7}));
+    // Con el 1x02 en la biblioteca y el 1x01 en cola (en cualquier versión) solo faltan los demás
+    const std::vector<tracking::Owned> owned = {{10, "completed", 20, "1080p", 1, 2, 0}, {11, "queued", 20, "1080p", 1, 1, 0}};
+    CHECK(firstParts(tracking::missingEpisodes(item, owned, "")) == (std::vector<std::int64_t>{4, 7}));
+    const tracking::EpisodeCount count = tracking::countEpisodes(item, owned);
+    CHECK_EQ(count.known, 5);
+    CHECK_EQ(count.owned, 2);
+    // Las películas no tienen episodios
+    const auto movies = build(-400, "Canal", {video(1, "Peli (2020) 1080p.mkv", 1000)});
+    CHECK(movies.size() == 1 && tracking::missingEpisodes(movies[0], {}, "").empty());
+}
+
 int main() {
     testEpisodes();
     testFichas();
@@ -1221,6 +1331,9 @@ int main() {
     testFollowsDatabase();
     testFollowMatching();
     testRemoveReplacedFiles();
+    testVideoQuality();
+    testLibraryProbe();
+    testMissingEpisodes();
 
     std::cout << (checks - failures) << "/" << checks << " comprobaciones correctas" << std::endl;
     return failures == 0 ? 0 : 1;

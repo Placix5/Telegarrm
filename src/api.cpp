@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdint>
+#include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
@@ -294,9 +295,29 @@ Json itemSummaryJson(const Catalog::Item& item, const InfoPtr& info, const DbMan
             {"followed", follow != nullptr}};
 }
 
-Json itemDetailJson(const Catalog::Item& item, const InfoPtr& info, const DbManager::Follow* follow) {
+// Series: episodios conocidos, cuántos se tienen y qué falta por cada calidad máxima (D-040)
+Json seriesLibraryJson(const Catalog::Item& item, const std::vector<tracking::Owned>& owned) {
+    const tracking::EpisodeCount count = tracking::countEpisodes(item, owned);
+    Json missing = Json::object();
+    for (const std::string& maxQuality : kMaxQualities) {
+        int episodes = 0;
+        std::int64_t size = 0;
+        const std::vector<std::size_t> chosen = tracking::missingEpisodes(item, owned, maxQuality);
+        for (const std::size_t index : chosen) {
+            const Catalog::Release& release = item.releases[index];
+            episodes += std::max(release.episode, release.episodeEnd) - release.episode + 1;
+            size += release.size;
+        }
+        missing[maxQuality] = {{"episodes", episodes}, {"files", chosen.size()}, {"size", size}};
+    }
+    return {{"episodes", count.known}, {"owned", count.owned}, {"missing", missing}};
+}
+
+Json itemDetailJson(const Catalog::Item& item, const InfoPtr& info, const DbManager::Follow* follow,
+                    const std::vector<tracking::Owned>& owned) {
     Json detail = itemSummaryJson(item, info, follow);
     detail["follow"] = follow ? followJson(*follow) : Json(nullptr);
+    detail["library"] = item.kind == "series" ? seriesLibraryJson(item, owned) : Json(nullptr);
     detail["synopsis"] = item.synopsis;           // De la ficha de Telegram
     detail["overview"] = info ? info->overview : "";  // De TMDB
     detail["description"] = item.description;
@@ -403,7 +424,10 @@ void registerCatalogRoutes(httplib::Server& server, DbManager& db, TelegramClien
             return;
         }
         const FollowIndex follows = followIndex(db, catalog.items(), metadata);
-        sendJson(res, 200, itemDetailJson(*item, metadata.lookup(*item), findFollow(follows, *item)));
+        const tracking::OwnedByItem owned = tracking::ownedByItem(catalog, db.listDownloads());
+        const auto itemOwned = owned.find({item->chatId, item->anchorMessageId});
+        sendJson(res, 200, itemDetailJson(*item, metadata.lookup(*item), findFollow(follows, *item),
+                                          itemOwned != owned.end() ? itemOwned->second : std::vector<tracking::Owned>{}));
     });
 
     // Portada: la foto de la ficha (TDLib la descarga la primera vez y la guarda en su caché). Si la
@@ -745,8 +769,76 @@ std::optional<std::string> maxQualityFrom(const Json& body, httplib::Response& r
     return value.get<std::string>();
 }
 
+std::string formatGigabytes(std::int64_t bytes) {
+    char buffer[32];
+    std::snprintf(buffer, sizeof(buffer), "%.1f GB", static_cast<double>(bytes) / 1e9);
+    std::string text = buffer;
+    std::replace(text.begin(), text.end(), '.', ',');
+    return text;
+}
+
 void registerFollowRoutes(httplib::Server& server, DbManager& db, Catalog& catalog, MetadataService& metadata,
-                          Tracker& tracker) {
+                          Tracker& tracker, DownloadManager& downloads) {
+    // Descargar los episodios que faltan de una serie (o la serie completa si no se tiene ninguno):
+    // {"max_quality": ""}. La mejor versión de cada episodio que no está ya en cola ni descargado (D-040).
+    server.Post(R"(/api/catalog/(-?\d+)/(\d+)/download)", [&db, &catalog, &downloads](const httplib::Request& req,
+                                                                                    httplib::Response& res) {
+        const Json body = req.body.empty() ? Json::object() : Json::parse(req.body, nullptr, false);
+        if (!body.is_object()) {
+            sendError(res, 400, "El cuerpo debe ser un objeto JSON");
+            return;
+        }
+        const auto maxQuality = maxQualityFrom(body, res);
+        if (!maxQuality) {
+            return;
+        }
+        const auto chatId = parseId(req.matches[1].str());
+        const auto anchorId = parseId(req.matches[2].str());
+        const auto item = (chatId && anchorId) ? catalog.find(*chatId, *anchorId) : nullptr;
+        if (!item || item->kind != "series") {
+            sendError(res, 404, "Serie no encontrada en el catálogo");
+            return;
+        }
+        const tracking::OwnedByItem owned = tracking::ownedByItem(catalog, db.listDownloads());
+        const auto itemOwned = owned.find({item->chatId, item->anchorMessageId});
+        const std::vector<std::size_t> chosen = tracking::missingEpisodes(
+            *item, itemOwned != owned.end() ? itemOwned->second : std::vector<tracking::Owned>{}, *maxQuality);
+        std::int64_t total = 0;
+        for (const std::size_t index : chosen) {
+            total += item->releases[index].size;
+        }
+        if (chosen.empty()) {
+            sendJson(res, 200, {{"queued", 0}, {"size", 0}});
+            return;
+        }
+
+        // Que quepa en la biblioteca de series con el margen de los ajustes (se importan de una en una)
+        const AppSettings settings = loadSettings(db);
+        if (settings.seriesDir.empty()) {
+            sendError(res, 409, "Define la biblioteca de series en Ajustes");
+            return;
+        }
+        const PathCheck library = checkPath(settings.seriesDir);
+        if (library.ok && library.freeBytes < total + settings.minFreeBytes) {
+            sendError(res, 409, "No cabe en la biblioteca de series: hacen falta " + formatGigabytes(total) + " (más " +
+                                    formatGigabytes(settings.minFreeBytes) + " de margen) y quedan " +
+                                    formatGigabytes(library.freeBytes));
+            return;
+        }
+
+        int queued = 0;
+        std::int64_t size = 0;
+        for (const std::size_t index : chosen) {
+            const Catalog::Release& release = item->releases[index];
+            if (db.addDownload(makeDownload(*item, release)).ok) {
+                ++queued;
+                size += release.size;
+            }
+        }
+        downloads.wake();
+        sendJson(res, 201, {{"queued", queued}, {"size", size}});
+    });
+
     // Obras seguidas, con la obra del catálogo que les corresponde ahora
     server.Get("/api/follows", [&db, &catalog, &metadata](const httplib::Request&, httplib::Response& res) {
         Json result = Json::array();
@@ -999,6 +1091,6 @@ void registerApiRoutes(httplib::Server& server, const ApiServices& services) {
     registerChannelRoutes(server, services.db, services.telegram, services.sync, services.catalog);
     registerCatalogRoutes(server, services.db, services.telegram, services.catalog, services.metadata, services.tmdb);
     registerDownloadRoutes(server, services.db, services.catalog, services.downloads);
-    registerFollowRoutes(server, services.db, services.catalog, services.metadata, services.tracker);
+    registerFollowRoutes(server, services.db, services.catalog, services.metadata, services.tracker, services.downloads);
     registerSettingsRoutes(server, services.db, services);
 }

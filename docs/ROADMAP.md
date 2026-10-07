@@ -57,7 +57,8 @@ Formato real visto: canales de una serie con una ficha (foto + pie con título, 
 - [x] **Historial de actividad** (tabla `activity`) y pestaña *Actividad* con lo que se sigue. Filtro «En seguimiento» en el catálogo.
 - [x] Comprobado en la Pi con un episodio nuevo (*Presidente Curtis* 1x09) y con una mejora de 1080p a 4K HDR (*El show de los Muppets*).
 - [x] Tiempo real comprobado con el canal de prueba de Plácido. Se subió el 1x02 de *Ultimate Spider-Man* a una serie seguida: aviso al instante, lectura 20 s después, catálogo y seguimiento al momento, y el episodio en la biblioteca unos 10 s más tarde (D-036, D-038).
-- [ ] Calidad real del vídeo al importar (`ffprobe`). Si el nombre no la dice, la versión queda como «calidad desconocida», que cuenta como la peor: un 720p publicado después se tomaría por una mejora.
+- [x] **Calidad real del vídeo** al importar, con `ffprobe` (D-039): resolución y HDR del propio archivo, que mandan sobre el nombre y la ficha. Las descargas anteriores se corrigieron al arrancar: los dos episodios de *Ultimate Spider-Man* eran 720p, no 1080p ni «calidad desconocida».
+- [x] **Episodios que faltan / serie completa** (D-040): en la ficha de una serie, cuántos episodios conocidos se tienen y un botón para descargar los que faltan (o la serie entera), con la mejor versión de cada uno dentro de la calidad elegida. Comprueba antes que caben en la biblioteca.
 - Ideas para después: notificaciones (Telegram o correo) de lo descargado; vigilar ediciones y borrados de mensajes (`updateMessageContent`, `updateDeleteMessages`); seguir una obra antes de que esté en el catálogo.
 
 ## Transversal (antes de exponer la web fuera de la red local)

@@ -1162,6 +1162,25 @@ bool DbManager::setDownloadLibrary(std::int64_t id, const std::string& libraryPa
     return true;
 }
 
+bool DbManager::setDownloadQuality(std::int64_t id, const std::string& quality, bool hdr) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!db_) {
+        return false;
+    }
+    StmtPtr stmt = prepare(db_.get(), "UPDATE downloads SET quality = ?2, hdr = ?3 WHERE id = ?1;");
+    if (!stmt) {
+        return false;
+    }
+    sqlite3_bind_int64(stmt.get(), 1, id);
+    bindText(stmt.get(), 2, quality);
+    sqlite3_bind_int(stmt.get(), 3, hdr ? 1 : 0);
+    if (sqlite3_step(stmt.get()) != SQLITE_DONE) {
+        logError(db_.get(), "guardar la calidad de la descarga");
+        return false;
+    }
+    return sqlite3_changes(db_.get()) > 0;
+}
+
 // --- Seguimiento ---
 
 namespace {

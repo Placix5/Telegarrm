@@ -90,6 +90,9 @@ form > button { margin-top: 0.8rem; }
 .follow-box { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; margin-bottom: 0.8rem; }
 .follow-box select { width: auto; padding-top: 0.3rem; padding-bottom: 0.3rem; font-size: 0.9rem; }
 .follow-box .hint { flex-basis: 100%; margin: 0; }
+.series-box { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; margin-bottom: 0.8rem; }
+.series-box .hint { flex-basis: 100%; margin: 0; }
+.series-box select { width: auto; padding-top: 0.3rem; padding-bottom: 0.3rem; font-size: 0.9rem; }
 .synopsis { margin: 0.6rem 0 0.8rem; }
 .versions { display: flex; flex-wrap: wrap; gap: 0.35rem; }
 .version { padding: 0.1rem 0.55rem; border: 1px solid var(--border); border-radius: 0.4rem; font-size: 0.85rem;
