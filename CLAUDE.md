@@ -34,12 +34,14 @@ La arquitectura (hilos, flujo de datos, tablas y módulos) está en `docs/01_arc
 *   **Ejecutar**: `TELEGARRM_API_ID=... TELEGARRM_API_HASH=... [TELEGARRM_TMDB_TOKEN=...] ./build/telegarrm` desde la raíz del proyecto: las rutas `db/` y `web/` son relativas al directorio actual.
 *   **En la Pi corre como servicio de sistema** (`telegarrm.service`). Desplegar: `cmake --build build && systemctl restart telegarrm` (sin sudo, por la regla de polkit). Antes, mira en `/api/downloads` que no haya nada descargándose o importándose: se reanuda, pero la importación se repite. Logs: `journalctl -u telegarrm`. Las pruebas de arranque y de errores, en otro directorio de trabajo con credenciales falsas, para no tocar la sesión real.
 *   **La web** (`web/`) se sirve tal cual: un cambio se ve al recargar la página, sin recompilar ni reiniciar. Valida `app.js` como ES2017 (sin `??` ni `{...obj}`). Para verla, la extensión Claude in Chrome en `http://plax.local:8080`: abre una pestaña propia y ciérrala al terminar.
+*   **Probar el móvil**: la ventana de Chrome no se puede redimensionar. Carga la web en un `<iframe>` de 390×844 desde la consola de la pestaña: dentro, las reglas `@media` se aplican como en un teléfono. Mide los desbordes con `getBoundingClientRect` en vez de fiarte de la vista. Recarga con Ctrl+Mayús+R antes, para no ver CSS en caché.
 *   **Migraciones de la BD**: antes de desplegar una, copia `db/telegarrm.db` con la API de copia de SQLite (no con `cp`, por el WAL) a un sitio temporal.
 
 ## Flujo de Trabajo
 *   La planificación vigente está en `docs/ROADMAP.md`: mantenla al día al cerrar cada hito.
 *   **Registra cada decisión en `docs/DECISIONS.md` en el momento de tomarla** (contexto, decisión, alternativas descartadas, consecuencias). Si una cambia, márcala como sustituida en lugar de borrarla.
 *   Commits pequeños y descriptivos, **solo en local**: Plácido decide cuándo hacer push a GitHub.
+*   **Añade al commit los archivos uno a uno** (nunca `git add -A`): Plácido y Gemini trabajan a la vez en la misma carpeta y puede haber archivos suyos sin revisar.
 *   Antes de dar algo por terminado: compilar sin warnings, pasar los tests y probarlo en la Pi.
 *   **No borres a mano archivos de la biblioteca (`/srv/media`) ni otros datos de Plácido**: dale el comando y que decida él. La aplicación sí borra, con sus reglas (D-037, D-041).
 *   Las descargas de prueba van a la biblioteca real: avisa de qué queda para que Plácido lo borre si quiere.

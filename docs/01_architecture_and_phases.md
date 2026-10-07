@@ -98,6 +98,11 @@ Las reglas de decisión (parser, catálogo, seguimiento, episodios que faltan, n
 
 HTML, CSS y JavaScript sin dependencias ni compilación (D-016), servidos desde `web/`: un cambio se ve al recargar la página, sin reiniciar el servicio. Rutas con `#/…` (catálogo, ficha, descargas, actividad, canales, ajustes y estado) y sondeo periódico de la API.
 
+Pensada también para el móvil (D-046):
+- Hasta 640 px de ancho, las pestañas forman una rejilla de 3×2 y las tablas de episodios y versiones se convierten en bloques.
+- En pantallas táctiles, botones y selectores miden al menos 44 px.
+- Las confirmaciones son un `<dialog>` propio y los errores, avisos en la esquina (D-044).
+
 Las novedades llegan a la web sin conexiones permanentes (D-043):
 - Al recalcular un canal, `Catalog` anota los archivos lógicos nuevos como novedades (las 100 últimas, en memoria).
 - `/api/status`, que la web pide cada 2 s, trae el número de la última novedad, y `/api/events` da las siguientes.

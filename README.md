@@ -15,6 +15,8 @@ Desde la web (`http://<ip-de-la-pi>:8080/`):
 - **Actividad**: lo que sigues y el historial de lo que el sistema ha hecho solo.
 - **Canales**, **Ajustes** (búfer, bibliotecas, espacio libre, conservar versiones) y **Estado** (incluido el inicio de sesión en Telegram).
 
+Funciona igual en el móvil: las pestañas se reorganizan, las tablas se convierten en bloques y los botones tienen tamaño de dedo.
+
 ## Estructura del Proyecto
 - `src/`: Código fuente C++
   - `main.cpp`: arranque del daemon y servidor HTTP
@@ -33,7 +35,7 @@ Desde la web (`http://<ip-de-la-pi>:8080/`):
 - `include/`: Cabeceras y dependencias de un solo archivo (`httplib.h`, `nlohmann/json.hpp`)
 - `tests/`: Tests (`ctest`) del parser, el catálogo, la BD, la biblioteca y el seguimiento, con ejemplos reales de los canales
 - `web/`: Interfaz web (`index.html`, `style.css`, `app.js`, sin dependencias)
-- `deploy/`: Servicio de systemd, regla de polkit y script de instalación
+- `deploy/`: Servicio de systemd, regla de polkit, script de instalación y un borrador de `docker compose` para Jellyfin (`jellyfin-compose.yml`, pendiente de revisar: ver la hoja de ruta)
 - `db/`: Datos generados al ejecutar: `telegarrm.db` (SQLite), `tdlib/` (sesión de Telegram) y `tmdb/` (carátulas)
 - `docs/`: Documentación. La arquitectura está en [docs/01_architecture_and_phases.md](docs/01_architecture_and_phases.md), la planificación vigente en [docs/ROADMAP.md](docs/ROADMAP.md) y los motivos de cada decisión en [docs/DECISIONS.md](docs/DECISIONS.md)
 - `build/`: Archivos de compilación

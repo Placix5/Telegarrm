@@ -1,5 +1,7 @@
 # Hoja de ruta de Telegarrm
 
+*Estado al 07/10/2026: Fases 1 a 4.1 completadas y subidas a GitHub.*
+
 Documento vivo con el plan de implementación; los motivos de cada decisión están en [DECISIONS.md](DECISIONS.md) y cómo está construido, en [01_architecture_and_phases.md](01_architecture_and_phases.md). Lo mantiene Claude Code (desarrollo y plan técnico); Gemini revisa el código y la documentación; Plácido decide prioridades y valida en uso real.
 
 ## Objetivo
@@ -79,6 +81,10 @@ Por decidir con Plácido; ninguno está empezado.
 
 ### Paso al servidor definitivo
 - Llevar el servicio al servidor con el SSD del sistema y el RAID: búfer y bibliotecas en el RAID (D-033), y Jellyfin en Docker (datos de los contenedores en `/opt/docker`) leyendo `/srv/media`.
+- `deploy/jellyfin-compose.yml`: borrador añadido el 07/10/2026, fuera del trabajo de Claude.
+  - Bien: monta las bibliotecas en solo lectura y usa el usuario 1000 (`plax`), que puede leer lo que importa Telegarrm.
+  - Pendiente de decidir si se queda en el repositorio.
+  - Si se queda, cambiar `./jellyfin_config` por `/opt/docker/jellyfin/config`: tal como está, la configuración y la BD de Jellyfin se crearían dentro del repositorio (`deploy/jellyfin_config`), sin ignorar en git.
 - **Copia de seguridad de `db/`**: la sesión de Telegram, la BD y las carátulas. Con cuidado: la sesión da acceso a la cuenta.
 
 ### Mejoras pendientes

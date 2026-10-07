@@ -12,6 +12,12 @@
 > - El botón «Serie completa» / episodios que faltan (D-040).
 > - La biblioteca como fuente de lo que se tiene (D-041).
 > - La calidad real antes de descargar (D-042).
+>
+> Siguió la Fase 4.1 (mejoras de uso, pedida por el arquitecto y por Plácido):
+> - Logo enlazado, «Añadidas recientemente» y avisos de novedades (D-043).
+> - Confirmaciones propias (D-044).
+> - La ficha que se actualiza sola (D-045).
+> - La web en el móvil (D-046).
 
 **Fase Actual:** Inicio de Fase 4 (Seguimiento / Tele-ARR).
 
