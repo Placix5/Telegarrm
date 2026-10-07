@@ -6,7 +6,7 @@ Documento vivo con el plan de implementación; los motivos de cada decisión est
 Un servicio tipo *stack ARR* (Sonarr/Radarr) que corre siempre en la Raspberry Pi y usa uno o dos canales de Telegram como única fuente:
 1. **Catálogo**: mostrar en una web las series y películas publicadas en los canales elegidos.
 2. **Descarga**: botón "Almacenar en disco" que descarga, descomprime, renombra y coloca los ficheros en la biblioteca sin intervención.
-3. **Seguimiento**: vigilar los mensajes nuevos y, si llega una versión mejor (audio, códecs) de algo en seguimiento, reemplazarla.
+3. **Seguimiento**: vigilar los mensajes nuevos, descargar los episodios nuevos de lo que se sigue y, si llega una versión mejor (resolución, HDR, REMUX), reemplazarla.
 
 Todo se gestiona desde el navegador, sin SSH ni terminal.
 
@@ -50,11 +50,14 @@ Formato real visto: canales de una serie con una ficha (foto + pie con título, 
 - [x] **Web**: botón "Almacenar en disco" y pestaña *Descargas* con el progreso.
 
 ## Fase 4: Seguimiento (Tele-ARR)
-- Marcar series y películas como "en seguimiento".
-- Escuchar `updateNewMessage` en los canales vigilados (en especial el tema "Series en emisión", donde se publica un episodio por ficha) y parsear cada mensaje nuevo:
-  - Episodio nuevo de algo en seguimiento: se descarga.
-  - Versión nueva de algo ya descargado: se compara (resolución, códec, audio, tamaño) y, si es mejor, se reemplaza. El fichero antiguo se conserva hasta verificar el nuevo.
-- Historial de reemplazos visible en la web.
+- [x] **Seguir** series y películas desde su ficha, con calidad máxima (la mejor, hasta 1080p, hasta 720p). Tabla `follows`; la obra se reencuentra aunque cambie su ficha principal (D-035).
+- [x] **Tiempo real** (D-036): `openChat` en los canales vigilados y escucha de `updateNewMessage`. Se agrupan los avisos (20 s de calma, 2 min como mucho) y se traen solo los mensajes nuevos. Después, el catálogo los analiza y el seguimiento los evalúa. La ronda de cada 15 min recupera lo perdido.
+- [x] **Auto-descarga**: episodios nuevos de las series seguidas y la primera versión que se publique de una película seguida. Solo lo publicado después de seguir. Espera a que estén todas las partes de un comprimido.
+- [x] **Mejoras**: una versión con más resolución, HDR o REMUX sustituye a la que se tiene. La anterior se borra solo cuando la nueva ya está en la biblioteca, o se conserva si así se elige en *Ajustes* (D-037).
+- [x] **Historial de actividad** (tabla `activity`) y pestaña *Actividad* con lo que se sigue. Filtro «En seguimiento» en el catálogo.
+- [x] Comprobado en la Pi con un episodio nuevo (*Presidente Curtis* 1x09) y con una mejora de 1080p a 4K HDR (*El show de los Muppets*).
+- [ ] Ver llegar un mensaje real en tiempo real (pendiente de que se publique algo en un canal vigilado).
+- Ideas para después: notificaciones (Telegram o correo) de lo descargado; vigilar ediciones y borrados de mensajes (`updateMessageContent`, `updateDeleteMessages`); seguir una obra antes de que esté en el catálogo.
 
 ## Transversal (antes de exponer la web fuera de la red local)
 - **Autenticación** en la web y la API: ahora cualquiera en la LAN puede usarla.

@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <iostream>
 #include <set>
 #include <sstream>
@@ -16,8 +17,11 @@
 
 #include "catalog.hpp"
 #include "library.hpp"
+#include "metadata.hpp"
 #include "process.hpp"
 #include "media_parser.hpp"
+#include "tmdb_client.hpp"
+#include "tracker.hpp"
 
 namespace {
 
@@ -840,6 +844,335 @@ void testLibraryImport() {
 
 }  // namespace
 
+
+// --- Seguimiento (Fase 4, D-035) ---
+
+Message at(Message message, std::int64_t date) {
+    message.date = date;
+    return message;
+}
+
+using Action = tracking::Action;
+
+// Archivos ya descargados o puestos en cola, por su primera parte
+std::function<bool(const Catalog::Release&)> handledIds(std::set<std::int64_t> ids) {
+    return [ids](const Catalog::Release& release) { return ids.count(release.parts.front().messageId) > 0; };
+}
+
+const Catalog::Release* releaseAt(const Catalog::Item& item, std::size_t index) {
+    return index < item.releases.size() ? &item.releases[index] : nullptr;
+}
+
+void testTrackingRules() {
+    using tracking::versionRank;
+    // Resolución, después HDR, después REMUX; las ediciones no cuentan
+    CHECK(versionRank("2160p", false, {}) > versionRank("1080p", true, {"REMUX"}));
+    CHECK(versionRank("1080p", true, {}) > versionRank("1080p", false, {"REMUX"}));
+    CHECK(versionRank("1080p", false, {"REMUX"}) > versionRank("1080p", false, {}));
+    CHECK_EQ(versionRank("1080p", false, {"Extendida"}), versionRank("1080p", false, {}));
+    CHECK(versionRank("720p", false, {}) > versionRank("", false, {}));
+
+    CHECK(tracking::withinQuality("2160p", ""));
+    CHECK(!tracking::withinQuality("2160p", "1080p"));
+    CHECK(tracking::withinQuality("1080p", "1080p"));
+    CHECK(!tracking::withinQuality("1080p", "720p"));
+    CHECK(tracking::withinQuality("", "720p"));  // Calidad desconocida: cabe
+
+    // ¿Están publicadas todas las partes?
+    Catalog::Release single;
+    single.parts = {{1, "Peli.mkv", 1000, 0}};
+    single.date = 1000;
+    CHECK(tracking::releaseComplete(single, 1000));
+    Catalog::Release split;
+    split.date = 1000;
+    split.parts = {{1, "Serie 4x08.part1.rar", 2000, 1}, {2, "Serie 4x08.part2.rar", 2000, 2}};
+    CHECK(!tracking::releaseComplete(split, 1060));        // Todas llenas: puede faltar la última
+    CHECK(tracking::releaseComplete(split, 1000 + 7200));  // Dos horas sin partes nuevas
+    split.parts.push_back({3, "Serie 4x08.part3.rar", 500, 3});
+    CHECK(tracking::releaseComplete(split, 1060));         // La última es más pequeña
+    Catalog::Release gap;
+    gap.date = 1000;
+    gap.parts = {{2, "Peli.zip.002", 2000, 2}, {3, "Peli.zip.003", 500, 3}};
+    CHECK(!tracking::releaseComplete(gap, 1000 + 7200));   // Falta la primera
+}
+
+void testTrackingSeries() {
+    // Serie en emisión (formato real del tema "Series en emisión"): se sigue en el instante 1500
+    std::vector<Message> messages = {
+        at(inTopic(photo(10, "Ted Lasso - Temporada 4 (1080p)\n\nEpisodio 8\n\n(Son 3 partes en rar)"), 335), 1000),
+        at(inTopic(video(11, "Ted Lasso 4x08.part1.rar", 2'147'483'648, "", ""), 335), 1000),
+        at(inTopic(video(12, "Ted Lasso 4x08.part2.rar", 2'147'483'648, "", ""), 335), 1000),
+        at(inTopic(video(13, "Ted Lasso 4x08.part3.rar", 448'497'302, "", ""), 335), 1000),
+        at(inTopic(photo(20, "Ted Lasso - Temporada 4 (1080p)\n\nEpisodio 9"), 335), 2000),
+        at(inTopic(video(21, "Ted Lasso 4x09.mkv", 3'920'306'847), 335), 2000),
+    };
+    const tracking::Rule rule{1500, ""};
+    const std::vector<tracking::Owned> none;
+    auto items = build(-500, "Las Cositas", messages, kTopics);
+    CHECK_EQ(static_cast<int>(items.size()), 1);
+    if (items.size() != 1) {
+        return;
+    }
+
+    // 1) Solo el episodio publicado después de seguir
+    tracking::Plan plan = tracking::plan(items[0], rule, none, handledIds({}), 3000);
+    CHECK_EQ(static_cast<int>(plan.actions.size()), 1);
+    CHECK(!plan.waiting);
+    if (plan.actions.size() == 1) {
+        const Catalog::Release* chosen = releaseAt(items[0], plan.actions[0].release);
+        CHECK(plan.actions[0].type == Action::Type::NewEpisode);
+        CHECK(chosen && chosen->episode == 9);
+    }
+    // Ya en cola (o descargado): no se repite
+    plan = tracking::plan(items[0], rule, none, handledIds({21}), 3000);
+    CHECK_EQ(static_cast<int>(plan.actions.size()), 0);
+
+    // 2) Episodio 10 a medio publicar (dos partes llenas): se espera
+    messages.push_back(at(inTopic(photo(30, "Ted Lasso - Temporada 4 (1080p)\n\nEpisodio 10"), 335), 2500));
+    messages.push_back(at(inTopic(video(31, "Ted Lasso 4x10.part1.rar", 2'147'483'648, "", ""), 335), 2500));
+    messages.push_back(at(inTopic(video(32, "Ted Lasso 4x10.part2.rar", 2'147'483'648, "", ""), 335), 2500));
+    items = build(-500, "Las Cositas", messages, kTopics);
+    plan = tracking::plan(items[0], rule, none, handledIds({21}), 2600);
+    CHECK_EQ(static_cast<int>(plan.actions.size()), 0);
+    CHECK(plan.waiting);
+    // Llega la última parte: ya se puede descargar
+    messages.push_back(at(inTopic(video(33, "Ted Lasso 4x10.part3.rar", 300'000'000, "", ""), 335), 2700));
+    items = build(-500, "Las Cositas", messages, kTopics);
+    plan = tracking::plan(items[0], rule, none, handledIds({21}), 2800);
+    CHECK_EQ(static_cast<int>(plan.actions.size()), 1);
+    CHECK(!plan.waiting);
+    if (plan.actions.size() == 1) {
+        const Catalog::Release* chosen = releaseAt(items[0], plan.actions[0].release);
+        CHECK(chosen && chosen->episode == 10 && chosen->parts.size() == 3);
+    }
+
+    // 3) El canal vuelve a subir la temporada (después de seguirla): el 4x08 no es nuevo
+    messages.push_back(at(inTopic(photo(40, "Ted Lasso - Temporada 4 (1080p)\n\nSINOPSIS:\n\nOtra vez."), 4), 3000));
+    messages.push_back(at(inTopic(video(41, "Ted Lasso 4x08.mkv", 3'000'000'000), 4), 3000));
+    items = build(-500, "Las Cositas", messages, kTopics);
+    plan = tracking::plan(items[0], rule, none, handledIds({21, 31}), 3100);
+    CHECK_EQ(static_cast<int>(plan.actions.size()), 0);
+
+    // 4) Versión mejor (4K) del 4x09, que ya está en la biblioteca en 1080p
+    messages.push_back(at(inTopic(video(50, "Ted Lasso 4x09 4K HDR.mkv", 9'000'000'000), 4), 3500));
+    items = build(-500, "Las Cositas", messages, kTopics);
+    std::vector<tracking::Owned> owned = {{7, "completed", tracking::versionRank("1080p", false, {}), "1080p", 4, 9, 0}};
+    plan = tracking::plan(items[0], rule, owned, handledIds({21, 31}), 3600);
+    CHECK_EQ(static_cast<int>(plan.actions.size()), 1);
+    if (plan.actions.size() == 1) {
+        const Action& action = plan.actions[0];
+        const Catalog::Release* chosen = releaseAt(items[0], action.release);
+        CHECK(action.type == Action::Type::Upgrade);
+        CHECK(chosen && chosen->parts.front().messageId == 50);
+        CHECK_EQ(static_cast<int>(action.replaces.size()), 1);
+        CHECK(action.cancel.empty());
+        CHECK_EQ(action.previousLabel, "1080p");
+    }
+    // Con calidad máxima 1080p, el 4K no se pide
+    plan = tracking::plan(items[0], {1500, "1080p"}, owned, handledIds({21, 31}), 3600);
+    CHECK_EQ(static_cast<int>(plan.actions.size()), 0);
+    // Si la de 1080p aún estaba en cola sin empezar, se cancela en vez de sustituirse después
+    owned[0].status = "queued";
+    plan = tracking::plan(items[0], rule, owned, handledIds({21, 31}), 3600);
+    CHECK(plan.actions.size() == 1 && plan.actions[0].cancel.size() == 1 && plan.actions[0].replaces.empty());
+    // Una versión igual o peor no es una mejora
+    owned[0] = {7, "completed", tracking::versionRank("2160p", true, {}), "4K HDR", 4, 9, 0};
+    plan = tracking::plan(items[0], rule, owned, handledIds({21, 31}), 3600);
+    CHECK_EQ(static_cast<int>(plan.actions.size()), 0);
+}
+
+void testTrackingMovies() {
+    std::vector<Message> messages = {
+        at(inTopic(photo(10, "Dune (2021) (1080p)\n\nSINOPSIS:\n\nArena."), 2), 1000),
+        at(inTopic(video(11, "Dune (2021) 1080p.mkv", 4'000'000'000), 2), 1000),
+    };
+    const tracking::Rule rule{1500, ""};
+    auto items = build(-500, "Las Cositas", messages, kTopics);
+    CHECK_EQ(static_cast<int>(items.size()), 1);
+    if (items.size() != 1) {
+        return;
+    }
+    // Seguir no descarga lo que ya estaba publicado
+    tracking::Plan plan = tracking::plan(items[0], rule, {}, handledIds({}), 2000);
+    CHECK_EQ(static_cast<int>(plan.actions.size()), 0);
+
+    // Se publica en 4K (y en 3D, que nunca se elige solo): sin tenerla, se descarga la 4K
+    messages.push_back(at(inTopic(photo(20, "Dune (2021) (4K HDR)\n\nSINOPSIS:\n\nArena."), 16088), 3000));
+    messages.push_back(at(inTopic(video(21, "Dune (2021) 4K HDR 3D.mkv", 30'000'000'000), 16088), 3000));
+    messages.push_back(at(inTopic(video(22, "Dune (2021) 4K HDR.mkv", 20'000'000'000), 16088), 3000));
+    items = build(-500, "Las Cositas", messages, kTopics);
+    CHECK_EQ(static_cast<int>(items.size()), 1);
+    if (items.size() != 1) {
+        return;
+    }
+    plan = tracking::plan(items[0], rule, {}, handledIds({}), 3100);
+    CHECK_EQ(static_cast<int>(plan.actions.size()), 1);
+    if (plan.actions.size() == 1) {
+        const Catalog::Release* chosen = releaseAt(items[0], plan.actions[0].release);
+        CHECK(plan.actions[0].type == Action::Type::NewMovie);
+        CHECK(chosen && chosen->parts.front().messageId == 22);
+    }
+    // Con la de 1080p descargada (antes de seguirla), la 4K es una mejora
+    const std::vector<tracking::Owned> owned = {{3, "completed", tracking::versionRank("1080p", false, {}), "1080p", 0, 0, 0}};
+    plan = tracking::plan(items[0], rule, owned, handledIds({11}), 3100);
+    CHECK(plan.actions.size() == 1 && plan.actions[0].type == Action::Type::Upgrade &&
+          plan.actions[0].replaces == std::vector<std::int64_t>{3});
+}
+
+void testFollowsDatabase() {
+    namespace fs = std::filesystem;
+    const fs::path base = fs::temp_directory_path() / ("telegarrm_follows_" + std::to_string(::getpid()));
+    fs::remove_all(base);
+    fs::create_directories(base);
+    {
+        DbManager db((base / "test.db").string());
+        CHECK(db.open());
+
+        DbManager::Follow follow;
+        follow.kind = "series";
+        follow.title = "Ted Lasso";
+        follow.year = 2020;
+        follow.workKey = "series|tedlasso|2020";
+        follow.chatId = -500;
+        follow.anchorId = 10;
+        follow.maxQuality = "1080p";
+        const auto id = db.addFollow(follow);
+        CHECK(id.has_value());
+        CHECK(db.updateFollowQuality(*id, ""));
+        follow.id = *id;
+        follow.anchorId = 20;
+        follow.tmdbId = 97546;
+        CHECK(db.updateFollowWork(follow));
+        const auto stored = db.getFollow(*id);
+        CHECK(stored && stored->maxQuality.empty() && stored->anchorId == 20 && stored->tmdbId == 97546);
+        CHECK(stored && stored->year == std::optional<int>(2020) && stored->createdAt > 0);
+        CHECK_EQ(static_cast<int>(db.listFollows().size()), 1);
+
+        // Descarga automática: origen, seguimiento, sustituciones y archivos colocados
+        DbManager::Download download;
+        download.chatId = -500;
+        download.messageId = 21;
+        download.title = "Ted Lasso";
+        download.kind = "series";
+        download.name = "Ted Lasso 4x09";
+        download.totalSize = 100;
+        download.origin = "auto";
+        download.followId = *id;
+        download.replaces = {3, 4};
+        download.parts = {{21, 0, "Ted Lasso 4x09.mkv", 100, 0, ""}};
+        const auto added = db.addDownload(download);
+        CHECK(added.ok);
+        CHECK(db.setDownloadLibrary(added.id, "/srv/media/series/Ted Lasso", {"/a.mkv", "/a.srt"}));
+        const auto saved = db.getDownload(added.id);
+        CHECK(saved && saved->origin == "auto" && saved->followId == std::optional<std::int64_t>(*id));
+        CHECK(saved && saved->replaces == (std::vector<std::int64_t>{3, 4}));
+        CHECK(saved && saved->libraryFiles == (Strings{"/a.mkv", "/a.srt"}));
+        // Las manuales siguen siendo manuales
+        download.messageId = 22;
+        download.origin.clear();
+        download.followId.reset();
+        download.replaces.clear();
+        const auto manual = db.addDownload(download);
+        const auto manualSaved = db.getDownload(manual.id);
+        CHECK(manualSaved && manualSaved->origin == "manual" && !manualSaved->followId && manualSaved->replaces.empty());
+
+        CHECK(db.addAutoRelease(-500, 21, *id));
+        CHECK(db.addAutoRelease(-500, 21, *id));  // Repetido: se ignora
+        CHECK_EQ(static_cast<int>(db.listAutoReleases().size()), 1);
+
+        // Historial: del más reciente al más antiguo, por páginas
+        for (int i = 1; i <= 3; ++i) {
+            CHECK(db.addActivity({0, 1000 + i, "completed", "Entrada " + std::to_string(i), -500, 21, *id, added.id}));
+        }
+        const auto page = db.listActivity(2, 0);
+        CHECK(page.size() == 2 && page[0].message == "Entrada 3" && page[1].message == "Entrada 2");
+        const auto next = page.empty() ? std::vector<DbManager::Activity>{} : db.listActivity(2, page.back().id);
+        CHECK(next.size() == 1 && next[0].message == "Entrada 1" && next[0].downloadId == added.id);
+
+        CHECK(db.deleteFollow(*id));
+        CHECK(!db.getFollow(*id));
+        CHECK(db.listFollows().empty());
+    }
+    fs::remove_all(base);
+}
+
+void testFollowMatching() {
+    namespace fs = std::filesystem;
+    const fs::path base = fs::temp_directory_path() / ("telegarrm_match_" + std::to_string(::getpid()));
+    fs::remove_all(base);
+    fs::create_directories(base);
+    {
+        DbManager db((base / "test.db").string());
+        CHECK(db.open());
+        Catalog catalog(db);
+        TmdbClient tmdb(db, "", (base / "images").string());
+        MetadataService metadata(db, catalog, tmdb);
+
+        const std::vector<Message> messages = {
+            at(inTopic(photo(10, "Ted Lasso - Temporada 3 (1080p)"), 4), 1000),
+            at(inTopic(video(11, "Ted Lasso 3x01.mkv", 1000), 4), 1000),
+            at(inTopic(photo(20, "Ted Lasso - Temporada 4 (1080p)\n\nEpisodio 9"), 335), 2000),
+            at(inTopic(video(21, "Ted Lasso 4x09.mkv", 1000), 335), 2000),
+        };
+        std::vector<Catalog::ItemPtr> items;
+        for (Catalog::Item& item : build(-500, "Las Cositas", messages, kTopics)) {
+            items.push_back(std::make_shared<const Catalog::Item>(std::move(item)));
+        }
+        CHECK_EQ(static_cast<int>(items.size()), 1);
+        if (items.size() != 1) {
+            return;
+        }
+
+        DbManager::Follow byAnchor = tracking::followFor(*items[0], metadata);
+        byAnchor.anchorId = 20;  // Cualquier ficha de la obra vale
+        DbManager::Follow byKey = tracking::followFor(*items[0], metadata);
+        byKey.anchorId = 999;    // La ficha ya no existe: por la clave de obra
+        DbManager::Follow gone = byKey;
+        gone.workKey = "series|otraserie|";
+        const auto matches = tracking::matchFollows(items, {byAnchor, byKey, gone}, metadata);
+        CHECK(matches.size() == 3 && matches[0].item == items[0] && matches[1].item == items[0] && !matches[2].item);
+        CHECK_EQ(byAnchor.workKey, MetadataService::workKey(*items[0]));
+    }
+    fs::remove_all(base);
+}
+
+void testRemoveReplacedFiles() {
+    namespace fs = std::filesystem;
+    const fs::path base = fs::temp_directory_path() / ("telegarrm_replace_" + std::to_string(::getpid()));
+    fs::remove_all(base);
+    const fs::path movies = base / "peliculas";
+    const fs::path folder = movies / "Dune (2021) [tmdbid-438631]";
+    const fs::path old = folder / "Dune (2021) - 1080p.mkv";
+    const fs::path oldSubtitle = folder / "Dune (2021) - 1080p.Spanish.srt";
+    const fs::path fresh = folder / "Dune (2021) - 4K HDR.mkv";
+    const fs::path outside = base / "otra" / "importante.mkv";
+    const fs::path episode = base / "series" / "Serie (2020)" / "Season 01" / "Serie S01E01 - 1080p.mkv";
+    for (const fs::path& file : {old, oldSubtitle, fresh, outside, episode}) {
+        writeFile(file, 10, 'x');
+    }
+    std::error_code ec;
+    fs::create_symlink(outside, folder / "enlace.mkv", ec);
+
+    // Nada fuera de la biblioteca, ni enlaces, ni la versión nueva
+    const std::size_t removed = library::removeFiles(
+        {old.string(), oldSubtitle.string(), fresh.string(), outside.string(), (folder / "enlace.mkv").string(),
+         (movies / ".." / "otra" / "importante.mkv").string(), (folder / "no-existe.mkv").string()},
+        {movies.string()}, {fresh.string()});
+    CHECK_EQ(static_cast<int>(removed), 2);
+    CHECK(!fs::exists(old) && !fs::exists(oldSubtitle));
+    CHECK(fs::exists(fresh) && fs::exists(outside));
+    CHECK(fs::is_symlink(folder / "enlace.mkv"));
+
+    // El episodio sustituido se va con sus carpetas vacías, pero la biblioteca se queda
+    CHECK_EQ(static_cast<int>(library::removeFiles({episode.string()}, {movies.string(), (base / "series").string()}, {})), 1);
+    CHECK(!fs::exists(base / "series" / "Serie (2020)"));
+    CHECK(fs::exists(base / "series"));
+    // Sin bibliotecas definidas no se borra nada
+    CHECK_EQ(static_cast<int>(library::removeFiles({fresh.string()}, {"", "/"}, {})), 0);
+    CHECK(fs::exists(fresh));
+    fs::remove_all(base);
+}
+
 int main() {
     testEpisodes();
     testFichas();
@@ -862,6 +1195,12 @@ int main() {
     testLibraryNames();
     testProcessWithoutShell();
     testLibraryImport();
+    testTrackingRules();
+    testTrackingSeries();
+    testTrackingMovies();
+    testFollowsDatabase();
+    testFollowMatching();
+    testRemoveReplacedFiles();
 
     std::cout << (checks - failures) << "/" << checks << " comprobaciones correctas" << std::endl;
     return failures == 0 ? 0 : 1;

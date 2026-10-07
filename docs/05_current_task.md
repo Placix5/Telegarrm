@@ -1,5 +1,11 @@
 # Tarea Actual para Claude Code
 
+> **Estado: completada el 07/10/2026** (D-035, D-036 y D-037 en [DECISIONS.md](DECISIONS.md)). Diferencias con lo pedido:
+> - Una versión es «mejor» por resolución, HDR y REMUX, no por códec o audio. Los nombres del canal casi nunca los llevan, y un x265 no es mejor que un x264 por sí mismo.
+> - El seguimiento solo actúa sobre lo publicado **después** de seguir una obra. Seguir no descarga el catálogo antiguo; para eso están los botones de temporada.
+> - El mensaje nuevo no se parsea desde la actualización de TDLib. La actualización dispara una sincronización rápida, y el mensaje se guarda y se analiza por el camino de siempre (cursor, catálogo, parser). Así no hay dos caminos ni huecos si se pierde una actualización.
+> - Conservar la versión anterior es una opción de *Ajustes* («Conservar la versión anterior al mejorarla»). Por defecto se borra cuando la nueva ya está en la biblioteca.
+
 **Fase Actual:** Inicio de Fase 4 (Seguimiento / Tele-ARR).
 
 ## Estado Actual

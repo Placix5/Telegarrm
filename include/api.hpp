@@ -13,6 +13,7 @@ class DownloadManager;
 class MetadataService;
 class TelegramClient;
 class TmdbClient;
+class Tracker;
 
 // Servicios que usa la API. Deben vivir más que el servidor HTTP.
 struct ApiServices {
@@ -23,6 +24,7 @@ struct ApiServices {
     MetadataService& metadata;
     TmdbClient& tmdb;
     DownloadManager& downloads;
+    Tracker& tracker;
     // Búfer de descargas con el que arrancó TDLib (para saber si un cambio exige reiniciar)
     std::string activeDownloadDir;
     // Aviso si la carpeta configurada no se pudo usar al arrancar (vacío = sin aviso)

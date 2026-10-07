@@ -6,6 +6,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <map>
 #include <optional>
 #include <set>
 #include <string>
@@ -21,6 +22,7 @@
 #include "settings.hpp"
 #include "telegram_client.hpp"
 #include "tmdb_client.hpp"
+#include "tracker.hpp"
 
 namespace {
 
@@ -36,6 +38,10 @@ constexpr int kPosterMinWidth = 600;
 constexpr const char* kDefaultDownloadDir = "db/tdlib";
 // Las portadas no cambian: el navegador puede guardarlas una semana
 constexpr const char* kPosterCacheControl = "max-age=604800";
+// Calidades máximas que admite un seguimiento ("" = la mejor)
+const std::set<std::string> kMaxQualities = {"", "1080p", "720p"};
+// Entradas del historial de actividad por página
+constexpr int kActivityPageSize = 100;
 
 // Paso del inicio de sesión: estado que debe tener TDLib, petición que se le envía
 // y campo del cuerpo JSON (se llama igual en la API y en TDLib)
@@ -238,7 +244,29 @@ Json tmdbJson(const InfoPtr& info) {
             {"genres", info->genres}};
 }
 
-Json itemSummaryJson(const Catalog::Item& item, const InfoPtr& info) {
+Json followJson(const DbManager::Follow& follow) {
+    return {{"id", follow.id}, {"max_quality", follow.maxQuality}, {"created_at", follow.createdAt}};
+}
+
+// Seguimiento de cada obra del catálogo, por su identificador
+using FollowIndex = std::map<std::pair<std::int64_t, std::int64_t>, DbManager::Follow>;
+
+FollowIndex followIndex(DbManager& db, const std::vector<Catalog::ItemPtr>& items, const MetadataService& metadata) {
+    FollowIndex index;
+    for (const tracking::FollowMatch& match : tracking::matchFollows(items, db.listFollows(), metadata)) {
+        if (match.item) {
+            index.emplace(std::make_pair(match.item->chatId, match.item->anchorMessageId), match.follow);
+        }
+    }
+    return index;
+}
+
+const DbManager::Follow* findFollow(const FollowIndex& index, const Catalog::Item& item) {
+    const auto it = index.find({item.chatId, item.anchorMessageId});
+    return it != index.end() ? &it->second : nullptr;
+}
+
+Json itemSummaryJson(const Catalog::Item& item, const InfoPtr& info, const DbManager::Follow* follow) {
     const bool hdr = std::any_of(item.releases.begin(), item.releases.end(),
                                  [](const Catalog::Release& release) { return release.hdr; });
     const std::optional<int> year = item.year ? item.year : (info ? info->year : std::nullopt);
@@ -262,11 +290,13 @@ Json itemSummaryJson(const Catalog::Item& item, const InfoPtr& info) {
             {"episodes", item.episodeCount},
             {"release_count", item.releases.size()},
             {"total_size", item.totalSize},
-            {"updated_at", item.updatedAt}};
+            {"updated_at", item.updatedAt},
+            {"followed", follow != nullptr}};
 }
 
-Json itemDetailJson(const Catalog::Item& item, const InfoPtr& info) {
-    Json detail = itemSummaryJson(item, info);
+Json itemDetailJson(const Catalog::Item& item, const InfoPtr& info, const DbManager::Follow* follow) {
+    Json detail = itemSummaryJson(item, info, follow);
+    detail["follow"] = follow ? followJson(*follow) : Json(nullptr);
     detail["synopsis"] = item.synopsis;           // De la ficha de Telegram
     detail["overview"] = info ? info->overview : "";  // De TMDB
     detail["description"] = item.description;
@@ -351,18 +381,20 @@ void sendFile(httplib::Response& res, const std::string& path, const char* conte
     res.set_content(data, contentType);
 }
 
-void registerCatalogRoutes(httplib::Server& server, TelegramClient& telegram, Catalog& catalog,
+void registerCatalogRoutes(httplib::Server& server, DbManager& db, TelegramClient& telegram, Catalog& catalog,
                            MetadataService& metadata, TmdbClient& tmdb) {
-    server.Get("/api/catalog", [&catalog, &metadata](const httplib::Request&, httplib::Response& res) {
+    server.Get("/api/catalog", [&db, &catalog, &metadata](const httplib::Request&, httplib::Response& res) {
+        const std::vector<Catalog::ItemPtr> items = catalog.items();
+        const FollowIndex follows = followIndex(db, items, metadata);
         Json result = Json::array();
-        for (const Catalog::ItemPtr& item : catalog.items()) {
-            result.push_back(itemSummaryJson(*item, metadata.lookup(*item)));
+        for (const Catalog::ItemPtr& item : items) {
+            result.push_back(itemSummaryJson(*item, metadata.lookup(*item), findFollow(follows, *item)));
         }
         sendJson(res, 200, result);
     });
 
-    server.Get(R"(/api/catalog/(-?\d+)/(\d+))", [&catalog, &metadata](const httplib::Request& req,
-                                                                   httplib::Response& res) {
+    server.Get(R"(/api/catalog/(-?\d+)/(\d+))", [&db, &catalog, &metadata](const httplib::Request& req,
+                                                                        httplib::Response& res) {
         const auto chatId = parseId(req.matches[1].str());
         const auto anchorId = parseId(req.matches[2].str());
         const auto item = (chatId && anchorId) ? catalog.find(*chatId, *anchorId) : nullptr;
@@ -370,7 +402,8 @@ void registerCatalogRoutes(httplib::Server& server, TelegramClient& telegram, Ca
             sendError(res, 404, "Elemento no encontrado en el catálogo");
             return;
         }
-        sendJson(res, 200, itemDetailJson(*item, metadata.lookup(*item)));
+        const FollowIndex follows = followIndex(db, catalog.items(), metadata);
+        sendJson(res, 200, itemDetailJson(*item, metadata.lookup(*item), findFollow(follows, *item)));
     });
 
     // Portada: la foto de la ficha (TDLib la descarga la primera vez y la guarda en su caché). Si la
@@ -458,6 +491,9 @@ Json downloadJson(const DbManager::Download& d, const std::optional<DownloadMana
             {"status", d.status},
             {"error", nullable(d.error)},
             {"library_path", nullable(d.libraryPath)},
+            {"origin", d.origin},
+            {"follow_id", d.followId ? Json(*d.followId) : Json(nullptr)},
+            {"replaces", d.replaces},
             {"created_at", d.createdAt},
             {"updated_at", d.updatedAt}};
 }
@@ -485,28 +521,7 @@ void registerDownloadRoutes(httplib::Server& server, DbManager& db, Catalog& cat
             sendError(res, 404, "Ese archivo no está en el catálogo");
             return;
         }
-        const Catalog::Item& item = *ref->item;
-        const Catalog::Release& release = *ref->release;
-
-        DbManager::Download download;
-        download.chatId = release.chatId;
-        download.messageId = release.parts.front().messageId;
-        download.title = item.title;
-        download.kind = item.kind;
-        download.season = release.season;
-        download.episode = release.episode;
-        download.episodeEnd = release.episodeEnd;
-        download.name = release.name;
-        download.quality = release.quality;
-        download.hdr = release.hdr;
-        download.tags = release.tags;
-        download.archive = release.archive;
-        download.totalSize = release.size;
-        for (const Catalog::Part& part : release.parts) {
-            download.parts.push_back({part.messageId, part.number, part.fileName, part.size, 0, ""});
-        }
-
-        const DbManager::AddDownloadResult added = db.addDownload(download);
+        const DbManager::AddDownloadResult added = db.addDownload(makeDownload(*ref->item, *ref->release));
         if (added.duplicate) {
             sendJson(res, 409, {{"error", "Ya está en la cola, descargándose o descargado"}, {"id", added.id}});
             return;
@@ -656,13 +671,14 @@ void registerChannelRoutes(httplib::Server& server, DbManager& db, TelegramClien
         sendJson(res, 201, channel ? channelJson(*channel, sync.syncingChatId()) : Json{{"id", chatId}});
     });
 
-    server.Delete(R"(/api/channels/(-?\d+))", [&db, &catalog](const httplib::Request& req, httplib::Response& res) {
+    server.Delete(R"(/api/channels/(-?\d+))", [&db, &catalog, &sync](const httplib::Request& req, httplib::Response& res) {
         const auto chatId = parseId(req.matches[1].str());
         if (!chatId || !db.removeChannel(*chatId)) {
             sendError(res, 404, "Canal no encontrado");
             return;
         }
         catalog.removeChannel(*chatId);
+        sync.requestSync();  // Deja de recibir sus mensajes al momento (closeChat)
         sendJson(res, 200, {{"ok", true}});
     });
 
@@ -715,6 +731,145 @@ void registerChannelRoutes(httplib::Server& server, DbManager& db, TelegramClien
     });
 }
 
+const char* qualityText(const std::string& maxQuality) {
+    return maxQuality.empty() ? "la mejor" : maxQuality == "1080p" ? "hasta 1080p" : "hasta 720p";
+}
+
+// Calidad máxima de un cuerpo JSON: std::nullopt (y error 400) si no es válida
+std::optional<std::string> maxQualityFrom(const Json& body, httplib::Response& res) {
+    const Json value = body.value("max_quality", Json(""));
+    if (!value.is_string() || !kMaxQualities.count(value.get<std::string>())) {
+        sendError(res, 400, "'max_quality' debe ser \"\", \"1080p\" o \"720p\"");
+        return std::nullopt;
+    }
+    return value.get<std::string>();
+}
+
+void registerFollowRoutes(httplib::Server& server, DbManager& db, Catalog& catalog, MetadataService& metadata,
+                          Tracker& tracker) {
+    // Obras seguidas, con la obra del catálogo que les corresponde ahora
+    server.Get("/api/follows", [&db, &catalog, &metadata](const httplib::Request&, httplib::Response& res) {
+        Json result = Json::array();
+        for (const tracking::FollowMatch& match : tracking::matchFollows(catalog.items(), db.listFollows(), metadata)) {
+            const DbManager::Follow& follow = match.follow;
+            Json entry = followJson(follow);
+            entry["kind"] = follow.kind;
+            entry["title"] = match.item ? match.item->title : follow.title;
+            entry["year"] = follow.year ? Json(*follow.year) : Json(nullptr);
+            entry["found"] = match.item != nullptr;
+            entry["chat_id"] = match.item ? match.item->chatId : follow.chatId;
+            entry["anchor_id"] = match.item ? match.item->anchorMessageId : follow.anchorId;
+            entry["airing"] = match.item && match.item->airing;
+            result.push_back(entry);
+        }
+        sendJson(res, 200, result);
+    });
+
+    // Seguir una obra: {"chat_id": -100..., "anchor_id": ..., "max_quality": "1080p"}
+    server.Post("/api/follows", [&db, &catalog, &metadata, &tracker](const httplib::Request& req, httplib::Response& res) {
+        const Json body = Json::parse(req.body, nullptr, false);
+        if (!body.is_object() || !body.contains("chat_id") || !body["chat_id"].is_number_integer() ||
+            !body.contains("anchor_id") || !body["anchor_id"].is_number_integer()) {
+            sendError(res, 400, "El cuerpo debe ser JSON con los campos numéricos 'chat_id' y 'anchor_id'");
+            return;
+        }
+        const auto maxQuality = maxQualityFrom(body, res);
+        if (!maxQuality) {
+            return;
+        }
+        const auto item = catalog.find(body["chat_id"].get<std::int64_t>(), body["anchor_id"].get<std::int64_t>());
+        if (!item) {
+            sendError(res, 404, "Elemento no encontrado en el catálogo");
+            return;
+        }
+        const FollowIndex follows = followIndex(db, catalog.items(), metadata);
+        if (const DbManager::Follow* existing = findFollow(follows, *item)) {
+            sendJson(res, 409, {{"error", "Ya sigues esta obra"}, {"id", existing->id}});
+            return;
+        }
+
+        DbManager::Follow follow = tracking::followFor(*item, metadata);
+        follow.maxQuality = *maxQuality;
+        const auto id = db.addFollow(follow);
+        if (!id) {
+            sendError(res, 500, "No se pudo guardar el seguimiento");
+            return;
+        }
+        const auto saved = db.getFollow(*id);
+        const std::string what = item->kind == "series" ? "se descargarán solos los episodios nuevos"
+                                                        : "se descargará sola si se publica una versión nueva o mejor";
+        db.addActivity({0, 0, "follow",
+                        "Sigues «" + item->title + "» (calidad: " + qualityText(*maxQuality) + "): " + what + ".",
+                        item->chatId, item->anchorMessageId, *id, std::nullopt});
+        tracker.requestRun();
+        sendJson(res, 201, saved ? followJson(*saved) : Json{{"id", *id}});
+    });
+
+    // Cambiar la calidad máxima: {"max_quality": "1080p"}
+    server.Put(R"(/api/follows/(\d+))", [&db, &tracker](const httplib::Request& req, httplib::Response& res) {
+        const auto id = parseId(req.matches[1].str());
+        const Json body = Json::parse(req.body, nullptr, false);
+        if (!body.is_object()) {
+            sendError(res, 400, "El cuerpo debe ser un objeto JSON");
+            return;
+        }
+        const auto maxQuality = maxQualityFrom(body, res);
+        if (!maxQuality) {
+            return;
+        }
+        if (!id || !db.updateFollowQuality(*id, *maxQuality)) {
+            sendError(res, 404, "Seguimiento no encontrado");
+            return;
+        }
+        tracker.requestRun();
+        const auto follow = db.getFollow(*id);
+        sendJson(res, 200, follow ? followJson(*follow) : Json{{"id", *id}});
+    });
+
+    // Dejar de seguir. Lo descargado y lo que esté en la cola se queda.
+    server.Delete(R"(/api/follows/(\d+))", [&db](const httplib::Request& req, httplib::Response& res) {
+        const auto id = parseId(req.matches[1].str());
+        const auto follow = id ? db.getFollow(*id) : std::nullopt;
+        if (!follow || !db.deleteFollow(*id)) {
+            sendError(res, 404, "Seguimiento no encontrado");
+            return;
+        }
+        db.addActivity({0, 0, "unfollow", "Dejas de seguir «" + follow->title + "».", follow->chatId, follow->anchorId,
+                        follow->id, std::nullopt});
+        sendJson(res, 200, {{"ok", true}});
+    });
+
+    // Historial de actividad, del más reciente al más antiguo: ?before=<id> para la página siguiente
+    server.Get("/api/activity", [&db, &catalog](const httplib::Request& req, httplib::Response& res) {
+        const auto before = parseId(req.has_param("before") ? req.get_param_value("before") : "0");
+        if (!before || *before < 0) {
+            sendError(res, 400, "Parámetro 'before' no válido");
+            return;
+        }
+        Json result = Json::array();
+        for (const DbManager::Activity& entry : db.listActivity(kActivityPageSize, *before)) {
+            // Enlace a la obra: el mensaje es un archivo (descargas) o una ficha (seguimiento)
+            Catalog::ItemPtr item;
+            if (entry.chatId != 0) {
+                if (const auto ref = catalog.findRelease(entry.chatId, entry.messageId)) {
+                    item = ref->item;
+                } else {
+                    item = catalog.find(entry.chatId, entry.messageId);
+                }
+            }
+            result.push_back({{"id", entry.id},
+                              {"at", entry.at},
+                              {"type", entry.type},
+                              {"message", entry.message},
+                              {"item", item ? Json{{"chat_id", item->chatId}, {"anchor_id", item->anchorMessageId}}
+                                            : Json(nullptr)},
+                              {"follow_id", entry.followId ? Json(*entry.followId) : Json(nullptr)},
+                              {"download_id", entry.downloadId ? Json(*entry.downloadId) : Json(nullptr)}});
+        }
+        sendJson(res, 200, result);
+    });
+}
+
 }  // namespace
 
 // Ruta sin barras finales ni "." o ".." intermedios ("/srv/media/" -> "/srv/media")
@@ -760,6 +915,7 @@ Json settingsJson(DbManager& db, const ApiServices& services) {
             {"movies_dir", settings.moviesDir},
             {"series_dir", settings.seriesDir},
             {"min_free_bytes", settings.minFreeBytes},
+            {"keep_replaced", settings.keepReplaced},
             {"default_download_dir", kDefaultDownloadDir},
             {"active_download_dir", services.activeDownloadDir},
             {"restart_required", configuredDownloadDir != services.activeDownloadDir && download.ok},
@@ -775,7 +931,7 @@ void registerSettingsRoutes(httplib::Server& server, DbManager& db, const ApiSer
     });
 
     // {"download_dir": "/srv/media/.telegarrm/descargas", "movies_dir": "...", "series_dir": "...",
-    //  "min_free_gb": 2}. Una ruta vacía vuelve al valor predeterminado (o deja la biblioteca sin definir).
+    //  "min_free_gb": 2, "keep_replaced": false}. Una ruta vacía vuelve al valor predeterminado (o deja la biblioteca sin definir).
     server.Put("/api/settings", [&db, services](const httplib::Request& req, httplib::Response& res) {
         const Json body = Json::parse(req.body, nullptr, false);
         if (!body.is_object()) {
@@ -812,6 +968,13 @@ void registerSettingsRoutes(httplib::Server& server, DbManager& db, const ApiSer
                 settings.minFreeBytes = static_cast<std::int64_t>(value.get<double>() * 1e9);
             }
         }
+        if (body.contains("keep_replaced")) {
+            if (!body["keep_replaced"].is_boolean()) {
+                fieldErrors["keep_replaced"] = "Debe ser true o false";
+            } else {
+                settings.keepReplaced = body["keep_replaced"].get<bool>();
+            }
+        }
         if (!fieldErrors.empty()) {
             sendJson(res, 400, {{"error", "Hay ajustes que no se pueden usar"}, {"fields", fieldErrors}});
             return;
@@ -834,7 +997,8 @@ void registerApiRoutes(httplib::Server& server, const ApiServices& services) {
     registerStatusRoutes(server, services.db, services.telegram, services.metadata);
     registerAuthRoutes(server, services.telegram);
     registerChannelRoutes(server, services.db, services.telegram, services.sync, services.catalog);
-    registerCatalogRoutes(server, services.telegram, services.catalog, services.metadata, services.tmdb);
+    registerCatalogRoutes(server, services.db, services.telegram, services.catalog, services.metadata, services.tmdb);
     registerDownloadRoutes(server, services.db, services.catalog, services.downloads);
+    registerFollowRoutes(server, services.db, services.catalog, services.metadata, services.tracker);
     registerSettingsRoutes(server, services.db, services);
 }

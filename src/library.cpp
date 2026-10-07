@@ -202,6 +202,57 @@ std::string versionLabel(const std::string& quality, bool hdr, const std::vector
     return label;
 }
 
+std::size_t removeFiles(const std::vector<std::string>& files, const std::vector<std::string>& roots,
+                        const std::vector<std::string>& keep) {
+    std::error_code ec;
+    // Rutas reales (sin enlaces ni "..") de las raíces y de lo que hay que conservar
+    std::vector<fs::path> realRoots;
+    for (const std::string& root : roots) {
+        if (!root.empty()) {
+            const fs::path real = fs::canonical(root, ec);
+            if (!ec && real != real.root_path()) {
+                realRoots.push_back(real);
+            }
+        }
+    }
+    std::set<fs::path> protectedFiles;
+    for (const std::string& file : keep) {
+        protectedFiles.insert(fs::weakly_canonical(file, ec));
+    }
+    const auto rootOf = [&realRoots](const fs::path& path) -> const fs::path* {
+        for (const fs::path& root : realRoots) {
+            const auto mismatch = std::mismatch(root.begin(), root.end(), path.begin(), path.end());
+            if (mismatch.first == root.end() && mismatch.second != path.end()) {
+                return &root;  // path está dentro de root (y no es root)
+            }
+        }
+        return nullptr;
+    };
+
+    std::size_t removed = 0;
+    for (const std::string& file : files) {
+        if (file.empty() || fs::symlink_status(file, ec).type() != fs::file_type::regular) {
+            continue;  // No existe, o es un enlace o una carpeta: no se toca
+        }
+        const fs::path real = fs::canonical(file, ec);
+        const fs::path* root = ec ? nullptr : rootOf(real);
+        if (!root || protectedFiles.count(real)) {
+            continue;
+        }
+        if (!fs::remove(real, ec) || ec) {
+            continue;
+        }
+        ++removed;
+        // Carpetas vacías ("Season 01", la de la película...) hasta la raíz de la biblioteca, sin incluirla
+        for (fs::path dir = real.parent_path(); dir != *root && rootOf(dir); dir = dir.parent_path()) {
+            if (!fs::is_empty(dir, ec) || ec || !fs::remove(dir, ec)) {
+                break;
+            }
+        }
+    }
+    return removed;
+}
+
 std::string findSevenZip() {
     for (const char* candidate : {"/usr/bin/7z", "/usr/bin/7zz", "/usr/local/bin/7z", "/usr/local/bin/7zz", "/usr/bin/7za"}) {
         if (::access(candidate, X_OK) == 0) {

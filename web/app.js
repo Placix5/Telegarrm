@@ -9,6 +9,7 @@ const DATE_FORMAT = new Intl.DateTimeFormat("es-ES", {
 });
 const SIZE_FORMAT = new Intl.NumberFormat("es-ES", { maximumFractionDigits: 1 });
 const formatDate = (unixSeconds) => DATE_FORMAT.format(new Date(unixSeconds * 1000));
+const formatDay = (unixSeconds) => formatDate(unixSeconds).split(",")[0];
 const formatNumber = (n) => n.toLocaleString("es-ES");
 function formatSize(bytes) {
   const units = [["TB", 1e12], ["GB", 1e9], ["MB", 1e6], ["kB", 1e3]];
@@ -65,6 +66,7 @@ const CHAT_GROUPS = [
 ];
 
 const KIND_LABEL = { series: "Serie", movie: "Película" };
+const MAX_QUALITY = [["", "La mejor calidad"], ["1080p", "Hasta 1080p"], ["720p", "Hasta 720p"]];
 
 // Errores habituales de Telegram traducidos
 function translateError(message) {
@@ -119,7 +121,7 @@ async function api(path, options = {}) {
 const normalize = (text) => (text || "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
 
 // ---------------------------------------------------------------------------
-// Navegación: #/catalogo, #/catalogo/<chat>/<ficha>, #/canales, #/estado
+// Navegación: #/catalogo, #/catalogo/<chat>/<ficha>, #/descargas, #/actividad, #/canales, #/ajustes, #/estado
 // ---------------------------------------------------------------------------
 
 let telegramReady = false;
@@ -129,6 +131,7 @@ function currentRoute() {
   const parts = location.hash.replace(/^#\/?/, "").split("/").filter(Boolean);
   if (parts[0] === "canales") return { view: "channels" };
   if (parts[0] === "descargas") return { view: "downloads" };
+  if (parts[0] === "actividad") return { view: "activity" };
   if (parts[0] === "ajustes") return { view: "settings" };
   if (parts[0] === "estado") return { view: "status" };
   if (parts[0] === "catalogo" && parts.length === 3) return { view: "detail", chatId: parts[1], anchorId: parts[2] };
@@ -141,7 +144,7 @@ function showRoute() {
   // Sin sesión de Telegram solo tiene sentido la pantalla de estado (inicio de sesión)
   if (!telegramReady && route.view !== "status") route = { view: "status" };
 
-  for (const view of ["catalog", "detail", "downloads", "channels", "settings", "status"]) {
+  for (const view of ["catalog", "detail", "downloads", "activity", "channels", "settings", "status"]) {
     $(`view-${view}`).hidden = view !== route.view;
   }
   const navView = route.view === "detail" ? "catalog" : route.view;
@@ -154,6 +157,7 @@ function showRoute() {
   if (route.view === "catalog") loadCatalog();
   if (route.view === "detail") loadDetail(route.chatId, route.anchorId);
   if (route.view === "downloads") renderDownloads();
+  if (route.view === "activity") loadActivity();
   if (route.view === "settings") loadSettings();
   if (route.view === "channels") {
     refreshChannels();
@@ -217,7 +221,7 @@ function renderCatalog() {
   const byTitle = (a, b) => a.title.localeCompare(b.title, "es", { sensitivity: "base" });
   const sort = $("catalog-sort").value === "recent" ? (a, b) => b.updated_at - a.updated_at || byTitle(a, b) : byTitle;
   const visible = catalogItems
-    .filter((item) => !kind || (kind === "airing" ? item.airing : item.kind === kind))
+    .filter((item) => !kind || (kind === "airing" ? item.airing : kind === "followed" ? item.followed : item.kind === kind))
     .filter((item) => !query || normalize([item.title, ...item.alternate_titles, item.channel_title, ...item.genres,
       item.tmdb ? item.tmdb.title : "", item.tmdb ? item.tmdb.original_title : ""].join(" ")).includes(query))
     .sort(sort);
@@ -231,6 +235,7 @@ function renderCatalog() {
     body.append(el("div", "card-title", item.title), el("div", "card-meta", itemMeta(item)));
     const poster = posterElement(item);
     if (item.airing) poster.append(el("span", "ribbon", "En emisión"));
+    if (item.followed) poster.append(el("span", "ribbon follow", "Siguiendo"));
     card.append(poster, body);
     grid.append(card);
   }
@@ -381,7 +386,7 @@ async function loadDetail(chatId, anchorId) {
     ...item.languages, ...item.genres]) {
     if (text) badges.append(el("span", "badge", String(text)));
   }
-  info.append(title, badges);
+  info.append(title, badges, followControls(item));
   const tmdb = item.tmdb;
   if (tmdb && tmdb.original_title && normalize(tmdb.original_title) !== normalize(item.title)) {
     info.append(el("p", "hint", `Título original: ${tmdb.original_title}`));
@@ -440,6 +445,67 @@ async function loadDetail(chatId, anchorId) {
   updateDownloadButtons();
 }
 
+function qualitySelect(value, onChange) {
+  const select = el("select");
+  for (const [option, text] of MAX_QUALITY) {
+    const node = el("option", "", text);
+    node.value = option;
+    select.append(node);
+  }
+  select.value = value;
+  select.setAttribute("aria-label", "Calidad máxima");
+  select.addEventListener("change", () => onChange(select));
+  return select;
+}
+
+async function setFollowQuality(follow, select) {
+  try {
+    const updated = await api(`/api/follows/${follow.id}`, { method: "PUT", body: JSON.stringify({ max_quality: select.value }) });
+    follow.max_quality = updated.max_quality;
+  } catch (e) {
+    alert(e.message);
+    select.value = follow.max_quality;
+  }
+}
+
+// Botón «Seguir» de la ficha, con la calidad máxima y lo que hace
+function followControls(item) {
+  const box = el("div", "follow-box");
+  const series = item.kind === "series";
+  const render = () => {
+    const follow = item.follow;
+    const button = el("button", follow ? "secondary small" : "small", follow ? "✓ Siguiendo" : "Seguir");
+    if (follow) button.title = "Dejar de seguir";
+    button.addEventListener("click", async () => {
+      if (follow && !confirm(`¿Dejar de seguir «${item.title}»? Lo descargado se queda en la biblioteca.`)) return;
+      button.disabled = true;
+      try {
+        if (follow) {
+          await api(`/api/follows/${follow.id}`, { method: "DELETE" });
+          item.follow = null;
+        } else {
+          item.follow = await api("/api/follows", {
+            method: "POST", body: JSON.stringify({ chat_id: item.chat_id, anchor_id: item.anchor_id, max_quality: "" }),
+          });
+        }
+        lastCatalogJson = null;  // La marca «Siguiendo» del catálogo ha cambiado
+      } catch (e) {
+        alert(e.message);
+      }
+      render();
+    });
+    box.replaceChildren(button);
+    if (follow) box.append(qualitySelect(follow.max_quality, (select) => setFollowQuality(follow, select)));
+    const what = series
+      ? "los episodios nuevos se descargan solos y, si llega una versión mejor, sustituye a la que tengas."
+      : "si se publica una versión nueva, se descarga sola; si ya la tienes, solo las mejores, que sustituyen a la anterior.";
+    const text = follow ? `Desde el ${formatDay(follow.created_at)}, ${what}` : `Al seguirla, ${what}`;
+    box.append(el("p", "hint", text));
+  };
+  render();
+  return box;
+}
+
 function externalLink(url, text) {
   const link = el("a", "", text);
   link.href = url;
@@ -454,8 +520,9 @@ function externalLink(url, text) {
 
 const DOWNLOAD_STATUS = {
   queued: "En cola", downloading: "Descargando", importing: "Importando", completed: "En la biblioteca",
-  failed: "Falló", cancelled: "Cancelada",
+  failed: "Falló", cancelled: "Cancelada", replaced: "Sustituida",
 };
+const FINISHED = ["completed", "replaced"];
 const ACTIVE_STATUSES = ["queued", "downloading", "importing", "completed"];
 const IN_PROGRESS = ["queued", "downloading", "importing"];
 
@@ -561,7 +628,7 @@ function renderDownloads() {
     // Mientras importa, la barra muestra la descompresión
     const importing = d.status === "importing";
     const shown = importing ? (d.import_percent === null ? 0 : d.import_percent) : percent(d);
-    if (d.status !== "cancelled" && d.status !== "completed") {
+    if (d.status !== "cancelled" && !FINISHED.includes(d.status)) {
       const bar = el("div", "progress");
       const fill = el("div");
       fill.style.width = `${shown}%`;
@@ -571,7 +638,7 @@ function renderDownloads() {
     const meta = [];
     if (importing) {
       meta.push(d.import_percent !== null && d.import_percent < 100 ? `Descomprimiendo: ${d.import_percent} %` : "Moviendo a la biblioteca…");
-    } else if (d.status !== "completed") {
+    } else if (!FINISHED.includes(d.status)) {
       meta.push(`${formatSize(d.downloaded_size)} de ${formatSize(d.total_size)} (${percent(d)} %)`);
     } else {
       meta.push(formatSize(d.total_size));
@@ -581,9 +648,10 @@ function renderDownloads() {
       const left = formatDuration((d.total_size - d.downloaded_size) / d.bytes_per_second);
       if (left) meta.push(`quedan ${left}`);
     }
-    meta.push(`añadida el ${formatDate(d.created_at)}`);
+    meta.push(`añadida el ${formatDate(d.created_at)}${d.origin === "auto" ? " por el seguimiento" : ""}`);
     item.append(el("div", "download-meta", meta.join(" · ")));
-    if (d.library_path) item.append(el("div", "download-meta", `📁 ${d.library_path}`));
+    if (d.status === "replaced") item.append(el("div", "download-meta", "Sustituida por una versión mejor"));
+    else if (d.library_path) item.append(el("div", "download-meta", `📁 ${d.library_path}`));
     if (d.error) item.append(el("div", "err", d.error));
 
     const actions = el("div", "channel-actions");
@@ -599,7 +667,7 @@ function renderDownloads() {
       });
     }
     if (d.status === "failed" || d.status === "cancelled") action("Reintentar", "secondary", () => downloadAction(d.id, "retry", "POST"));
-    if (["completed", "failed", "cancelled"].includes(d.status)) action("Quitar de la lista", "secondary", () => downloadAction(d.id, "", "DELETE"));
+    if (["completed", "replaced", "failed", "cancelled"].includes(d.status)) action("Quitar de la lista", "secondary", () => downloadAction(d.id, "", "DELETE"));
     if (actions.children.length) item.append(actions);
     list.append(item);
   }
@@ -624,6 +692,100 @@ async function refreshDownloads() {
 }
 
 // ---------------------------------------------------------------------------
+// Seguimiento y actividad
+// ---------------------------------------------------------------------------
+
+// Icono y estilo de cada tipo de entrada del historial
+const ACTIVITY_STYLE = {
+  queued_episode: ["+", "queued"], queued_movie: ["+", "queued"], queued_upgrade: ["↑", "queued"],
+  completed: ["✓", "done"], upgraded: ["↑", "done"], failed: ["!", "failed"], follow: ["●", "user"], unfollow: ["○", "user"],
+};
+
+let activityEntries = [];
+let activityExpanded = false;  // Con «Ver más» pulsado no se refresca (perdería las páginas cargadas)
+
+function renderFollows(follows) {
+  const list = $("follow-list");
+  list.replaceChildren();
+  $("follows-empty").hidden = follows.length > 0;
+  for (const follow of follows) {
+    const item = el("li");
+    const info = el("div");
+    const title = el(follow.found ? "a" : "span", "channel-title", follow.title);
+    if (follow.found) title.href = `#/catalogo/${follow.chat_id}/${follow.anchor_id}`;
+    const meta = [KIND_LABEL[follow.kind] || follow.kind];
+    if (follow.year) meta.push(follow.year);
+    if (follow.airing) meta.push("en emisión");
+    meta.push(`desde el ${formatDay(follow.created_at)}`);
+    if (!follow.found) meta.push("ya no está en el catálogo");
+    info.append(title, el("div", "channel-meta", meta.join(" · ")));
+    const actions = el("div", "channel-actions");
+    const remove = el("button", "danger small", "Dejar de seguir");
+    remove.addEventListener("click", async () => {
+      if (!confirm(`¿Dejar de seguir «${follow.title}»? Lo descargado se queda en la biblioteca.`)) return;
+      try {
+        await api(`/api/follows/${follow.id}`, { method: "DELETE" });
+        lastCatalogJson = null;
+      } catch (e) {
+        alert(e.message);
+      }
+      loadActivity();
+    });
+    actions.append(qualitySelect(follow.max_quality, (select) => setFollowQuality(follow, select)), remove);
+    item.append(info, actions);
+    list.append(item);
+  }
+}
+
+function renderActivity() {
+  const list = $("activity-list");
+  list.replaceChildren();
+  $("activity-empty").hidden = activityEntries.length > 0;
+  for (const entry of activityEntries) {
+    const [icon, cls] = ACTIVITY_STYLE[entry.type] || ["·", "user"];
+    const item = el("li", `activity-${cls}`);
+    const text = el("div", "", entry.message);
+    const meta = el("div", "activity-meta", formatDate(entry.at));
+    if (entry.item) {
+      const link = el("a", "", "Ver ficha");
+      link.href = `#/catalogo/${entry.item.chat_id}/${entry.item.anchor_id}`;
+      meta.append(" · ", link);
+    }
+    item.append(el("span", "activity-icon", icon), text, meta);
+    list.append(item);
+  }
+  // Páginas de 100 (ver /api/activity): si la última vino llena, puede haber más
+  $("activity-more").hidden = activityEntries.length === 0 || activityEntries.length % 100 !== 0;
+}
+
+async function loadActivity() {
+  try {
+    const [follows, entries] = await Promise.all([api("/api/follows"), activityExpanded ? null : api("/api/activity")]);
+    renderFollows(follows);
+    if (entries) {
+      activityEntries = entries;
+      renderActivity();
+    }
+  } catch (e) {
+    $("activity-empty").textContent = `No se pudo cargar la actividad: ${e.message}`;
+    $("activity-empty").hidden = false;
+  }
+}
+
+$("activity-more").addEventListener("click", async () => {
+  const last = activityEntries[activityEntries.length - 1];
+  try {
+    const more = await api(`/api/activity?before=${last.id}`);
+    activityExpanded = true;
+    activityEntries = activityEntries.concat(more);
+    renderActivity();
+    if (more.length < 100) $("activity-more").hidden = true;
+  } catch (e) {
+    alert(e.message);
+  }
+});
+
+// ---------------------------------------------------------------------------
 // Ajustes
 // ---------------------------------------------------------------------------
 
@@ -639,6 +801,7 @@ function renderSettings(data) {
   for (const field of PATH_FIELDS) $(`set-${field}`).value = data[field] || "";
   $("set-download_dir").placeholder = `${data.default_download_dir} (predeterminado)`;
   $("set-min_free_gb").value = Math.round(data.min_free_bytes / 1e9);
+  $("set-keep_replaced").checked = data.keep_replaced;
 
   for (const field of PATH_FIELDS) {
     const check = data.checks[field];
@@ -673,7 +836,7 @@ $("settings-form").addEventListener("submit", async (event) => {
   event.preventDefault();
   const message = $("settings-message");
   const button = $("settings-save");
-  const body = { min_free_gb: Number($("set-min_free_gb").value) };
+  const body = { min_free_gb: Number($("set-min_free_gb").value), keep_replaced: $("set-keep_replaced").checked };
   for (const field of PATH_FIELDS) body[field] = $(`set-${field}`).value.trim();
 
   button.disabled = true;
@@ -930,4 +1093,5 @@ refresh();
 setInterval(refresh, STATUS_POLL_MS);
 setInterval(() => {
   if (telegramReady && currentRoute().view === "catalog") loadCatalog();
+  if (telegramReady && currentRoute().view === "activity") loadActivity();
 }, CATALOG_POLL_MS);

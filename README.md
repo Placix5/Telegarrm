@@ -9,6 +9,10 @@ Telegarrm es un servicio daemon (stack ARR) que utiliza Telegram (TDLib) como fu
   - `channel_sync.cpp`: copia el historial de los canales vigilados en SQLite (clase `ChannelSync`)
   - `media_parser.cpp`: interpreta nombres de fichero y fichas (episodios, título, año, calidad, idioma)
   - `catalog.cpp`: agrupa los mensajes de cada canal en series y películas (clase `Catalog`)
+  - `metadata.cpp`, `tmdb_client.cpp`: metadatos de TMDB con caché local
+  - `download_manager.cpp`: cola de descargas; `library.cpp`: descompresión, nombres para Jellyfin y sustitución de versiones; `process.cpp`: procesos externos sin shell
+  - `tracker.cpp`: seguimiento de series y películas (episodios nuevos y versiones mejores)
+  - `settings.cpp`: ajustes editables desde la web
   - `db_manager.cpp`: acceso a SQLite (clase `DbManager`)
   - `telegram_client.cpp`: cliente de TDLib en su propio hilo (clase `TelegramClient`)
   - `signal_watcher.cpp`: parada ordenada con SIGINT/SIGTERM (clase `SignalWatcher`)
@@ -27,7 +31,7 @@ Detalle y tareas en [docs/ROADMAP.md](docs/ROADMAP.md).
 - [x] **Fase 1**: Motor TDLib en un hilo propio y SQLite para configuración y estado. *Completada.*
 - [x] **Fase 2**: Canales y catálogo: lectura del historial de los canales elegidos, catálogo con versiones y metadatos de TMDB.
 - [x] **Fase 3**: Descargas: cola, descompresión y renombrado para Jellyfin.
-- [ ] **Fase 4**: Tele-ARR: escucha de mensajes nuevos, reemplazo de calidades y auto-descarga de capítulos en seguimiento.
+- [x] **Fase 4**: Tele-ARR: mensajes nuevos en tiempo real, seguimiento de series y películas, auto-descarga de episodios nuevos, sustitución por versiones mejores e historial de actividad.
 
 ## Dependencias
 - Compilador con C++17, CMake >= 3.14, SQLite3 y TDLib >= 1.8.
@@ -55,7 +59,7 @@ Las credenciales de la API de Telegram se obtienen en <https://my.telegram.org> 
 
 Sin ellas, el servicio no arranca.
 
-El resto se configura desde la pestaña **Ajustes** de la web: búfer de descargas (dónde descarga TDLib; se aplica con "Reiniciar ahora"), bibliotecas de películas y series, y espacio libre mínimo. Estructura recomendada en [D-033](docs/DECISIONS.md#d-033-estructura-de-carpetas-srvmedia-y-jellyfin): todo en el mismo disco (`/srv/media/descargas`, `/srv/media/peliculas`, `/srv/media/series`) para que llevar lo descargado a la biblioteca sea instantáneo. La sesión de Telegram se guarda en `db/tdlib/` (permisos `0700`): da acceso completo a la cuenta, así que no la copies ni la subas a ningún sitio.
+El resto se configura desde la pestaña **Ajustes** de la web: búfer de descargas (dónde descarga TDLib; se aplica con "Reiniciar ahora"), bibliotecas de películas y series, espacio libre mínimo y si se conserva la versión anterior cuando el seguimiento la mejora. Estructura recomendada en [D-033](docs/DECISIONS.md#d-033-estructura-de-carpetas-srvmedia-y-jellyfin): todo en el mismo disco (`/srv/media/descargas`, `/srv/media/peliculas`, `/srv/media/series`) para que llevar lo descargado a la biblioteca sea instantáneo. La sesión de Telegram se guarda en `db/tdlib/` (permisos `0700`): da acceso completo a la cuenta, así que no la copies ni la subas a ningún sitio.
 
 ## Compilación y ejecución
 ```bash
@@ -69,7 +73,7 @@ Ejecútalo desde la raíz del proyecto: las rutas `db/` y `web/` son relativas a
 La primera vez, abre `http://<ip-de-la-pi>:8080/` e inicia sesión en Telegram (teléfono, código y, si la tienes, contraseña de verificación en dos pasos). La sesión se conserva entre reinicios.
 
 ### Como servicio (systemd)
-`deploy/telegarrm.service` es un servicio de sistema que corre como `plax`, aislado (solo puede escribir en `db/`), y lee las credenciales de `~/.config/telegarrm/env` (permisos `600`, con las dos variables de [Configuración](#configuración)). La regla de polkit `deploy/50-telegarrm.rules` permite a `plax` arrancarlo, pararlo y reiniciarlo sin `sudo`. Motivos en [docs/DECISIONS.md](docs/DECISIONS.md) (D-013).
+`deploy/telegarrm.service` es un servicio de sistema que corre como `plax`, aislado (solo puede escribir en `db/` y `/srv/media`), y lee las credenciales de `~/.config/telegarrm/env` (permisos `600`, con las dos variables de [Configuración](#configuración)). La regla de polkit `deploy/50-telegarrm.rules` permite a `plax` arrancarlo, pararlo y reiniciarlo sin `sudo`. Motivos en [docs/DECISIONS.md](docs/DECISIONS.md) (D-013).
 
 El servicio solo puede escribir en `db/` y en `/srv/media`; para otra carpeta (ej. un RAID montado en otro sitio), pásala al script: `sudo ./deploy/install-service.sh /mnt/raid`.
 
@@ -92,19 +96,24 @@ Desplegar una versión nueva del programa no necesita `sudo`: `cmake --build bui
 | `GET /api/channels` | Canales vigilados y estado de su sincronización |
 | `POST /api/channels` | `{"chat_id": -100...}`: vigilar un canal o grupo; empieza a sincronizarse al momento |
 | `DELETE /api/channels/{id}` | Dejar de vigilarlo (borra sus mensajes guardados, no los de Telegram) |
-| `POST /api/channels/{id}/sync` | Buscar mensajes nuevos ya, sin esperar a la ronda periódica (cada 15 min) |
+| `POST /api/channels/{id}/sync` | Buscar mensajes nuevos ya. Normalmente no hace falta: llegan al momento (D-036) y, además, hay una ronda cada 15 min |
 | `GET /api/channels/{id}/messages?limit=50&offset=0` | Mensajes guardados, del más reciente al más antiguo (con su `topic_id`) |
 | `GET /api/channels/{id}/topics` | Temas de un grupo con temas, con cuántos mensajes tiene cada uno |
-| `GET /api/catalog` | Obras (series y películas) de todos los canales: título, títulos alternativos, año, versiones disponibles (`qualities`, `hdr`), idiomas, géneros, temas, `airing` (en emisión), temporadas, episodios, tamaño en bytes, `tmdb_id` si los archivos lo traen |
-| `GET /api/catalog/{chat}/{ficha}` | Obra completa: sinopsis, ficha original y sus archivos lógicos (`releases`) con calidad, HDR, etiquetas de versión, temporada y episodio, y sus partes. Vale cualquier ficha de la obra |
+| `GET /api/catalog` | Obras (series y películas) de todos los canales: título, títulos alternativos, año, versiones disponibles (`qualities`, `hdr`), idiomas, géneros, temas, `airing` (en emisión), `followed` (en seguimiento), temporadas, episodios, tamaño en bytes y datos de TMDB |
+| `GET /api/catalog/{chat}/{ficha}` | Obra completa: sinopsis, ficha original, seguimiento (`follow`) y sus archivos lógicos (`releases`) con calidad, HDR, etiquetas de versión, temporada y episodio, y sus partes. Vale cualquier ficha de la obra |
 | `GET /api/catalog/{chat}/{ficha}/poster` | Portada: la foto de la ficha (de Telegram) o, si no hay, la carátula de TMDB; se guardan tras la primera vez |
-| `GET /api/downloads` | Cola de descargas con su progreso (`downloaded_size`, `bytes_per_second`, `import_percent`, `library_path`; `status`: queued, downloading, importing, completed —en la biblioteca—, failed, cancelled) |
+| `GET /api/downloads` | Cola de descargas con su progreso (`downloaded_size`, `bytes_per_second`, `import_percent`, `library_path`; `status`: queued, downloading, importing, completed —en la biblioteca—, failed, cancelled, replaced —sustituida por una versión mejor—), su origen (`origin`: manual o auto) y las descargas a las que sustituye (`replaces`) |
 | `POST /api/downloads` | `{"chat_id": -100..., "message_id": ...}` (cualquier parte de un archivo del catálogo): 201, o 409 si ya está en la cola o descargado |
 | `POST /api/downloads/{id}/cancel` | Cancelar (borra lo descargado a medias) |
 | `POST /api/downloads/{id}/retry` | Reintentar una descarga fallida o cancelada |
 | `DELETE /api/downloads/{id}` | Quitar de la lista una descarga terminada, fallida o cancelada |
+| `GET /api/follows` | Obras seguidas: calidad máxima (`max_quality`), desde cuándo (`created_at`) y su ficha actual en el catálogo (`found` = sigue en él) |
+| `POST /api/follows` | `{"chat_id": -100..., "anchor_id": ..., "max_quality": ""}` (`""` = la mejor, `"1080p"` o `"720p"`): seguir una obra; 409 si ya se sigue |
+| `PUT /api/follows/{id}` | `{"max_quality": "1080p"}`: cambiar la calidad máxima |
+| `DELETE /api/follows/{id}` | Dejar de seguir (lo descargado se queda) |
+| `GET /api/activity?before={id}` | Historial de actividad, del más reciente al más antiguo, de 100 en 100, con enlace a la obra (`item`) |
 | `GET /api/settings` | Ajustes, con la comprobación de cada ruta (escritura, espacio libre), si búfer y bibliotecas comparten disco y si hace falta reiniciar |
-| `PUT /api/settings` | `{"download_dir", "movies_dir", "series_dir", "min_free_gb"}`: valida antes de guardar (400 con el motivo por campo) |
+| `PUT /api/settings` | `{"download_dir", "movies_dir", "series_dir", "min_free_gb", "keep_replaced"}`: valida antes de guardar (400 con el motivo por campo) |
 | `POST /api/restart` | Parada ordenada y reinicio (código 75; systemd lo vuelve a arrancar) |
 
 Ejemplo de `/api/status`:
@@ -116,6 +125,16 @@ Ejemplo de `/api/status`:
 Los pasos del inicio de sesión responden `{"ok": true}`, o `{"error": "..."}` con HTTP 400 (dato incorrecto, ej. `PHONE_CODE_INVALID`), 409 (Telegram no espera ese dato ahora) o 504 (Telegram no responde).
 
 ## Historial de cambios
+### Fase 4: seguimiento (Tele-ARR)
+- Mensajes nuevos en tiempo real (D-036): los canales vigilados se abren en TDLib (`openChat`) y cada `updateNewMessage` dispara una sincronización rápida. Los avisos se agrupan para no saturar TDLib.
+- Seguimiento (D-035): botón «Seguir» en cada ficha, con calidad máxima.
+  - Los episodios nuevos de las series seguidas se descargan solos, también la primera versión que se publique de una película seguida. Solo cuenta lo publicado después de seguir.
+  - Se espera a que estén todas las partes de un comprimido.
+- Mejoras (D-037): una versión con más resolución, HDR o REMUX sustituye a la descargada. La anterior se borra cuando la nueva ya está en la biblioteca, o se conserva si así se elige en *Ajustes*.
+- Pestaña *Actividad*: obras seguidas y el historial de lo que el sistema hace solo. Filtro «En seguimiento» en el catálogo; las descargas automáticas se distinguen en *Descargas*.
+- Migración v7: tablas `follows`, `auto_releases` y `activity`; en `downloads`, origen, seguimiento, sustituciones y archivos colocados. Tests: 343 comprobaciones.
+- Comprobado en la Pi: un episodio nuevo de una serie seguida (860 MB, 20 s) y una mejora de 1080p a 4K HDR que borró la versión anterior.
+
 ### Fase 3: descargas e importación a la biblioteca
 - Importación (D-034): al terminar, cada descarga se descomprime si hace falta (7-Zip, sin shell), se eligen los vídeos y subtítulos y se mueven a la biblioteca con nombres para Jellyfin (`Título (Año) [tmdbid-N]/…`, `Season 01/Serie S01E01 - 1080p.mkv`), y se libera el búfer. Comprobado en la Pi con un ZIP (451 MB) y un RAR de 2 partes (1,86 GB, descomprimido en ~20 s); los RAR necesitan el paquete `7zip-rar`.
 - Pestaña *Ajustes*: búfer de descargas de TDLib (aplicado con un reinicio ordenado desde la web), bibliotecas y espacio libre mínimo, con validación real de cada ruta (D-032). La unidad admite `/srv/media` y rutas adicionales vía `install-service.sh`.

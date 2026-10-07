@@ -9,6 +9,7 @@
 #include <string>
 #include <thread>
 #include <unordered_map>
+#include <vector>
 
 #include <nlohmann/json.hpp>
 
@@ -56,6 +57,10 @@ public:
     // Último objeto connectionState* recibido (ej. connectionStateReady)
     Json connectionState() const;
 
+    // Recibe cada actualización de TDLib (updateNewMessage...) en el hilo receptor: debe volver
+    // enseguida y no puede llamar a request(). Se registra antes de start().
+    void addUpdateListener(Handler listener);
+
 private:
     void run();
     void createClient();
@@ -76,4 +81,7 @@ private:
     Json connectionState_;
     std::unordered_map<std::uint64_t, Handler> pending_;
     std::uint64_t nextRequestId_ = 1;
+
+    // Solo se modifica antes de start(): el hilo receptor lo lee sin mutex
+    std::vector<Handler> updateListeners_;
 };

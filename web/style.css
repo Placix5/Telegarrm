@@ -86,6 +86,10 @@ form > button { margin-top: 0.8rem; }
 .ribbon { position: absolute; top: 0.5rem; left: 0.5rem; padding: 0.1rem 0.5rem; border-radius: 1rem;
           background: var(--accent); color: #fff; font-size: 0.75rem; font-weight: 600; }
 .badge.airing { background: var(--accent); color: #fff; }
+.ribbon.follow { left: auto; right: 0.5rem; background: var(--ok); }
+.follow-box { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; margin-bottom: 0.8rem; }
+.follow-box select { width: auto; padding-top: 0.3rem; padding-bottom: 0.3rem; font-size: 0.9rem; }
+.follow-box .hint { flex-basis: 100%; margin: 0; }
 .synopsis { margin: 0.6rem 0 0.8rem; }
 .versions { display: flex; flex-wrap: wrap; gap: 0.35rem; }
 .version { padding: 0.1rem 0.55rem; border: 1px solid var(--border); border-radius: 0.4rem; font-size: 0.85rem;
@@ -114,7 +118,23 @@ button.download.wide { width: 11rem; }
 .progress { height: 0.45rem; background: var(--bg); border: 1px solid var(--border); border-radius: 1rem;
             overflow: hidden; margin: 0.45rem 0 0.25rem; }
 .progress > div { height: 100%; background: var(--accent); width: 0; transition: width 0.5s; }
-.status-completed { color: var(--ok); } .status-failed { color: var(--err); } .status-cancelled { color: var(--muted); }
+.status-completed { color: var(--ok); } .status-failed { color: var(--err); } .status-cancelled,
+.status-replaced { color: var(--muted); }
+
+/* Seguimiento y actividad */
+.follow-list, .activity-list { list-style: none; margin: 0; padding: 0; }
+.follow-list li { display: flex; gap: 1rem; align-items: center; justify-content: space-between;
+                  padding: 0.7rem 0; border-bottom: 1px solid var(--border); }
+.follow-list li:first-child { padding-top: 0; }
+.follow-list select { width: auto; padding-top: 0.3rem; padding-bottom: 0.3rem; font-size: 0.9rem; }
+.activity-list li { display: grid; grid-template-columns: 1.4rem 1fr; gap: 0 0.5rem; padding: 0.55rem 0;
+                    border-bottom: 1px solid var(--border); }
+.activity-list li:first-child { padding-top: 0; }
+.activity-icon { text-align: center; font-weight: 700; }
+.activity-meta { grid-column: 2; color: var(--muted); font-size: 0.85rem; }
+.activity-queued .activity-icon { color: var(--accent); } .activity-done .activity-icon { color: var(--ok); }
+.activity-failed .activity-icon { color: var(--err); } .activity-user .activity-icon { color: var(--muted); }
+#activity-more { margin-top: 0.8rem; }
 
 /* Ajustes */
 .field { margin-bottom: 1.1rem; }
@@ -124,6 +144,8 @@ button.download.wide { width: 11rem; }
 #settings-form h3:first-child { margin-top: 0; }
 .notice { background: var(--accent-soft); border-radius: 0.4rem; padding: 0.8rem 1rem; margin-bottom: 1rem; }
 .notice p { margin-bottom: 0.6rem; }
+label.check { display: flex; gap: 0.5rem; align-items: center; cursor: pointer; }
+label.check input { width: auto; margin: 0; }
 
 /* Créditos (TMDB exige su logo y este aviso) */
 .credits { max-width: 72rem; margin: 0 auto; padding: 1rem 1rem 2rem; display: flex; gap: 1rem; align-items: center;
@@ -153,7 +175,7 @@ td.episode { white-space: nowrap; font-variant-numeric: tabular-nums; }
   .download-head { flex-direction: column; }
   .detail { grid-template-columns: 1fr; }
   .detail .poster { max-width: 12rem; }
-  .channel-list li { flex-direction: column; align-items: flex-start; }
+  .channel-list li, .follow-list li { flex-direction: column; align-items: flex-start; }
   .row, .toolbar { flex-direction: column; align-items: stretch; }
   .toolbar select { width: 100%; }
 }

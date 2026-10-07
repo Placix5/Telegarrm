@@ -138,6 +138,44 @@ constexpr Migration kMigrations[] = {
         -- el búfer, así que solo se importa
         UPDATE downloads SET status = 'queued' WHERE status = 'completed';
     )SQL"},
+    {7, R"SQL(
+        -- Seguimiento (Fase 4, D-035): obras seguidas
+        CREATE TABLE follows (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            kind        TEXT    NOT NULL,             -- series / movie
+            title       TEXT    NOT NULL,
+            year        INTEGER,
+            tmdb_id     INTEGER NOT NULL DEFAULT 0,
+            work_key    TEXT    NOT NULL DEFAULT '',  -- tipo|título normalizado|año (MetadataService)
+            chat_id     INTEGER NOT NULL,             -- Una ficha de la obra (el catálogo acepta cualquiera)
+            anchor_id   INTEGER NOT NULL,
+            max_quality TEXT    NOT NULL DEFAULT '',  -- '' = la mejor; '1080p', '720p'...
+            created_at  INTEGER NOT NULL              -- Solo cuenta lo publicado después
+        );
+        -- Archivos lógicos que el seguimiento ya puso en cola: nunca se repiten solos
+        CREATE TABLE auto_releases (
+            chat_id    INTEGER NOT NULL,
+            message_id INTEGER NOT NULL,  -- Primera parte
+            follow_id  INTEGER NOT NULL,
+            created_at INTEGER NOT NULL,
+            PRIMARY KEY (chat_id, message_id)
+        ) WITHOUT ROWID;
+        -- Historial de lo que hace el sistema solo (D-037)
+        CREATE TABLE activity (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            at          INTEGER NOT NULL,
+            type        TEXT    NOT NULL,
+            message     TEXT    NOT NULL,
+            chat_id     INTEGER NOT NULL DEFAULT 0,  -- Mensaje de la obra (ficha o archivo), para enlazarla
+            message_id  INTEGER NOT NULL DEFAULT 0,
+            follow_id   INTEGER,
+            download_id INTEGER
+        );
+        ALTER TABLE downloads ADD COLUMN origin        TEXT NOT NULL DEFAULT 'manual';  -- manual / auto
+        ALTER TABLE downloads ADD COLUMN follow_id     INTEGER;
+        ALTER TABLE downloads ADD COLUMN replaces      TEXT NOT NULL DEFAULT '';  -- Descargas que sustituye
+        ALTER TABLE downloads ADD COLUMN library_files TEXT NOT NULL DEFAULT '';  -- Archivos colocados
+    )SQL"},
 };
 
 // Finaliza automáticamente las sentencias preparadas.
@@ -265,7 +303,8 @@ std::int64_t now() {
 
 constexpr const char* kSelectDownload = R"SQL(
     SELECT id, chat_id, message_id, title, kind, season, episode, episode_end, name, quality, hdr, tags,
-           archive, total_size, downloaded_size, status, error, created_at, updated_at, library_path
+           archive, total_size, downloaded_size, status, error, created_at, updated_at, library_path,
+           origin, follow_id, replaces, library_files
     FROM downloads
 )SQL";
 
@@ -291,6 +330,16 @@ DbManager::Download readDownload(sqlite3_stmt* stmt) {
     d.createdAt = sqlite3_column_int64(stmt, 17);
     d.updatedAt = sqlite3_column_int64(stmt, 18);
     d.libraryPath = columnText(stmt, 19);
+    d.origin = columnText(stmt, 20);
+    d.followId = columnOptionalInt64(stmt, 21);
+    for (const std::string& id : splitLines(columnText(stmt, 22))) {
+        try {
+            d.replaces.push_back(std::stoll(id));
+        } catch (const std::exception&) {
+            // Valor dañado: se ignora
+        }
+    }
+    d.libraryFiles = splitLines(columnText(stmt, 23));
     return d;
 }
 
@@ -870,8 +919,8 @@ DbManager::AddDownloadResult DbManager::addDownload(const Download& d) {
     )SQL");
     StmtPtr insert = prepare(db_.get(), R"SQL(
         INSERT INTO downloads (chat_id, message_id, title, kind, season, episode, episode_end, name, quality, hdr,
-                               tags, archive, total_size, status, created_at, updated_at)
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, 'queued', ?14, ?14);
+                               tags, archive, total_size, status, created_at, updated_at, origin, follow_id, replaces)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, 'queued', ?14, ?14, ?15, ?16, ?17);
     )SQL");
     StmtPtr insertPart = prepare(db_.get(), R"SQL(
         INSERT INTO download_parts (download_id, message_id, number, file_name, size) VALUES (?1, ?2, ?3, ?4, ?5);
@@ -889,6 +938,12 @@ DbManager::AddDownloadResult DbManager::addDownload(const Download& d) {
     }
 
     const std::string tags = joinLines(d.tags);
+    std::vector<std::string> replacedIds;
+    for (const std::int64_t replaced : d.replaces) {
+        replacedIds.push_back(std::to_string(replaced));
+    }
+    const std::string replaces = joinLines(replacedIds);
+    const std::string origin = d.origin.empty() ? "manual" : d.origin;
     sqlite3_bind_int64(insert.get(), 1, d.chatId);
     sqlite3_bind_int64(insert.get(), 2, d.messageId);
     bindText(insert.get(), 3, d.title);
@@ -903,6 +958,9 @@ DbManager::AddDownloadResult DbManager::addDownload(const Download& d) {
     sqlite3_bind_int(insert.get(), 12, d.archive ? 1 : 0);
     sqlite3_bind_int64(insert.get(), 13, d.totalSize);
     sqlite3_bind_int64(insert.get(), 14, now());
+    bindText(insert.get(), 15, origin);
+    bindOptionalInt64(insert.get(), 16, d.followId);
+    bindText(insert.get(), 17, replaces);
     if (sqlite3_step(insert.get()) != SQLITE_DONE) {
         logError(db_.get(), "añadir la descarga");
         return result;
@@ -1081,21 +1139,280 @@ bool DbManager::deleteDownload(std::int64_t id) {
     return sqlite3_changes(db_.get()) > 0;
 }
 
-bool DbManager::setDownloadLibraryPath(std::int64_t id, const std::string& libraryPath) {
+bool DbManager::setDownloadLibrary(std::int64_t id, const std::string& libraryPath,
+                                   const std::vector<std::string>& files) {
     std::lock_guard<std::mutex> lock(mutex_);
     if (!db_) {
         return false;
     }
-    StmtPtr stmt = prepare(db_.get(), "UPDATE downloads SET library_path = ?2, updated_at = ?3 WHERE id = ?1;");
+    StmtPtr stmt = prepare(db_.get(),
+                           "UPDATE downloads SET library_path = ?2, library_files = ?3, updated_at = ?4 WHERE id = ?1;");
     if (!stmt) {
         return false;
     }
+    const std::string fileList = joinLines(files);
     sqlite3_bind_int64(stmt.get(), 1, id);
     bindText(stmt.get(), 2, libraryPath);
-    sqlite3_bind_int64(stmt.get(), 3, now());
+    bindText(stmt.get(), 3, fileList);
+    sqlite3_bind_int64(stmt.get(), 4, now());
     if (sqlite3_step(stmt.get()) != SQLITE_DONE) {
         logError(db_.get(), "guardar la ruta en la biblioteca");
         return false;
     }
     return true;
+}
+
+// --- Seguimiento ---
+
+namespace {
+
+constexpr const char* kSelectFollow = R"SQL(
+    SELECT id, kind, title, year, tmdb_id, work_key, chat_id, anchor_id, max_quality, created_at FROM follows
+)SQL";
+
+DbManager::Follow readFollow(sqlite3_stmt* stmt) {
+    DbManager::Follow f;
+    f.id = sqlite3_column_int64(stmt, 0);
+    f.kind = columnText(stmt, 1);
+    f.title = columnText(stmt, 2);
+    if (const auto year = columnOptionalInt64(stmt, 3)) {
+        f.year = static_cast<int>(*year);
+    }
+    f.tmdbId = sqlite3_column_int64(stmt, 4);
+    f.workKey = columnText(stmt, 5);
+    f.chatId = sqlite3_column_int64(stmt, 6);
+    f.anchorId = sqlite3_column_int64(stmt, 7);
+    f.maxQuality = columnText(stmt, 8);
+    f.createdAt = sqlite3_column_int64(stmt, 9);
+    return f;
+}
+
+// Entradas del historial que se conservan
+constexpr int kMaxActivity = 5000;
+
+}  // namespace
+
+std::optional<std::int64_t> DbManager::addFollow(const Follow& f) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!db_) {
+        return std::nullopt;
+    }
+    StmtPtr stmt = prepare(db_.get(), R"SQL(
+        INSERT INTO follows (kind, title, year, tmdb_id, work_key, chat_id, anchor_id, max_quality, created_at)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9);
+    )SQL");
+    if (!stmt) {
+        return std::nullopt;
+    }
+    bindText(stmt.get(), 1, f.kind);
+    bindText(stmt.get(), 2, f.title);
+    bindOptionalInt64(stmt.get(), 3, f.year ? std::optional<std::int64_t>(*f.year) : std::nullopt);
+    sqlite3_bind_int64(stmt.get(), 4, f.tmdbId);
+    bindText(stmt.get(), 5, f.workKey);
+    sqlite3_bind_int64(stmt.get(), 6, f.chatId);
+    sqlite3_bind_int64(stmt.get(), 7, f.anchorId);
+    bindText(stmt.get(), 8, f.maxQuality);
+    sqlite3_bind_int64(stmt.get(), 9, f.createdAt > 0 ? f.createdAt : now());
+    if (sqlite3_step(stmt.get()) != SQLITE_DONE) {
+        logError(db_.get(), "seguir la obra");
+        return std::nullopt;
+    }
+    return sqlite3_last_insert_rowid(db_.get());
+}
+
+std::vector<DbManager::Follow> DbManager::listFollows() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    std::vector<Follow> follows;
+    if (!db_) {
+        return follows;
+    }
+    const std::string sql = std::string(kSelectFollow) + " ORDER BY id;";
+    StmtPtr stmt = prepare(db_.get(), sql.c_str());
+    if (!stmt) {
+        return follows;
+    }
+    while (sqlite3_step(stmt.get()) == SQLITE_ROW) {
+        follows.push_back(readFollow(stmt.get()));
+    }
+    return follows;
+}
+
+std::optional<DbManager::Follow> DbManager::getFollow(std::int64_t id) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!db_) {
+        return std::nullopt;
+    }
+    const std::string sql = std::string(kSelectFollow) + " WHERE id = ?1;";
+    StmtPtr stmt = prepare(db_.get(), sql.c_str());
+    if (!stmt) {
+        return std::nullopt;
+    }
+    sqlite3_bind_int64(stmt.get(), 1, id);
+    if (sqlite3_step(stmt.get()) != SQLITE_ROW) {
+        return std::nullopt;
+    }
+    return readFollow(stmt.get());
+}
+
+bool DbManager::updateFollowQuality(std::int64_t id, const std::string& maxQuality) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!db_) {
+        return false;
+    }
+    StmtPtr stmt = prepare(db_.get(), "UPDATE follows SET max_quality = ?2 WHERE id = ?1;");
+    if (!stmt) {
+        return false;
+    }
+    sqlite3_bind_int64(stmt.get(), 1, id);
+    bindText(stmt.get(), 2, maxQuality);
+    if (sqlite3_step(stmt.get()) != SQLITE_DONE) {
+        logError(db_.get(), "cambiar la calidad del seguimiento");
+        return false;
+    }
+    return sqlite3_changes(db_.get()) > 0;
+}
+
+bool DbManager::updateFollowWork(const Follow& f) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!db_) {
+        return false;
+    }
+    StmtPtr stmt = prepare(db_.get(), R"SQL(
+        UPDATE follows SET title = ?2, year = ?3, tmdb_id = ?4, work_key = ?5, chat_id = ?6, anchor_id = ?7
+        WHERE id = ?1;
+    )SQL");
+    if (!stmt) {
+        return false;
+    }
+    sqlite3_bind_int64(stmt.get(), 1, f.id);
+    bindText(stmt.get(), 2, f.title);
+    bindOptionalInt64(stmt.get(), 3, f.year ? std::optional<std::int64_t>(*f.year) : std::nullopt);
+    sqlite3_bind_int64(stmt.get(), 4, f.tmdbId);
+    bindText(stmt.get(), 5, f.workKey);
+    sqlite3_bind_int64(stmt.get(), 6, f.chatId);
+    sqlite3_bind_int64(stmt.get(), 7, f.anchorId);
+    if (sqlite3_step(stmt.get()) != SQLITE_DONE) {
+        logError(db_.get(), "actualizar la obra seguida");
+        return false;
+    }
+    return sqlite3_changes(db_.get()) > 0;
+}
+
+bool DbManager::deleteFollow(std::int64_t id) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!db_) {
+        return false;
+    }
+    StmtPtr stmt = prepare(db_.get(), "DELETE FROM follows WHERE id = ?1;");
+    if (!stmt) {
+        return false;
+    }
+    sqlite3_bind_int64(stmt.get(), 1, id);
+    if (sqlite3_step(stmt.get()) != SQLITE_DONE) {
+        logError(db_.get(), "dejar de seguir la obra");
+        return false;
+    }
+    return sqlite3_changes(db_.get()) > 0;
+}
+
+bool DbManager::addAutoRelease(std::int64_t chatId, std::int64_t messageId, std::int64_t followId) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!db_) {
+        return false;
+    }
+    StmtPtr stmt = prepare(db_.get(), R"SQL(
+        INSERT OR IGNORE INTO auto_releases (chat_id, message_id, follow_id, created_at) VALUES (?1, ?2, ?3, ?4);
+    )SQL");
+    if (!stmt) {
+        return false;
+    }
+    sqlite3_bind_int64(stmt.get(), 1, chatId);
+    sqlite3_bind_int64(stmt.get(), 2, messageId);
+    sqlite3_bind_int64(stmt.get(), 3, followId);
+    sqlite3_bind_int64(stmt.get(), 4, now());
+    if (sqlite3_step(stmt.get()) != SQLITE_DONE) {
+        logError(db_.get(), "anotar el archivo puesto en cola");
+        return false;
+    }
+    return true;
+}
+
+std::vector<std::pair<std::int64_t, std::int64_t>> DbManager::listAutoReleases() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    std::vector<std::pair<std::int64_t, std::int64_t>> releases;
+    if (!db_) {
+        return releases;
+    }
+    StmtPtr stmt = prepare(db_.get(), "SELECT chat_id, message_id FROM auto_releases;");
+    if (!stmt) {
+        return releases;
+    }
+    while (sqlite3_step(stmt.get()) == SQLITE_ROW) {
+        releases.emplace_back(sqlite3_column_int64(stmt.get(), 0), sqlite3_column_int64(stmt.get(), 1));
+    }
+    return releases;
+}
+
+// --- Historial de actividad ---
+
+bool DbManager::addActivity(const Activity& a) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!db_) {
+        return false;
+    }
+    StmtPtr stmt = prepare(db_.get(), R"SQL(
+        INSERT INTO activity (at, type, message, chat_id, message_id, follow_id, download_id)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7);
+    )SQL");
+    StmtPtr prune = prepare(db_.get(), "DELETE FROM activity WHERE id <= (SELECT MAX(id) FROM activity) - ?1;");
+    if (!stmt || !prune) {
+        return false;
+    }
+    sqlite3_bind_int64(stmt.get(), 1, a.at > 0 ? a.at : now());
+    bindText(stmt.get(), 2, a.type);
+    bindText(stmt.get(), 3, a.message);
+    sqlite3_bind_int64(stmt.get(), 4, a.chatId);
+    sqlite3_bind_int64(stmt.get(), 5, a.messageId);
+    bindOptionalInt64(stmt.get(), 6, a.followId);
+    bindOptionalInt64(stmt.get(), 7, a.downloadId);
+    if (sqlite3_step(stmt.get()) != SQLITE_DONE) {
+        logError(db_.get(), "anotar la actividad");
+        return false;
+    }
+    // Los identificadores son correlativos (AUTOINCREMENT): se conservan los kMaxActivity últimos
+    sqlite3_bind_int(prune.get(), 1, kMaxActivity);
+    if (sqlite3_step(prune.get()) != SQLITE_DONE) {
+        logError(db_.get(), "recortar el historial");
+    }
+    return true;
+}
+
+std::vector<DbManager::Activity> DbManager::listActivity(int limit, std::int64_t beforeId) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    std::vector<Activity> entries;
+    if (!db_) {
+        return entries;
+    }
+    StmtPtr stmt = prepare(db_.get(), R"SQL(
+        SELECT id, at, type, message, chat_id, message_id, follow_id, download_id FROM activity
+        WHERE ?1 = 0 OR id < ?1 ORDER BY id DESC LIMIT ?2;
+    )SQL");
+    if (!stmt) {
+        return entries;
+    }
+    sqlite3_bind_int64(stmt.get(), 1, beforeId);
+    sqlite3_bind_int(stmt.get(), 2, limit);
+    while (sqlite3_step(stmt.get()) == SQLITE_ROW) {
+        Activity a;
+        a.id = sqlite3_column_int64(stmt.get(), 0);
+        a.at = sqlite3_column_int64(stmt.get(), 1);
+        a.type = columnText(stmt.get(), 2);
+        a.message = columnText(stmt.get(), 3);
+        a.chatId = sqlite3_column_int64(stmt.get(), 4);
+        a.messageId = sqlite3_column_int64(stmt.get(), 5);
+        a.followId = columnOptionalInt64(stmt.get(), 6);
+        a.downloadId = columnOptionalInt64(stmt.get(), 7);
+        entries.push_back(std::move(a));
+    }
+    return entries;
 }

@@ -51,6 +51,7 @@ add_library(telegarrm_core STATIC
     src/tmdb_client.cpp
     src/signal_watcher.cpp
     src/telegram_client.cpp
+    src/tracker.cpp
 )
 # include/ contiene también las dependencias de solo cabecera: httplib.h y nlohmann/json.hpp
 target_include_directories(telegarrm_core PUBLIC include)

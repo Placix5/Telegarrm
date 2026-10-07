@@ -147,6 +147,14 @@ TelegramClient::Json TelegramClient::connectionState() const {
     return connectionState_;
 }
 
+void TelegramClient::addUpdateListener(Handler listener) {
+    if (worker_.joinable()) {
+        std::cerr << "[Telegram] addUpdateListener debe llamarse antes de start()" << std::endl;
+        return;
+    }
+    updateListeners_.push_back(std::move(listener));
+}
+
 void TelegramClient::run() {
     std::optional<Clock::time_point> closeDeadline;
 
@@ -214,6 +222,9 @@ void TelegramClient::handleUpdate(const Json& update) {
             connectionState_ = state;
         }
         std::cout << "[Telegram] Conexión: " << typeOf(state) << std::endl;
+    }
+    for (const Handler& listener : updateListeners_) {
+        listener(update);
     }
 }
 

@@ -5,6 +5,7 @@
 #include <mutex>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 struct sqlite3;
@@ -117,13 +118,46 @@ public:
         std::int64_t totalSize = 0;
         std::int64_t downloadedSize = 0;
         // queued / downloading / importing (descomprimiendo y moviendo) / completed (en la
-        // biblioteca) / failed / cancelled
+        // biblioteca) / failed / cancelled / replaced (sustituida por una versión mejor)
         std::string status;
         std::string error;
         std::int64_t createdAt = 0;
         std::int64_t updatedAt = 0;
         std::string libraryPath;  // Carpeta de la obra en la biblioteca, al terminar
+        std::vector<std::string> libraryFiles;  // Archivos que colocó en la biblioteca (D-037)
+        std::string origin = "manual";          // manual / auto (la pidió el seguimiento)
+        std::optional<std::int64_t> followId;   // Obra seguida que la pidió
+        // Descargas a las que sustituye (versión peor): al terminar esta, se borran sus archivos y
+        // pasan a "replaced"
+        std::vector<std::int64_t> replaces;
         std::vector<DownloadPart> parts;
+    };
+
+    // --- Seguimiento (D-035) ---
+    struct Follow {
+        std::int64_t id = 0;
+        std::string kind;            // series / movie
+        std::string title;
+        std::optional<int> year;
+        std::int64_t tmdbId = 0;     // 0 = sin coincidencia en TMDB
+        std::string workKey;         // MetadataService::workKey
+        std::int64_t chatId = 0;     // Una ficha de la obra
+        std::int64_t anchorId = 0;
+        std::string maxQuality;      // "" = la mejor; "1080p", "720p"...
+        std::int64_t createdAt = 0;  // Solo cuenta lo publicado después
+    };
+
+    // Entrada del historial de actividad (D-037)
+    struct Activity {
+        std::int64_t id = 0;
+        std::int64_t at = 0;         // Unix, segundos (0 = ahora)
+        std::string type;            // follow, unfollow, queued_episode, queued_movie, queued_upgrade,
+                                     // completed, upgraded, failed
+        std::string message;         // En castellano, listo para mostrar
+        std::int64_t chatId = 0;     // Mensaje de la obra (ficha o archivo) para enlazarla
+        std::int64_t messageId = 0;
+        std::optional<std::int64_t> followId;
+        std::optional<std::int64_t> downloadId;
     };
 
     struct AddDownloadResult {
@@ -185,8 +219,26 @@ public:
     // Tras un reinicio, lo que estaba descargándose o importándose vuelve a la cola (TDLib continúa
     // donde lo dejó; la importación se repite)
     int requeueInterruptedDownloads();
-    bool setDownloadLibraryPath(std::int64_t id, const std::string& libraryPath);
+    // Carpeta de la obra y archivos colocados en la biblioteca
+    bool setDownloadLibrary(std::int64_t id, const std::string& libraryPath, const std::vector<std::string>& files);
     bool deleteDownload(std::int64_t id);
+
+    // Seguimiento
+    std::optional<std::int64_t> addFollow(const Follow& follow);
+    std::vector<Follow> listFollows();
+    std::optional<Follow> getFollow(std::int64_t id);
+    bool updateFollowQuality(std::int64_t id, const std::string& maxQuality);
+    // Datos de la obra (título, TMDB, ficha) cuando el catálogo los cambia
+    bool updateFollowWork(const Follow& follow);
+    bool deleteFollow(std::int64_t id);
+    // Archivos lógicos (chat, primera parte) que el seguimiento ya puso en cola
+    bool addAutoRelease(std::int64_t chatId, std::int64_t messageId, std::int64_t followId);
+    std::vector<std::pair<std::int64_t, std::int64_t>> listAutoReleases();
+
+    // Historial de actividad: conserva las entradas más recientes
+    bool addActivity(const Activity& activity);
+    // De la más reciente a la más antigua; beforeId (0 = desde la última) para paginar
+    std::vector<Activity> listActivity(int limit, std::int64_t beforeId);
 
 private:
     struct Closer {

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <optional>
@@ -45,6 +46,12 @@ struct ImportResult {
 // partes del búfer. progress recibe el porcentaje de la descompresión; shouldStop la interrumpe.
 ImportResult importRelease(const ImportRequest& request, const std::function<void(int)>& progress,
                            const std::function<bool()>& shouldStop);
+
+// Borra los archivos de una versión sustituida (D-037). Solo ficheros normales (no enlaces) dentro
+// de alguna de las carpetas de biblioteca (roots) y que no estén en keep (la versión nueva). Después
+// quita las carpetas que hayan quedado vacías, sin llegar a la raíz. Devuelve cuántos ha borrado.
+std::size_t removeFiles(const std::vector<std::string>& files, const std::vector<std::string>& roots,
+                        const std::vector<std::string>& keep);
 
 // --- Nombres (funciones puras, con tests) ---
 

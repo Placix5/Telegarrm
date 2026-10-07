@@ -18,6 +18,7 @@ constexpr const char* kDownloadDir = "download_dir";
 constexpr const char* kMoviesDir = "library_movies_dir";
 constexpr const char* kSeriesDir = "library_series_dir";
 constexpr const char* kMinFreeBytes = "min_free_bytes";
+constexpr const char* kKeepReplaced = "keep_replaced";
 
 }  // namespace
 
@@ -33,13 +34,15 @@ AppSettings loadSettings(DbManager& db) {
             // Valor dañado: se queda el predeterminado
         }
     }
+    settings.keepReplaced = db.getSetting(kKeepReplaced).value_or("0") == "1";
     return settings;
 }
 
 bool saveSettings(DbManager& db, const AppSettings& settings) {
     return db.setSetting(kDownloadDir, settings.downloadDir) && db.setSetting(kMoviesDir, settings.moviesDir) &&
            db.setSetting(kSeriesDir, settings.seriesDir) &&
-           db.setSetting(kMinFreeBytes, std::to_string(settings.minFreeBytes));
+           db.setSetting(kMinFreeBytes, std::to_string(settings.minFreeBytes)) &&
+           db.setSetting(kKeepReplaced, settings.keepReplaced ? "1" : "0");
 }
 
 std::optional<bool> canRename(const std::string& fromDir, const std::string& toDir) {

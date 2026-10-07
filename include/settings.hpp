@@ -11,11 +11,13 @@ struct AppSettings {
     // Búfer de descargas: files_directory de TDLib. Vacío = dentro de su base de datos (db/tdlib).
     // Se aplica al reiniciar el servicio.
     std::string downloadDir;
-    // Bibliotecas finales (para Jellyfin). Las usará el postproceso de la Fase 3.
+    // Bibliotecas finales (para Jellyfin)
     std::string moviesDir;
     std::string seriesDir;
     // Espacio que debe quedar libre tras cada descarga
     std::int64_t minFreeBytes = 2'000'000'000;
+    // Al mejorar una versión (seguimiento, D-037): conservar la anterior en vez de borrarla
+    bool keepReplaced = false;
 };
 
 AppSettings loadSettings(DbManager& db);

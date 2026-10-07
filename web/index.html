@@ -13,6 +13,7 @@
     <nav aria-label="Secciones">
       <a href="#/catalogo" data-view="catalog">Catálogo</a>
       <a href="#/descargas" data-view="downloads">Descargas <span class="count" id="downloads-count" hidden></span></a>
+      <a href="#/actividad" data-view="activity">Actividad</a>
       <a href="#/canales" data-view="channels">Canales</a>
       <a href="#/ajustes" data-view="settings">Ajustes</a>
       <a href="#/estado" data-view="status">Estado</a>
@@ -30,6 +31,7 @@
         <option value="series">Series</option>
         <option value="airing">Series en emisión</option>
         <option value="movie">Películas</option>
+        <option value="followed">En seguimiento</option>
       </select>
       <select id="catalog-sort" aria-label="Orden">
         <option value="title">Por título</option>
@@ -53,6 +55,21 @@
       <p class="hint" id="downloads-empty">No hay descargas. Elige una versión en la ficha de una serie o película y pulsa «Almacenar en disco».</p>
       <p class="hint" id="downloads-note" hidden>Al terminar, cada descarga se descomprime si hace falta y se lleva a la biblioteca con nombres para Jellyfin (carpetas en Ajustes).</p>
       <ul class="download-list" id="download-list"></ul>
+    </section>
+  </div>
+
+  <!-- Seguimiento e historial de actividad -->
+  <div class="view" id="view-activity" hidden>
+    <section aria-labelledby="seguimiento">
+      <h2 id="seguimiento">En seguimiento</h2>
+      <p class="hint" id="follows-empty">No sigues nada todavía. Abre una serie o película del catálogo y pulsa «Seguir»: sus episodios nuevos se descargarán solos y, si llega una versión mejor, sustituirá a la que tengas.</p>
+      <ul class="follow-list" id="follow-list"></ul>
+    </section>
+    <section aria-labelledby="actividad">
+      <h2 id="actividad">Actividad</h2>
+      <p class="hint" id="activity-empty">Aquí aparecerá lo que Telegarrm haga solo: episodios nuevos en cola, versiones mejores, descargas automáticas terminadas o fallidas.</p>
+      <ul class="activity-list" id="activity-list"></ul>
+      <button type="button" class="secondary small" id="activity-more" hidden>Ver más</button>
     </section>
   </div>
 
@@ -110,6 +127,12 @@
           <input id="set-min_free_gb" type="number" min="0" step="1" class="short">
           <p class="hint">Una descarga no empieza si, al terminar, quedaría menos espacio libre que esto en el disco del búfer.</p>
           <p class="field-status" id="status-min_free_gb"></p>
+        </div>
+
+        <h3>Seguimiento</h3>
+        <div class="field">
+          <label class="check"><input type="checkbox" id="set-keep_replaced"> Conservar la versión anterior al mejorarla</label>
+          <p class="hint">Cuando llega una versión mejor de algo que sigues (por ejemplo, 4K en vez de 1080p), se descarga y, al terminar, se borra la anterior. Marca la casilla para conservar las dos (ocupan más espacio).</p>
         </div>
 
         <button type="submit" id="settings-save">Guardar</button>

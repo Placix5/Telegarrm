@@ -10,15 +10,21 @@
 #include <string>
 #include <thread>
 
+#include "catalog.hpp"
 #include "db_manager.hpp"
 #include "library.hpp"
 
 class TelegramClient;
 
+// Descarga de un archivo lógico del catálogo: los datos salen del catálogo, no de lo que envíe el navegador
+DbManager::Download makeDownload(const Catalog::Item& item, const Catalog::Release& release);
+// "«Ted Lasso» 4x10 (1080p)", para el historial de actividad
+std::string describeDownload(const DbManager::Download& download);
+
 // Procesa la cola de descargas (tabla downloads) en su propio hilo, una descarga cada vez
 // (docs/DECISIONS.md, D-031 y D-034). Cada descarga es un archivo lógico del catálogo: se piden a
 // TDLib todas sus partes al búfer y, al terminar, se importa a la biblioteca (descomprimir,
-// renombrar para Jellyfin y mover).
+// renombrar para Jellyfin y mover). Si sustituye a una versión peor, después se borra esa (D-037).
 class DownloadManager {
 public:
     struct Progress {
@@ -56,6 +62,11 @@ private:
     Outcome process(DbManager::Download& download, std::string& error);
     // Importa a la biblioteca una descarga terminada
     Outcome importToLibrary(DbManager::Download& download, std::string& error);
+    // Tras importar una versión mejor: borra (o conserva) las que sustituye. Devuelve el texto para
+    // el historial; vacío si no había nada que sustituir.
+    std::string replaceOlder(const DbManager::Download& download);
+    // Historial de las descargas automáticas y de las sustituciones
+    void logOutcome(const DbManager::Download& download, Outcome outcome, const std::string& error);
     bool telegramReady() const;
     bool sleepFor(std::chrono::milliseconds duration);
     bool stopping();

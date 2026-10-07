@@ -427,3 +427,60 @@ Formato: **Contexto** (qué problema había), **Decisión**, **Alternativas desc
   - En la Pi, *Toy Story Toons: Fiestasaurio Rex* (ZIP de 451 MB) se descargó en ~13 s y se importó en ~4 s.
 - **RAR**: Debian distribuye 7-Zip sin el códec de RAR (licencia no libre). Hace falta el paquete `7zip-rar`, que Plácido instaló el 07/10/2026. Comprobado con *Westworld 4x04*, un RAR de 2 partes y 1,86 GB: se descargó en unos 46 s (40–70 MB/s), se descomprimió en unos 20 s y quedó en `Westworld (2016) [tmdbid-63247]/Season 04/Westworld S04E04 - 1080p.mkv`, con permisos `640` y sin restos. Sin el códec, la importación falla con un mensaje que indica el paquete y se puede reintentar sin volver a descargar.
 - **Nota**: TDLib guarda todos sus archivos en el búfer, también las fotos de las fichas que la web pide como carátulas (`photos/`, unos 7 MB para 40 portadas). No interfiere con la importación.
+
+## D-035: Seguimiento de series y películas
+*07/10/2026 · Fase 4*
+
+- **Contexto**: la Fase 4 (docs/05_current_task.md) pide que el servicio funcione solo: descargar los episodios nuevos de lo que se sigue y sustituir una película o episodio descargado cuando llega una versión mejor.
+- **Decisión**:
+  - **Tabla `follows`**: una fila por obra seguida, con tipo, título, año, identificador de TMDB, clave de obra (`tipo|título|año`, la de `MetadataService`) y una ficha de la obra (`chat_id`, `anchor_id`). La obra se reencuentra en el catálogo por cualquiera de sus fichas; si ya no está, por TMDB y después por la clave. Si la ficha principal cambia, se actualiza sola.
+  - **Solo cuenta lo que se publica después de seguir** (`created_at`). Seguir no descarga el catálogo antiguo; para eso están los botones de temporada.
+    - **Series**: un episodio es nuevo si su primera publicación en el catálogo es posterior a seguir la serie. Así, si un canal vuelve a subir la temporada completa, los episodios antiguos que no se descargaron no se bajan.
+    - **Películas**: si no está descargada, se descarga la primera versión que se publique después de seguirla; si ya lo está, solo las mejoras.
+  - **Mejoras**: una versión publicada después de seguir sustituye a la que se tiene si su rango es mayor. Rango = resolución, después HDR y después REMUX. Las ediciones (Extendida, IMAX, Open Matte…) no son mejoras: son otras versiones. Las versiones en 3D nunca se eligen solas.
+  - **Calidad máxima** por obra seguida (`max_quality`): «la mejor», «hasta 1080p» o «hasta 720p». Responde a «no siempre voy a querer las dos» (1080p y 4K).
+  - **Archivos incompletos**: un comprimido troceado se publica en varios mensajes y puede tardar minutos en estar entero. Se espera mientras falten números de parte o todas midan lo mismo (la última suele ser más pequeña). Si no hay forma de saberlo, se espera 2 h desde la última parte. Si la mejor versión de un episodio aún está incompleta, se espera por ella en vez de bajar una peor.
+  - **Una sola vez**: un archivo que el seguimiento ya puso en cola (tabla `auto_releases`) o que tiene cualquier descarga, aunque fallara o se cancelara, no se vuelve a poner en cola solo. Cancelar una descarga automática es definitivo; reintentarla, manual.
+  - Si llega una versión mejor mientras la anterior aún está en cola sin empezar, la anterior se cancela.
+- **Descartado**:
+  - Comparar códec o audio: los nombres del canal casi nunca los llevan y un x265 no es mejor que un x264 por sí mismo.
+  - Leer el número de partes de la ficha («Son 3 partes en rar»): las fichas con varias versiones lo dan por versión («4K: Son 3 partes… Remux: Son 5…»).
+  - Seguir obras que aún no están en el catálogo.
+- **Consecuencias**: la evaluación (`tracking::plan`) es una función pura, probada con catálogos de ejemplo. La ejecuta `Tracker` en su hilo cuando cambia el catálogo, cuando se sigue algo y cada 5 min si hay algo esperando.
+- **Verificación** (07/10/2026):
+  - Tests con el formato real del tema «Series en emisión»: solo el episodio posterior a seguir; espera mientras el `.part2.rar` de un episodio en 3 partes es la última parte; la temporada vuelta a subir no cuenta; 4K como mejora de 1080p (cancela si la 1080p seguía en cola); límite de 1080p; películas y 3D.
+  - En la Pi, con la fecha del seguimiento retrasada a mano en la BD para simular que ya se seguía:
+    - *Presidente Curtis*, seguida desde el 21/09/2026 a las 16:00: se puso en cola solo el 1x09 (los 1x01–1x08 son anteriores). Se descargó en 20 s y quedó en `Season 01/Presidente Curtis S01E09 - 1080p.mkv`.
+    - Volver a revisar no repite nada.
+
+## D-036: Mensajes nuevos en tiempo real
+*07/10/2026 · Fase 4*
+
+- **Contexto**: hasta ahora los mensajes nuevos se leían cada 15 min. La Fase 4 pide reaccionar al momento sin saturar TDLib.
+- **Decisión**:
+  - Se llama a `openChat` en cada canal vigilado. TDLib solo recibe todas las actualizaciones de canales y supergrupos de los chats abiertos. No marca nada como leído (eso lo hace `viewMessages`). Al dejar de vigilar un canal, se cierra con `closeChat`.
+  - `TelegramClient` reparte las actualizaciones a quien se suscribe. `ChannelSync` solo mira `updateNewMessage` de los canales vigilados y apunta el canal; no hace peticiones desde el hilo de TDLib.
+  - **Agrupación**: se sincroniza 20 s después del último mensaje nuevo, y como mucho 2 min después del primero. Una película en 5 partes provoca una sincronización, no cinco. La sincronización rápida solo pide los mensajes nuevos de esos canales (`getChatHistory`), sin releer los temas.
+  - El mensaje se guarda por el camino de siempre (`saveSyncBatch` con su cursor), en vez de convertir la actualización y guardarla aparte: un único escritor y ningún hueco si se pierde alguna actualización. Después, el catálogo lo analiza con el parser, TMDB lo busca y el seguimiento lo evalúa.
+  - La ronda de cada 15 min se mantiene. Recupera lo que se pierda (servicio parado, cortes de red) y relee los temas.
+- **Descartado**: guardar directamente el mensaje de la actualización. Duplicaría la conversión y podría dejar el cursor por delante de mensajes que no llegaron como actualización.
+
+## D-037: Sustitución de versiones e historial de actividad
+*07/10/2026 · Fase 4*
+
+- **Decisión**:
+  - **Qué archivos colocó cada descarga**: columna `library_files` de `downloads`. Hace falta para borrar exactamente la versión anterior y no otra cosa.
+  - **Al mejorar**, la descarga nueva lleva en `replaces` las que sustituye. Solo cuando la nueva está en la biblioteca, el gestor de descargas trata las anteriores que sigan *completed*:
+    - Borra sus archivos, salvo que *Ajustes* diga conservarlos (`keep_replaced`; Jellyfin muestra entonces las dos versiones).
+    - Las marca como `replaced`.
+    - Solo se borran ficheros normales dentro de las carpetas de la biblioteca y que no sean de la versión nueva. Después se quitan las carpetas que queden vacías, sin subir más allá de la biblioteca.
+  - **Tabla `activity`**: registra lo que hace el sistema solo. Episodio o película en cola, mejora en cola, descarga automática terminada o fallida, versión sustituida. También seguir y dejar de seguir, para entender después por qué se descargó algo. Se conservan las 5000 entradas más recientes.
+  - **Web**: botón «Seguir» en cada ficha, con la calidad máxima. Filtro «En seguimiento» en el catálogo. Pestaña *Actividad* con lo que se sigue y el historial.
+  - Las descargas guardan su origen (`manual` / `auto`) y la obra seguida que las pidió (`follow_id`).
+- **Verificación** (07/10/2026): tests de `removeFiles` (no toca nada fuera de la biblioteca, ni enlaces, ni la versión nueva; quita las carpetas vacías sin borrar la raíz). En la Pi, *El show de los Muppets - Especial*:
+  1. Se descargó a mano en 1080p.
+  2. Al seguirla (con la fecha retrasada a antes de su publicación), el seguimiento pidió la 4K HDR como mejora.
+  3. Se descargaron 3,7 GB en 73 s y se descomprimieron en 46 s.
+  4. Quedó `El show de los Muppets (2026) - 4K HDR.mkv`, se borró la 1080p y la descarga anterior pasó a *Sustituida*.
+  5. El historial lo cuenta: «… ya está en la biblioteca y sustituye a la versión 1080p (1 archivo borrado)».
+- Las tres descargas anteriores a la migración v7 recibieron su `library_files` a mano, para que también se puedan sustituir.

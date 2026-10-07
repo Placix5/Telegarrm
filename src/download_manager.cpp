@@ -70,7 +70,44 @@ std::string formatSize(std::int64_t bytes) {
     return text;
 }
 
+std::string pad2(int number) {
+    char buffer[16];
+    std::snprintf(buffer, sizeof(buffer), "%02d", number);
+    return buffer;
+}
+
 }  // namespace
+
+DbManager::Download makeDownload(const Catalog::Item& item, const Catalog::Release& release) {
+    DbManager::Download download;
+    download.chatId = release.chatId;
+    download.messageId = release.parts.front().messageId;
+    download.title = item.title;
+    download.kind = item.kind;
+    download.season = release.season;
+    download.episode = release.episode;
+    download.episodeEnd = release.episodeEnd;
+    download.name = release.name;
+    download.quality = release.quality;
+    download.hdr = release.hdr;
+    download.tags = release.tags;
+    download.archive = release.archive;
+    download.totalSize = release.size;
+    for (const Catalog::Part& part : release.parts) {
+        download.parts.push_back({part.messageId, part.number, part.fileName, part.size, 0, ""});
+    }
+    return download;
+}
+
+std::string describeDownload(const DbManager::Download& download) {
+    std::string text = "«" + download.title + "»";
+    if (download.episode > 0) {
+        text += " " + std::to_string(download.season) + "x" + pad2(download.episode) +
+                (download.episodeEnd > download.episode ? "-" + pad2(download.episodeEnd) : "");
+    }
+    const std::string label = library::versionLabel(download.quality, download.hdr, download.tags);
+    return text + " (" + (label.empty() ? "calidad desconocida" : label) + ")";
+}
 
 DownloadManager::DownloadManager(DbManager& db, TelegramClient& telegram, std::string filesDir,
                                  WorkInfoResolver workInfo)
@@ -183,10 +220,12 @@ void DownloadManager::run() {
             case Outcome::Completed:
                 db_.setDownloadStatus(download.id, "completed");
                 std::cout << "[Descargas] En la biblioteca #" << download.id << ": " << download.libraryPath << std::endl;
+                logOutcome(download, outcome, error);
                 break;
             case Outcome::Failed:
                 db_.setDownloadStatus(download.id, "failed", error);
                 std::cerr << "[Descargas] Falló #" << download.id << ": " << error << std::endl;
+                logOutcome(download, outcome, error);
                 break;
             case Outcome::Cancelled:
                 db_.setDownloadStatus(download.id, "cancelled");
@@ -408,6 +447,72 @@ DownloadManager::Outcome DownloadManager::importToLibrary(DbManager::Download& d
         return Outcome::Failed;
     }
     download.libraryPath = result.libraryPath;
-    db_.setDownloadLibraryPath(download.id, result.libraryPath);
+    download.libraryFiles = result.files;
+    db_.setDownloadLibrary(download.id, result.libraryPath, result.files);
     return Outcome::Completed;
+}
+
+std::string DownloadManager::replaceOlder(const DbManager::Download& download) {
+    const AppSettings settings = loadSettings(db_);
+    std::vector<std::string> labels;
+    std::size_t removed = 0;
+    bool unknownFiles = false;
+    for (const std::int64_t id : download.replaces) {
+        // Solo las que llegaron a la biblioteca (una que falló o se canceló no tiene nada que borrar)
+        const auto old = db_.getDownload(id);
+        if (!old || old->status != "completed") {
+            continue;
+        }
+        if (!settings.keepReplaced) {
+            if (old->libraryFiles.empty()) {
+                unknownFiles = true;  // Descargas anteriores a la versión 7 de la BD
+            } else {
+                removed += library::removeFiles(old->libraryFiles, {settings.moviesDir, settings.seriesDir},
+                                                download.libraryFiles);
+            }
+        }
+        db_.setDownloadStatus(id, "replaced");
+        labels.push_back(library::versionLabel(old->quality, old->hdr, old->tags));
+        std::cout << "[Descargas] #" << id << " sustituida por #" << download.id << std::endl;
+    }
+    if (labels.empty()) {
+        return "";
+    }
+
+    std::string previous;
+    for (const std::string& label : labels) {
+        previous += (previous.empty() ? "" : ", ") + (label.empty() ? std::string("calidad desconocida") : label);
+    }
+    std::string message = describeDownload(download) + " ya está en la biblioteca y sustituye a la versión " + previous;
+    if (settings.keepReplaced) {
+        return message + ", que se conserva (Ajustes).";
+    }
+    if (unknownFiles) {
+        return message + ". No consta qué archivos tenía la versión anterior: bórralos a mano si quieres.";
+    }
+    return message + " (" + std::to_string(removed) + (removed == 1 ? " archivo borrado)." : " archivos borrados).");
+}
+
+void DownloadManager::logOutcome(const DbManager::Download& download, Outcome outcome, const std::string& error) {
+    DbManager::Activity activity;
+    activity.chatId = download.chatId;
+    activity.messageId = download.messageId;
+    activity.followId = download.followId;
+    activity.downloadId = download.id;
+    if (outcome == Outcome::Completed) {
+        const std::string replaced = download.replaces.empty() ? "" : replaceOlder(download);
+        if (!replaced.empty()) {
+            activity.type = "upgraded";
+            activity.message = replaced;
+        } else if (download.origin == "auto") {
+            activity.type = "completed";
+            activity.message = describeDownload(download) + " ya está en la biblioteca.";
+        }
+    } else if (outcome == Outcome::Failed && download.origin == "auto") {
+        activity.type = "failed";
+        activity.message = "Falló la descarga automática de " + describeDownload(download) + ": " + error;
+    }
+    if (!activity.type.empty()) {
+        db_.addActivity(activity);
+    }
 }

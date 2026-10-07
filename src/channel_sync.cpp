@@ -14,8 +14,12 @@ namespace {
 using Json = TelegramClient::Json;
 using Message = DbManager::Message;
 
-// Cada cuánto se buscan mensajes nuevos en todos los canales
+// Cada cuánto se buscan mensajes nuevos en todos los canales (recupera lo que no llegue en tiempo real)
 constexpr auto kSyncInterval = std::chrono::minutes(15);
+// Tiempo real: se sincroniza este tiempo después del último mensaje nuevo...
+constexpr auto kRealtimeQuiet = std::chrono::seconds(20);
+// ...y como mucho este después del primero, aunque sigan llegando
+constexpr auto kRealtimeMaxDelay = std::chrono::minutes(2);
 // Reintento mientras la sesión de Telegram no está lista
 constexpr auto kNotReadyRetry = std::chrono::seconds(5);
 // Pausa entre lotes del historial, para no saturar a Telegram
@@ -128,7 +132,9 @@ std::optional<int> floodWaitSeconds(const Json& error) {
 }  // namespace
 
 ChannelSync::ChannelSync(DbManager& db, TelegramClient& telegram, ChangeListener onChannelChanged)
-    : db_(db), telegram_(telegram), onChannelChanged_(std::move(onChannelChanged)) {}
+    : db_(db), telegram_(telegram), onChannelChanged_(std::move(onChannelChanged)) {
+    telegram_.addUpdateListener([this](const Json& update) { onUpdate(update); });
+}
 
 ChannelSync::~ChannelSync() {
     stop();
@@ -165,6 +171,61 @@ void ChannelSync::requestSync() {
     cv_.notify_all();
 }
 
+void ChannelSync::onUpdate(const Json& update) {
+    if (typeOf(update) != "updateNewMessage") {
+        return;
+    }
+    const auto message = update.find("message");
+    if (message == update.end() || !message->is_object()) {
+        return;
+    }
+    const std::int64_t chatId = message->value("chat_id", std::int64_t{0});
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (!watched_.count(chatId)) {
+            return;
+        }
+        const auto now = Clock::now();
+        if (pending_.empty()) {
+            firstEventAt_ = now;
+        }
+        pending_.insert(chatId);
+        lastEventAt_ = now;
+    }
+    cv_.notify_all();
+}
+
+ChannelSync::Clock::time_point ChannelSync::realtimeDeadline() const {
+    return std::min(lastEventAt_ + kRealtimeQuiet, firstEventAt_ + kRealtimeMaxDelay);
+}
+
+void ChannelSync::updateOpenChats(const std::vector<DbManager::Channel>& channels) {
+    std::set<std::int64_t> wanted;
+    for (const DbManager::Channel& channel : channels) {
+        wanted.insert(channel.id);
+    }
+    for (auto it = openChats_.begin(); it != openChats_.end();) {
+        if (wanted.count(*it)) {
+            ++it;
+            continue;
+        }
+        telegram_.send({{"@type", "closeChat"}, {"chat_id", *it}});
+        it = openChats_.erase(it);
+    }
+    for (const std::int64_t chatId : wanted) {
+        if (openChats_.insert(chatId).second) {
+            // Con el chat abierto, TDLib recibe todas sus actualizaciones (en canales y supergrupos
+            // solo las de los chats abiertos). No marca nada como leído.
+            telegram_.send({{"@type", "openChat"}, {"chat_id", chatId}}, [chatId](const Json& response) {
+                if (typeOf(response) == "error") {
+                    std::cerr << "[Sync] No se pudo abrir el chat " << chatId << " para recibir sus mensajes al momento: "
+                              << response.value("message", "desconocido") << std::endl;
+                }
+            });
+        }
+    }
+}
+
 bool ChannelSync::sleepFor(std::chrono::milliseconds duration) {
     std::unique_lock<std::mutex> lock(mutex_);
     return !cv_.wait_for(lock, duration, [this] { return stopRequested_; });
@@ -188,24 +249,67 @@ void ChannelSync::run() {
         onChannelChanged_(channel.id);
     }
 
-    while (!stopping()) {
-        const bool ready = telegramReady();
-        if (ready) {
-            for (const DbManager::Channel& channel : db_.listChannels()) {
-                syncingChatId_ = channel.id;
-                const Result result = syncChannel(channel);
-                syncingChatId_ = 0;
-                if (result == Result::Stopped) {
+    auto nextRound = Clock::now();  // Ronda completa: al arrancar y cada kSyncInterval
+    for (;;) {
+        // Esperar a la parada, a una petición de sincronizar, a la siguiente ronda o a que se
+        // asienten los mensajes nuevos recibidos en tiempo real
+        bool full = false;
+        std::set<std::int64_t> realtime;
+        {
+            std::unique_lock<std::mutex> lock(mutex_);
+            for (;;) {
+                if (stopRequested_) {
                     return;
                 }
+                const auto now = Clock::now();
+                if (syncRequested_ || now >= nextRound) {
+                    full = true;
+                    break;
+                }
+                if (!pending_.empty() && now >= realtimeDeadline()) {
+                    realtime.swap(pending_);
+                    break;
+                }
+                cv_.wait_until(lock, pending_.empty() ? nextRound : std::min(nextRound, realtimeDeadline()));
+            }
+            syncRequested_ = false;
+            if (full) {
+                pending_.clear();  // La ronda completa los incluye
             }
         }
 
-        // Esperar a la siguiente ronda, a una petición de sincronizar o a la parada
-        const std::chrono::seconds wait = ready ? std::chrono::seconds(kSyncInterval) : kNotReadyRetry;
-        std::unique_lock<std::mutex> lock(mutex_);
-        cv_.wait_for(lock, wait, [this] { return stopRequested_ || syncRequested_; });
-        syncRequested_ = false;
+        const std::vector<DbManager::Channel> channels = db_.listChannels();
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            watched_.clear();
+            for (const DbManager::Channel& channel : channels) {
+                watched_.insert(channel.id);
+            }
+        }
+        if (!telegramReady()) {
+            openChats_.clear();  // Al volver la sesión (quizá un cliente nuevo) hay que abrirlos otra vez
+            nextRound = Clock::now() + kNotReadyRetry;
+            continue;
+        }
+        if (!realtime.empty()) {
+            std::cout << "[Sync] Mensajes nuevos al momento en " << realtime.size() << " canal(es)" << std::endl;
+        }
+        for (const DbManager::Channel& channel : channels) {
+            if (!full && !realtime.count(channel.id)) {
+                continue;
+            }
+            syncingChatId_ = channel.id;
+            const Result result = syncChannel(channel, full);
+            syncingChatId_ = 0;
+            if (result == Result::Stopped) {
+                return;
+            }
+        }
+        // Después de getChat (syncChannel): TDLib ya conoce los chats que se abren
+        updateOpenChats(channels);
+        if (full) {
+            nextRound = Clock::now() + kSyncInterval;
+        }
     }
 }
 
@@ -270,7 +374,7 @@ ChannelSync::Result ChannelSync::fetchHistory(std::int64_t chatId, std::int64_t 
     }
 }
 
-ChannelSync::Result ChannelSync::syncChannel(const DbManager::Channel& channel) {
+ChannelSync::Result ChannelSync::syncChannel(const DbManager::Channel& channel, bool full) {
     const std::int64_t chatId = channel.id;
 
     // getChat asegura que TDLib conoce el chat y permite detectar cambios de título
@@ -288,9 +392,10 @@ ChannelSync::Result ChannelSync::syncChannel(const DbManager::Channel& channel) 
         onChannelChanged_(chatId);  // El título del canal se usa en el catálogo
     }
 
-    // Grupos con temas (foros): se guarda la lista de temas con sus nombres
+    // Grupos con temas (foros): se guarda la lista de temas con sus nombres (en la ronda completa;
+    // la sincronización en tiempo real solo trae los mensajes nuevos)
     const Json type = chat->value("type", Json::object());
-    if (typeOf(type) == "chatTypeSupergroup") {
+    if (full && typeOf(type) == "chatTypeSupergroup") {
         const auto group = telegram_.request(
             {{"@type", "getSupergroup"}, {"supergroup_id", type.value("supergroup_id", std::int64_t{0})}}, kRequestTimeout);
         if (group && typeOf(*group) == "supergroup" && group->value("is_forum", false) &&

@@ -18,6 +18,7 @@
 #include "signal_watcher.hpp"
 #include "telegram_client.hpp"
 #include "tmdb_client.hpp"
+#include "tracker.hpp"
 
 namespace {
 
@@ -102,11 +103,6 @@ int main() {
     MetadataService metadata(db, catalog, tmdb);
 
     TelegramClient telegram(std::move(*telegramConfig));
-    // Cada cambio en los mensajes de un canal recalcula su parte del catálogo y busca lo nuevo en TMDB
-    ChannelSync sync(db, telegram, [&catalog, &metadata](std::int64_t chatId) {
-        catalog.rebuildChannel(chatId);
-        metadata.requestRun();
-    });
     // Cola de descargas; TDLib guarda los archivos en el búfer y después se importan a la biblioteca.
     // Para los nombres: título, año e identificador de TMDB si los hay; si no, los del catálogo.
     DownloadManager downloads(db, telegram, downloadDir, [&catalog, &metadata](const DbManager::Download& download) {
@@ -120,11 +116,20 @@ int main() {
         }
         return work;
     });
+    // Seguimiento: pone en cola los episodios nuevos y las versiones mejores de lo que se sigue
+    Tracker tracker(db, catalog, metadata, downloads);
+    // Cada cambio en los mensajes de un canal (también los que llegan en tiempo real) recalcula su parte
+    // del catálogo, busca lo nuevo en TMDB y revisa las obras seguidas
+    ChannelSync sync(db, telegram, [&catalog, &metadata, &tracker](std::int64_t chatId) {
+        catalog.rebuildChannel(chatId);
+        metadata.requestRun();
+        tracker.requestRun();
+    });
 
     // Inicializar el servidor HTTP
     httplib::Server svr;
     std::atomic<bool> restartRequested{false};
-    registerApiRoutes(svr, {db, telegram, sync, catalog, metadata, tmdb, downloads, downloadDir, downloadDirWarning,
+    registerApiRoutes(svr, {db, telegram, sync, catalog, metadata, tmdb, downloads, tracker, downloadDir, downloadDirWarning,
                             [&svr, &restartRequested] {
                                 restartRequested = true;
                                 svr.stop();  // Termina listen_after_bind() tras responder a la petición
@@ -155,10 +160,11 @@ int main() {
         return 1;
     }
     // Sincronización del historial de los canales vigilados (espera a que haya sesión),
-    // metadatos y descargas, cada uno en su hilo
+    // metadatos, descargas y seguimiento, cada uno en su hilo
     sync.start();
     metadata.start();
     downloads.start();
+    tracker.start();
 
     std::cout << "Servidor web escuchando en http://localhost:" << kPort << std::endl;
 
@@ -168,9 +174,11 @@ int main() {
     // listen_after_bind() bloquea el hilo principal, actuando como bucle del daemon
     svr.listen_after_bind();
 
-    // El vigilante usa svr: hay que pararlo antes de que se destruya. La sincronización usa
-    // TelegramClient, así que se para antes que él. La BD se cierra en su destructor.
+    // El vigilante usa svr: hay que pararlo antes de que se destruya. El seguimiento usa la cola de
+    // descargas, y esta y la sincronización usan TelegramClient: se paran antes. La BD se cierra en
+    // su destructor.
     signals.stop();
+    tracker.stop();
     downloads.stop();
     metadata.stop();
     sync.stop();
