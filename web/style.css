@@ -34,7 +34,7 @@ a { color: var(--accent); }
 .topbar-inner { max-width: 72rem; margin: 0 auto; padding: 0.8rem 1rem; display: flex; gap: 1rem;
                 align-items: center; justify-content: space-between; flex-wrap: wrap; }
 nav { display: flex; gap: 0.25rem; }
-nav a { padding: 0.4rem 0.8rem; border-radius: 0.4rem; color: var(--text); text-decoration: none; }
+nav a { padding: 0.4rem 0.8rem; border-radius: 0.4rem; color: var(--text); text-decoration: none; white-space: nowrap; }
 nav a:hover { background: var(--bg); }
 nav a[aria-current="page"] { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
 
@@ -89,7 +89,8 @@ form > button { margin-top: 0.8rem; }
 .ribbon { position: absolute; top: 0.5rem; left: 0.5rem; padding: 0.1rem 0.5rem; border-radius: 1rem;
           background: var(--accent); color: #fff; font-size: 0.75rem; font-weight: 600; }
 .badge.airing { background: var(--accent); color: #fff; }
-.ribbon.follow { left: auto; right: 0.5rem; background: var(--ok); }
+/* «Siguiendo» abajo: arriba ya puede estar «En emisión» y en tarjetas estrechas se pisarían */
+.ribbon.follow { top: auto; bottom: 0.5rem; background: var(--ok); }
 .follow-box { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; margin-bottom: 0.8rem; }
 .follow-box select { width: auto; padding-top: 0.3rem; padding-bottom: 0.3rem; font-size: 0.9rem; }
 .follow-box .hint { flex-basis: 100%; margin: 0; }
@@ -154,7 +155,8 @@ button.toast-close:hover { color: var(--text); }
 }
 
 /* Confirmaciones */
-dialog.dialog { width: min(28rem, calc(100vw - 2rem)); padding: 1.4rem 1.5rem 1.2rem; color: var(--text);
+dialog.dialog { width: min(28rem, calc(100vw - 2rem)); max-height: calc(100vh - 2rem); max-height: calc(100dvh - 2rem);
+                overflow: auto; padding: 1.4rem 1.5rem 1.2rem; color: var(--text);
                 background: var(--card); border: 1px solid var(--border); border-radius: 0.8rem;
                 box-shadow: 0 1rem 3rem rgba(0, 0, 0, 0.35); }
 dialog.dialog[open] { animation: dialog-in 0.15s ease-out; }
@@ -175,12 +177,13 @@ button.danger-solid { color: #fff; background: var(--err); border-color: var(--e
 /* Descargas */
 .count { display: inline-block; min-width: 1.3rem; padding: 0 0.35rem; border-radius: 1rem; background: var(--accent);
          color: #fff; font-size: 0.75rem; text-align: center; }
+.count[hidden] { display: none; }  /* display de arriba anularía el atributo hidden */
 .download-list { list-style: none; margin: 0; padding: 0; }
 .download-list li { padding: 0.8rem 0; border-bottom: 1px solid var(--border); }
 .download-list li:first-child { padding-top: 0; }
 .download-head { display: flex; gap: 1rem; justify-content: space-between; align-items: flex-start; }
 .download-title { font-weight: 600; overflow-wrap: anywhere; }
-.download-meta { color: var(--muted); font-size: 0.9rem; }
+.download-meta { color: var(--muted); font-size: 0.9rem; overflow-wrap: anywhere; }
 .progress { height: 0.45rem; background: var(--bg); border: 1px solid var(--border); border-radius: 1rem;
             overflow: hidden; margin: 0.45rem 0 0.25rem; }
 .progress > div { height: 100%; background: var(--accent); width: 0; transition: width 0.5s; }
@@ -235,13 +238,68 @@ th { color: var(--muted); font-weight: 600; font-size: 0.85rem; }
 td.num, th.num { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
 td.episode { white-space: nowrap; font-variant-numeric: tabular-nums; }
 .files { margin-top: 1rem; }
+/* Una tabla nunca ensancha la página: si no cabe, se desplaza dentro de su caja */
+.table-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
 
+/* --- Móvil (pantallas estrechas) --- */
 @media (max-width: 40rem) {
-  .credits { flex-direction: column; align-items: flex-start; }
-  .download-head { flex-direction: column; }
-  .detail { grid-template-columns: 1fr; }
+  main { padding: 1rem 0.75rem 2.5rem; }
+  section { padding: 1rem; }
+  .credits { flex-direction: column; align-items: flex-start; padding: 1rem 0.75rem 2rem; }
+
+  /* Cabecera: las seis pestañas en una rejilla de 3 x 2, todas a la vista */
+  .topbar-inner { padding: 0.6rem 0.75rem; gap: 0.5rem; }
+  nav { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.25rem; width: 100%; }
+  nav a { text-align: center; padding: 0.55rem 0.25rem; }
+
+  .download-head { flex-direction: column; gap: 0.2rem; }
+  .detail { grid-template-columns: 1fr; gap: 1rem; }
   .detail .poster { max-width: 12rem; }
+  .detail h2 { font-size: 1.4rem; }
   .channel-list li, .follow-list li { flex-direction: column; align-items: flex-start; }
+  .channel-actions { flex-wrap: wrap; }
   .row, .toolbar { flex-direction: column; align-items: stretch; }
   .toolbar select { width: 100%; }
+
+  /* Episodios: cada fila es un bloque, con las versiones debajo y a todo el ancho */
+  table.episodes, table.versions-table { display: block; }
+  table.episodes tr.head, table.versions-table tr.head { display: none; }
+  table.episodes tr { display: grid; grid-template-columns: 2.75rem 1fr; gap: 0.4rem 0.5rem; padding: 0.7rem 0;
+                      border-bottom: 1px solid var(--border); }
+  table.episodes td { padding: 0; border: 0; }
+  table.episodes td:last-child { grid-column: 1 / -1; }
+  /* Versiones de una película: calidad y tamaño, el archivo debajo y la fecha con el botón al final */
+  table.versions-table tr { display: grid; grid-template-columns: 1fr auto; gap: 0.3rem 0.75rem; align-items: center;
+                            padding: 0.7rem 0; border-bottom: 1px solid var(--border); }
+  table.versions-table td { padding: 0; border: 0; }
+  table.versions-table td:nth-child(1) { grid-area: 1 / 1; }
+  table.versions-table td:nth-child(2) { grid-area: 2 / 1 / 3 / 3; color: var(--muted); font-size: 0.85rem;
+                                         overflow-wrap: anywhere; }
+  table.versions-table td:nth-child(3) { grid-area: 3 / 1; color: var(--muted); font-size: 0.85rem; }
+  table.versions-table td:nth-child(4) { grid-area: 1 / 2; }
+  table.versions-table td:nth-child(5) { grid-area: 3 / 2; }
+  .version { max-width: 100%; }
+  button.download, button.download.wide { width: 8.5rem; }
+
+  /* Avisos al 90 % del ancho, separados del borde (y de la barra de inicio del iPhone) */
+  .toasts { left: 5vw; right: 5vw; width: auto; bottom: calc(0.75rem + env(safe-area-inset-bottom)); }
+  .dialog-actions button { flex: 1; }
+}
+
+/* --- Pantallas táctiles (y estrechas): botones y selectores fáciles de tocar, de al menos 44 px --- */
+@media (pointer: coarse), (max-width: 40rem) {
+  button { min-height: 2.75rem; }
+  button.small, button.download { min-height: 2.5rem; }
+  button.small { padding: 0.45rem 0.9rem; }
+  button.probe { width: 2.5rem; min-height: 2.5rem; }
+  .probe-mark { width: 2.5rem; }
+  button.toast-close { min-width: 2.75rem; min-height: 2.75rem; }
+  nav a { padding-top: 0.6rem; padding-bottom: 0.6rem; }
+  /* 16 px como mínimo: con menos, el iPhone amplía la página al tocar el campo */
+  input, select { min-height: 2.75rem; font-size: 1rem; }
+  .follow-box select, .series-box select, .follow-list select { font-size: 1rem; padding-top: 0.45rem;
+                                                                padding-bottom: 0.45rem; }
+  label.check input { width: 1.25rem; height: 1.25rem; min-height: 0; }
+  details summary { padding: 0.4rem 0; }
+  .links a { display: inline-block; padding: 0.4rem 0; }
 }

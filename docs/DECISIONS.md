@@ -51,6 +51,7 @@ Formato: **Contexto** (qué problema había), **Decisión**, **Alternativas desc
 | [D-043](#d-043-novedades-en-la-web-fase-41) | Novedades en la web (Fase 4.1) | Vigente |
 | [D-044](#d-044-confirmaciones-y-errores-con-el-estilo-de-la-página) | Confirmaciones y errores con el estilo de la página | Vigente |
 | [D-045](#d-045-la-ficha-abierta-se-actualiza-sola) | La ficha abierta se actualiza sola | Vigente |
+| [D-046](#d-046-la-web-en-el-móvil) | La web en el móvil | Vigente |
 
 ---
 
@@ -622,3 +623,22 @@ Formato: **Contexto** (qué problema había), **Decisión**, **Alternativas desc
   - cada 30 s, por si cambia algo que no avisa (ej. un archivo borrado a mano de la biblioteca).
 - **Sin molestar**: se conservan el desplazamiento, la «Ficha original» desplegada y la calidad elegida en «Serie completa». No se redibuja mientras se comprueban calidades, con un diálogo abierto o con un desplegable en uso. Abrir una ficha sigue mostrando «Cargando…»; refrescarla, no.
 - **Descartado**: actualizar a mano cada parte de la ficha. Habría que repetir la lógica del dibujo para cada caso. Redibujar entero, pero solo cuando algo cambia, es más simple y en la práctica no se nota.
+
+## D-046: La web en el móvil
+*07/10/2026 · Fase 4.1, petición del arquitecto y de Plácido*
+
+- **Contexto**: revisión para el móvil. Medido en Chrome con la web dentro de un marco de 390×844 px (las reglas para pantallas estrechas se aplican igual que en un teléfono):
+  - En todas las pantallas la página medía 545 px y se desplazaba de lado, porque las seis pestañas no cabían en una fila.
+  - En las fichas, las tablas de episodios y versiones dejaban fuera el botón «Descargar».
+  - En *Descargas*, las rutas y los nombres largos sin espacios se salían.
+- **Decisión** (solo CSS y un ajuste en cómo se crean las tablas; sin compilar):
+  - **Navegación**: hasta 40rem (640 px), las pestañas forman una rejilla de 3×2, todas a la vista y con 44 px de alto. Se descartan una barra que se desplaza de lado (pestañas escondidas) y un menú desplegable (un toque más para todo).
+  - **Tablas**: todas van dentro de una caja con `overflow-x: auto`, como red de seguridad: nunca ensanchan la página. Además, en pantallas estrechas se reorganizan para no tener que desplazarlas:
+    - Episodios: cada fila es un bloque, con el número y el título arriba y las versiones con su botón debajo, a todo el ancho.
+    - Versiones de una película: calidad y tamaño, el archivo debajo y la fecha con el botón al final.
+  - **Al tacto** (`pointer: coarse`, y también en pantallas estrechas): botones y selectores de 44 px como mínimo (40 px los pequeños dentro de las versiones), la medida que recomiendan Apple y Google. Los campos y desplegables, a 16 px de letra: con menos, el iPhone amplía la página al tocarlos.
+  - **Avisos**: en el móvil, al 90 % del ancho, separados del borde y de la barra de inicio del iPhone (`env(safe-area-inset-bottom)`). Los diálogos tienen una altura máxima con desplazamiento propio y sus botones ocupan todo el ancho.
+  - **Arreglos que también afectaban al escritorio**:
+    - El contador de *Descargas* enseñaba «0» porque su `display` anulaba el atributo `hidden`.
+    - Las etiquetas «En emisión» y «Siguiendo» se pisaban en las tarjetas; «Siguiendo» va ahora abajo.
+- **Verificación**: en el marco de 390 px, ninguna de las 8 pantallas (catálogo, ficha de serie y de película, descargas, actividad, canales, ajustes y estado) es más ancha que la ventana, y ninguna tabla necesita desplazarse. El escritorio sigue igual.

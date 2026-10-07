@@ -156,6 +156,12 @@ Los pasos del inicio de sesión responden `{"ok": true}`, o `{"error": "..."}` c
 - Avisos en directo (D-043): si se está viendo la ficha de una obra y llega algo nuevo de ella por Telegram, aparece un aviso en la esquina. El catálogo anota las novedades y la web las consulta con el sondeo de `/api/status` que ya hacía.
 - La ficha abierta se actualiza sola (D-045): al terminar una descarga suya (aparece «✓ En tu biblioteca» y se recuentan los episodios), al llegar una novedad (la fila nueva se ilumina) y cada 30 s. Sin perder la posición.
 - Barras de desplazamiento y controles nativos con el tema del sistema (claro u oscuro).
+- Web para el móvil (D-046):
+  - Pestañas en una rejilla de 3×2.
+  - Tablas de episodios y versiones reorganizadas en bloques, sin desplazarse de lado.
+  - Botones y selectores de 44 px al tacto, con letra de 16 px en los campos para que el iPhone no amplíe la página.
+  - Avisos al 90 % del ancho.
+  - Ninguna pantalla es ya más ancha que el teléfono.
 - Confirmaciones propias en lugar de las del navegador (D-044): explican qué va a pasar y resumen los datos (episodios, tamaño, calidad). Lo destructivo va en rojo y con el foco en «Cancelar». Los errores salen como avisos en la esquina.
 
 ### Fase 4: seguimiento (Tele-ARR)

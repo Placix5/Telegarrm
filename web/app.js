@@ -387,12 +387,20 @@ function versionsElement(releases) {
   return box;
 }
 
-function table(headers) {
-  const node = el("table");
-  const head = el("tr");
+// Tabla con su fila de cabecera. kind da nombre al diseño para móviles (ver style.css).
+function table(headers, kind) {
+  const node = el("table", kind);
+  const head = el("tr", "head");
   for (const [text, cls] of headers) head.append(el("th", cls || "", text));
   node.append(head);
   return node;
+}
+
+// En pantallas estrechas, una tabla nunca ensancha la página: se desplaza dentro de su caja
+function scrollBox(node) {
+  const box = el("div", "table-scroll");
+  box.append(node);
+  return box;
 }
 
 // Calidad para mostrar de un vídeo de la biblioteca: "720p", "4K HDR"
@@ -412,7 +420,7 @@ function episodesOnDisk(item) {
 
 // Series: una fila por episodio con todas sus versiones; título y sinopsis de TMDB si los hay
 function episodesTable(releases, onDisk) {
-  const node = table([["Episodio"], ["Título"], ["Versiones"]]);
+  const node = table([["Episodio"], ["Título"], ["Versiones"]], "episodes");
   const byEpisode = new Map();
   for (const release of releases) {
     const key = episodeLabel(release);
@@ -436,7 +444,7 @@ function episodesTable(releases, onDisk) {
     row.append(el("td", "episode", label), titleCell, cell);
     node.append(row);
   }
-  return node;
+  return scrollBox(node);
 }
 
 // Botones para descargar una temporada entera en una versión: el primer archivo de cada episodio
@@ -481,7 +489,7 @@ function seasonActions(releases, onProbed) {
 
 // Películas y archivos sueltos: una fila por versión
 function versionsTable(releases) {
-  const node = table([["Versión"], ["Archivo"], ["Publicado"], ["Tamaño", "num"], [""]]);
+  const node = table([["Versión"], ["Archivo"], ["Publicado"], ["Tamaño", "num"], [""]], "versions-table");
   for (const release of releases) {
     const row = el("tr");
     const name = el("td", "", release.name);
@@ -495,7 +503,7 @@ function versionsTable(releases) {
       el("td", "num", formatSize(release.size) + parts), action);
     node.append(row);
   }
-  return node;
+  return scrollBox(node);
 }
 
 // Ficha abierta: la obra (para los avisos de novedades), su ruta y su JSON (para saber si ha cambiado)
