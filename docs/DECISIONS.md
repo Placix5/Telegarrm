@@ -463,6 +463,10 @@ Formato: **Contexto** (qué problema había), **Decisión**, **Alternativas desc
   - **Agrupación**: se sincroniza 20 s después del último mensaje nuevo, y como mucho 2 min después del primero. Una película en 5 partes provoca una sincronización, no cinco. La sincronización rápida solo pide los mensajes nuevos de esos canales (`getChatHistory`), sin releer los temas.
   - El mensaje se guarda por el camino de siempre (`saveSyncBatch` con su cursor), en vez de convertir la actualización y guardarla aparte: un único escritor y ningún hueco si se pierde alguna actualización. Después, el catálogo lo analiza con el parser, TMDB lo busca y el seguimiento lo evalúa.
   - La ronda de cada 15 min se mantiene. Recupera lo que se pierda (servicio parado, cortes de red) y relee los temas.
+- **Verificación** (07/10/2026): en el canal de prueba «Prueba Claude», con la serie seguida, Plácido subió `1x02 - Ultimate Spiderman.mkv` (364 MB):
+  - 20:07:09: aviso `updateNewMessage`.
+  - 20:07:29: sincronización rápida tras 20 s de calma. Catálogo recalculado en 121 ms, ya con el nombre «Ultimate Spiderman» (D-038). En la misma pasada, el seguimiento pone el 1x02 en cola y TMDB encuentra la serie.
+  - Unos 10 s después: descargado e importado en `Ultimate Spider-Man (2012) [tmdbid-34391]/Season 01/`, junto al 1x01.
 - **Descartado**: guardar directamente el mensaje de la actualización. Duplicaría la conversión y podría dejar el cursor por delante de mensajes que no llegaron como actualización.
 
 ## D-037: Sustitución de versiones e historial de actividad

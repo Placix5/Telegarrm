@@ -56,7 +56,8 @@ Formato real visto: canales de una serie con una ficha (foto + pie con título, 
 - [x] **Mejoras**: una versión con más resolución, HDR o REMUX sustituye a la que se tiene. La anterior se borra solo cuando la nueva ya está en la biblioteca, o se conserva si así se elige en *Ajustes* (D-037).
 - [x] **Historial de actividad** (tabla `activity`) y pestaña *Actividad* con lo que se sigue. Filtro «En seguimiento» en el catálogo.
 - [x] Comprobado en la Pi con un episodio nuevo (*Presidente Curtis* 1x09) y con una mejora de 1080p a 4K HDR (*El show de los Muppets*).
-- [ ] Ver llegar un mensaje real en tiempo real (pendiente de que se publique algo en un canal vigilado).
+- [x] Tiempo real comprobado con el canal de prueba de Plácido. Se subió el 1x02 de *Ultimate Spider-Man* a una serie seguida: aviso al instante, lectura 20 s después, catálogo y seguimiento al momento, y el episodio en la biblioteca unos 10 s más tarde (D-036, D-038).
+- [ ] Calidad real del vídeo al importar (`ffprobe`). Si el nombre no la dice, la versión queda como «calidad desconocida», que cuenta como la peor: un 720p publicado después se tomaría por una mejora.
 - Ideas para después: notificaciones (Telegram o correo) de lo descargado; vigilar ediciones y borrados de mensajes (`updateMessageContent`, `updateDeleteMessages`); seguir una obra antes de que esté en el catálogo.
 
 ## Transversal (antes de exponer la web fuera de la red local)
