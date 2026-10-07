@@ -1,6 +1,17 @@
 # Telegarrm
 
-Telegarrm es un servicio daemon (stack ARR) que utiliza Telegram (TDLib) como fuente e indexador para descargas automáticas de series y películas.
+Telegarrm es un servicio daemon (stack ARR, como Sonarr y Radarr) que utiliza Telegram (TDLib) como fuente e indexador para descargas automáticas de series y películas. Corre en una Raspberry Pi y se maneja desde el navegador.
+
+## Qué hace
+Desde la web (`http://<ip-de-la-pi>:8080/`):
+- **Catálogo**: las series y películas publicadas en los canales y grupos que elijas, con portada, sinopsis y títulos de episodio de TMDB.
+  - Cada episodio o película muestra sus versiones (1080p, 4K HDR, REMUX…).
+  - La calidad real de cada versión se puede comprobar sin descargarla: «?», o «Comprobar calidades» por temporada.
+  - Marca lo que ya tienes en la biblioteca.
+- **Descargas**: «Almacenar en disco» por versión, por temporada o la serie completa (solo los episodios que te faltan). Cada descarga se descomprime si hace falta, se renombra para Jellyfin y se lleva a la biblioteca.
+- **Seguimiento**: «Seguir» en una serie descarga sola cada episodio nuevo en cuanto se publica. En una película, la primera versión que se publique. Si llega una versión mejor, sustituye a la anterior. Se puede fijar una calidad máxima.
+- **Actividad**: lo que sigues y el historial de lo que el sistema ha hecho solo.
+- **Canales**, **Ajustes** (búfer, bibliotecas, espacio libre, conservar versiones) y **Estado** (incluido el inicio de sesión en Telegram).
 
 ## Estructura del Proyecto
 - `src/`: Código fuente C++
@@ -10,28 +21,31 @@ Telegarrm es un servicio daemon (stack ARR) que utiliza Telegram (TDLib) como fu
   - `media_parser.cpp`: interpreta nombres de fichero y fichas (episodios, título, año, calidad, idioma)
   - `catalog.cpp`: agrupa los mensajes de cada canal en series y películas (clase `Catalog`)
   - `metadata.cpp`, `tmdb_client.cpp`: metadatos de TMDB con caché local
-  - `download_manager.cpp`: cola de descargas; `library.cpp`: descompresión, nombres para Jellyfin y sustitución de versiones; `process.cpp`: procesos externos sin shell
+  - `download_manager.cpp`: cola de descargas; `library.cpp`: descompresión, calidad real con ffprobe, nombres para Jellyfin y sustitución de versiones; `process.cpp`: procesos externos sin shell
+  - `release_prober.cpp`: calidad real de un archivo leyendo solo sus primeros MB
   - `tracker.cpp`: seguimiento de series y películas (episodios nuevos y versiones mejores)
   - `settings.cpp`: ajustes editables desde la web
   - `db_manager.cpp`: acceso a SQLite (clase `DbManager`)
   - `telegram_client.cpp`: cliente de TDLib en su propio hilo (clase `TelegramClient`)
   - `signal_watcher.cpp`: parada ordenada con SIGINT/SIGTERM (clase `SignalWatcher`)
 - `include/`: Cabeceras y dependencias de un solo archivo (`httplib.h`, `nlohmann/json.hpp`)
-- `tests/`: Tests del parser y del catálogo con ejemplos reales (`ctest`)
+- `tests/`: Tests (`ctest`) del parser, el catálogo, la BD, la biblioteca y el seguimiento, con ejemplos reales de los canales
 - `web/`: Interfaz web (`index.html`, `style.css`, `app.js`, sin dependencias)
 - `deploy/`: Servicio de systemd, regla de polkit y script de instalación
-- `db/`: Datos generados al ejecutar: `telegarrm.db` (SQLite) y `tdlib/` (sesión de Telegram)
-- `docs/`: Documentación; la planificación vigente está en [docs/ROADMAP.md](docs/ROADMAP.md) y los motivos de cada decisión en [docs/DECISIONS.md](docs/DECISIONS.md)
+- `db/`: Datos generados al ejecutar: `telegarrm.db` (SQLite), `tdlib/` (sesión de Telegram) y `tmdb/` (carátulas)
+- `docs/`: Documentación. La arquitectura está en [docs/01_architecture_and_phases.md](docs/01_architecture_and_phases.md), la planificación vigente en [docs/ROADMAP.md](docs/ROADMAP.md) y los motivos de cada decisión en [docs/DECISIONS.md](docs/DECISIONS.md)
 - `build/`: Archivos de compilación
 
 ## Fases de Desarrollo
 Detalle y tareas en [docs/ROADMAP.md](docs/ROADMAP.md).
 
 - [x] **Fase 0**: Estructura base y servidor HTTP (`cpp-httplib`).
-- [x] **Fase 1**: Motor TDLib en un hilo propio y SQLite para configuración y estado. *Completada.*
+- [x] **Fase 1**: Motor TDLib en un hilo propio y SQLite para configuración y estado.
 - [x] **Fase 2**: Canales y catálogo: lectura del historial de los canales elegidos, catálogo con versiones y metadatos de TMDB.
 - [x] **Fase 3**: Descargas: cola, descompresión y renombrado para Jellyfin.
-- [x] **Fase 4**: Tele-ARR: mensajes nuevos en tiempo real, seguimiento de series y películas, auto-descarga de episodios nuevos, sustitución por versiones mejores e historial de actividad.
+- [x] **Fase 4**: Tele-ARR: mensajes nuevos en tiempo real, seguimiento de series y películas, auto-descarga de episodios nuevos, sustitución por versiones mejores, calidad real de cada archivo e historial de actividad.
+
+Siguientes pasos (autenticación, HTTPS, paso al servidor con RAID y Jellyfin): ver la hoja de ruta.
 
 ## Dependencias
 - Compilador con C++17, CMake >= 3.14, SQLite3 y TDLib >= 1.8.
@@ -39,6 +53,10 @@ Detalle y tareas en [docs/ROADMAP.md](docs/ROADMAP.md).
   ```bash
   sudo apt install build-essential cmake git libsqlite3-dev gperf zlib1g-dev libssl-dev 7zip 7zip-rar ffmpeg
   ```
+  - `7zip`: descomprime lo descargado (ZIP, 7z…). `7zip-rar` añade el códec de RAR, que Debian distribuye aparte por su licencia.
+  - `ffmpeg`: trae `ffprobe`, que lee la resolución y el HDR reales de cada vídeo.
+  - `zlib1g-dev`: lo usan TDLib y la lectura de la calidad dentro de los ZIP.
+  - `libssl-dev`: lo usan TDLib y las consultas HTTPS a TMDB.
 - TDLib (solo la librería JSON compartida) en `~/td/tdlib`, donde CMake lo encuentra automáticamente. En una Raspberry Pi 5 tarda unos 30 minutos:
   ```bash
   git clone --depth 1 https://github.com/tdlib/td.git ~/td
@@ -73,7 +91,7 @@ Ejecútalo desde la raíz del proyecto: las rutas `db/` y `web/` son relativas a
 La primera vez, abre `http://<ip-de-la-pi>:8080/` e inicia sesión en Telegram (teléfono, código y, si la tienes, contraseña de verificación en dos pasos). La sesión se conserva entre reinicios.
 
 ### Como servicio (systemd)
-`deploy/telegarrm.service` es un servicio de sistema que corre como `plax`, aislado (solo puede escribir en `db/` y `/srv/media`), y lee las credenciales de `~/.config/telegarrm/env` (permisos `600`, con las dos variables de [Configuración](#configuración)). La regla de polkit `deploy/50-telegarrm.rules` permite a `plax` arrancarlo, pararlo y reiniciarlo sin `sudo`. Motivos en [docs/DECISIONS.md](docs/DECISIONS.md) (D-013).
+`deploy/telegarrm.service` es un servicio de sistema que corre como `plax`, aislado (solo puede escribir en `db/` y `/srv/media`), y lee las credenciales de `~/.config/telegarrm/env` (permisos `600`, con las variables de [Configuración](#configuración)). La regla de polkit `deploy/50-telegarrm.rules` permite a `plax` arrancarlo, pararlo y reiniciarlo sin `sudo`. Motivos en [docs/DECISIONS.md](docs/DECISIONS.md) (D-013).
 
 El servicio solo puede escribir en `db/` y en `/srv/media`; para otra carpeta (ej. un RAID montado en otro sitio), pásala al script: `sudo ./deploy/install-service.sh /mnt/raid`.
 
@@ -88,7 +106,7 @@ Desplegar una versión nueva del programa no necesita `sudo`: `cmake --build bui
 ## API
 | Método y ruta | Descripción |
 | --- | --- |
-| `GET /api/status` | Estado del servicio, de la BD (`version` leída de `settings`) y de Telegram. HTTP 503 si la BD falla. |
+| `GET /api/status` | Estado del servicio, de la BD (`version` leída de `settings`), de Telegram y de TMDB (`metadata`: obras encontradas y sin encontrar). HTTP 503 si la BD falla. |
 | `POST /api/telegram/auth/phone` | `{"phone_number": "+34..."}` |
 | `POST /api/telegram/auth/code` | `{"code": "12345"}` |
 | `POST /api/telegram/auth/password` | `{"password": "..."}` (verificación en dos pasos) |
@@ -108,7 +126,7 @@ Desplegar una versión nueva del programa no necesita `sudo`: `cmake --build bui
 | `POST /api/downloads` | `{"chat_id": -100..., "message_id": ...}` (cualquier parte de un archivo del catálogo): 201, o 409 si ya está en la cola o descargado |
 | `POST /api/downloads/{id}/cancel` | Cancelar (borra lo descargado a medias) |
 | `POST /api/downloads/{id}/retry` | Reintentar una descarga fallida o cancelada |
-| `DELETE /api/downloads/{id}` | Quitar de la lista una descarga terminada, fallida o cancelada |
+| `DELETE /api/downloads/{id}` | Quitar de la lista una descarga terminada, sustituida, fallida o cancelada (los archivos de la biblioteca no se tocan) |
 | `GET /api/follows` | Obras seguidas: calidad máxima (`max_quality`), desde cuándo (`created_at`) y su ficha actual en el catálogo (`found` = sigue en él) |
 | `POST /api/follows` | `{"chat_id": -100..., "anchor_id": ..., "max_quality": ""}` (`""` = la mejor, `"1080p"` o `"720p"`): seguir una obra; 409 si ya se sigue |
 | `PUT /api/follows/{id}` | `{"max_quality": "1080p"}`: cambiar la calidad máxima |
@@ -122,31 +140,45 @@ Ejemplo de `/api/status`:
 ```json
 {"status": "Telegarrm is running", "version": "0.1.0",
  "database": {"status": "ok", "version": "0.1.0"},
- "telegram": {"authorization_state": "authorizationStateReady", "connection_state": "connectionStateReady"}}
+ "telegram": {"authorization_state": "authorizationStateReady", "connection_state": "connectionStateReady"},
+ "metadata": {"enabled": true, "working": false, "total": 2227, "matched": 1973, "unmatched": 254}}
 ```
 Los pasos del inicio de sesión responden `{"ok": true}`, o `{"error": "..."}` con HTTP 400 (dato incorrecto, ej. `PHONE_CODE_INVALID`), 409 (Telegram no espera ese dato ahora) o 504 (Telegram no responde).
 
 ## Historial de cambios
 ### Fase 4: seguimiento (Tele-ARR)
-- Mensajes nuevos en tiempo real (D-036): los canales vigilados se abren en TDLib (`openChat`) y cada `updateNewMessage` dispara una sincronización rápida. Los avisos se agrupan para no saturar TDLib.
-- Seguimiento (D-035): botón «Seguir» en cada ficha, con calidad máxima.
-  - Los episodios nuevos de las series seguidas se descargan solos, también la primera versión que se publique de una película seguida. Solo cuenta lo publicado después de seguir.
+- **Tiempo real** (D-036): los canales vigilados se abren en TDLib (`openChat`) y cada `updateNewMessage` dispara una sincronización rápida. Los avisos se agrupan para no saturar TDLib.
+- **Seguimiento** (D-035): botón «Seguir» en cada ficha, con calidad máxima.
+  - Los episodios nuevos de las series seguidas se descargan solos, y también la primera versión que se publique de una película seguida. Solo cuenta lo publicado después de seguir.
   - Se espera a que estén todas las partes de un comprimido.
-- Mejoras (D-037): una versión con más resolución, HDR o REMUX sustituye a la descargada. La anterior se borra cuando la nueva ya está en la biblioteca, o se conserva si así se elige en *Ajustes*.
-- Pestaña *Actividad*: obras seguidas y el historial de lo que el sistema hace solo. Filtro «En seguimiento» en el catálogo; las descargas automáticas se distinguen en *Descargas*.
-- Migración v7: tablas `follows`, `auto_releases` y `activity`; en `downloads`, origen, seguimiento, sustituciones y archivos colocados. Tests: 343 comprobaciones.
-- Comprobado en la Pi: un episodio nuevo de una serie seguida (860 MB, 20 s), una mejora de 1080p a 4K HDR que borró la versión anterior y, con un canal de prueba, un episodio subido en directo que se descargó solo unos 30 s después.
-- Calidad real de cada vídeo con `ffprobe` (D-039): manda sobre el nombre y la ficha.
-- La biblioteca cuenta como descargado lo que ya hay en la carpeta de cada obra, y un episodio importado sustituye a sus otras versiones (D-041).
-- Calidad real antes de descargar (D-042): se leen los primeros MB de cada archivo (también dentro de ZIP y RAR) sin descargarlo entero.
-- «Serie completa» (D-040): en la ficha de una serie, cuántos episodios se tienen y un botón para descargar los que faltan o la serie entera, en la mejor versión de cada uno.
-- Sin ficha, el nombre de la serie se toma del texto que repiten los episodios («1x01 - Ultimate Spiderman.mkv», D-038).
+- **Mejoras** (D-037): una versión con más resolución, HDR o REMUX sustituye a la descargada. La anterior se borra cuando la nueva ya está en la biblioteca, o se conserva si así se elige en *Ajustes*.
+- **Calidad real**:
+  - Al importar, `ffprobe` lee cada vídeo; su resolución y su HDR mandan sobre el nombre y la ficha (D-039).
+  - Antes de descargar, se leen solo los primeros MB de cada archivo, también dentro de ZIP y RAR (D-042).
+- **La biblioteca dice qué se tiene** (D-041): cuenta lo que ya hay en la carpeta de cada obra, y un episodio importado sustituye a sus otras versiones.
+- **Serie completa** (D-040): en la ficha de una serie, cuántos episodios se tienen y un botón para descargar los que faltan (o la serie entera), en la mejor versión de cada uno.
+- Sin ficha, el nombre de la serie se toma del texto que repiten los episodios (`1x01 - Ultimate Spiderman.mkv`, D-038).
+- **Web**:
+  - Pestaña *Actividad* con las obras seguidas y el historial.
+  - Filtro «En seguimiento» en el catálogo.
+  - Descargas automáticas y sustituidas distinguidas en *Descargas*.
+  - Botones «?» y «Comprobar calidades».
+  - Episodios ya en la biblioteca marcados.
+- **BD**:
+  - Migración v7: tablas `follows`, `auto_releases` y `activity`; en `downloads`, origen, seguimiento, sustituciones y archivos colocados.
+  - Migración v8: tabla `release_probes`.
+  - Tests: 411 comprobaciones.
+- **Comprobado en la Pi**:
+  - Un episodio nuevo de una serie seguida (860 MB, 20 s).
+  - Una mejora de 1080p a 4K HDR que borró la versión anterior.
+  - Con un canal de prueba, un episodio subido en directo que se descargó solo unos 30 s después.
+  - La calidad real de 23 archivos variados sin descargarlos.
 
 ### Fase 3: descargas e importación a la biblioteca
 - Importación (D-034): al terminar, cada descarga se descomprime si hace falta (7-Zip, sin shell), se eligen los vídeos y subtítulos y se mueven a la biblioteca con nombres para Jellyfin (`Título (Año) [tmdbid-N]/…`, `Season 01/Serie S01E01 - 1080p.mkv`), y se libera el búfer. Comprobado en la Pi con un ZIP (451 MB) y un RAR de 2 partes (1,86 GB, descomprimido en ~20 s); los RAR necesitan el paquete `7zip-rar`.
 - Pestaña *Ajustes*: búfer de descargas de TDLib (aplicado con un reinicio ordenado desde la web), bibliotecas y espacio libre mínimo, con validación real de cada ruta (D-032). La unidad admite `/srv/media` y rutas adicionales vía `install-service.sh`.
 - Arreglos de la web: flecha propia en los desplegables y botones de descarga de ancho fijo que muestran el progreso.
-- Cola de descargas persistente: botón "Almacenar en disco" por versión o por temporada, pestaña *Descargas* con progreso, velocidad y tiempo restante, cancelación (borra lo parcial), reintento, reanudación tras reiniciar y comprobación de espacio libre. Los archivos quedan, de momento, en la caché de TDLib (D-031).
+- Cola de descargas persistente: botón "Almacenar en disco" por versión o por temporada, pestaña *Descargas* con progreso, velocidad y tiempo restante, cancelación (borra lo parcial), reintento, reanudación tras reiniciar y comprobación de espacio libre (D-031). Al principio los archivos se quedaban en la caché de TDLib; la importación (D-034) los lleva ya a la biblioteca.
 
 ### Fase 2: canales, sincronización y catálogo
 - Metadatos de TMDB (D-029, D-030): sinopsis, títulos y sinopsis de episodio, géneros, carátulas e identificadores externos, guardados en local; créditos de TMDB en la web. Funciona sin token con los datos de las fichas.

@@ -845,7 +845,8 @@ async function refreshDownloads() {
 // Icono y estilo de cada tipo de entrada del historial
 const ACTIVITY_STYLE = {
   queued_episode: ["+", "queued"], queued_movie: ["+", "queued"], queued_upgrade: ["↑", "queued"],
-  completed: ["✓", "done"], upgraded: ["↑", "done"], failed: ["!", "failed"], follow: ["●", "user"], unfollow: ["○", "user"],
+  completed: ["✓", "done"], upgraded: ["↑", "done"], replaced: ["↻", "done"], failed: ["!", "failed"],
+  follow: ["●", "user"], unfollow: ["○", "user"],
 };
 
 let activityEntries = [];
@@ -952,7 +953,7 @@ function renderSettings(data) {
 
   for (const field of PATH_FIELDS) {
     const check = data.checks[field];
-    if (!check) setFieldStatus(field, "Sin definir: el postproceso no moverá nada aquí hasta que la elijas.", "hint");
+    if (!check) setFieldStatus(field, "Sin definir: la importación no llevará nada aquí hasta que la elijas.", "hint");
     else if (check.ok) setFieldStatus(field, `✓ Se puede escribir · ${formatSize(check.free_bytes)} libres`, "ok");
     else setFieldStatus(field, check.error, "err");
   }

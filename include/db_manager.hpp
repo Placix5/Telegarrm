@@ -153,7 +153,7 @@ public:
         std::int64_t id = 0;
         std::int64_t at = 0;         // Unix, segundos (0 = ahora)
         std::string type;            // follow, unfollow, queued_episode, queued_movie, queued_upgrade,
-                                     // completed, upgraded, failed
+                                     // completed, upgraded, replaced, failed
         std::string message;         // En castellano, listo para mostrar
         std::int64_t chatId = 0;     // Mensaje de la obra (ficha o archivo) para enlazarla
         std::int64_t messageId = 0;

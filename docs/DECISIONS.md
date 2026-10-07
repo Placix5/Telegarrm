@@ -36,10 +36,18 @@ Formato: **Contexto** (qué problema había), **Decisión**, **Alternativas desc
 | [D-028](#d-028-compilación-optimizada-por-defecto-y-caché-del-análisis) | Compilación optimizada y caché del análisis | Vigente |
 | [D-029](#d-029-metadatos-de-themoviedb-tmdb) | Metadatos de TheMovieDB (TMDB) | Vigente |
 | [D-030](#d-030-cómo-se-integra-tmdb) | Cómo se integra TMDB | Vigente |
-| [D-031](#d-031-cola-de-descargas) | Cola de descargas | Vigente |
+| [D-031](#d-031-cola-de-descargas) | Cola de descargas | Vigente (dónde quedan los archivos: D-034) |
 | [D-032](#d-032-ajustes-desde-la-web-y-reinicio-con-el-código-75) | Ajustes desde la web y reinicio con el código 75 | Vigente |
 | [D-033](#d-033-estructura-de-carpetas-srvmedia-y-jellyfin) | Estructura de carpetas `/srv/media` y Jellyfin | Vigente |
 | [D-034](#d-034-importación-a-la-biblioteca) | Importación a la biblioteca | Vigente |
+| [D-035](#d-035-seguimiento-de-series-y-películas) | Seguimiento de series y películas | Vigente (ampliada por D-041 y D-042) |
+| [D-036](#d-036-mensajes-nuevos-en-tiempo-real) | Mensajes nuevos en tiempo real | Vigente |
+| [D-037](#d-037-sustitución-de-versiones-e-historial-de-actividad) | Sustitución de versiones e historial de actividad | Vigente (ampliada por D-041) |
+| [D-038](#d-038-nombre-de-la-serie-repetido-en-los-archivos) | Nombre de la serie repetido en los archivos | Vigente |
+| [D-039](#d-039-calidad-real-del-vídeo-con-ffprobe) | Calidad real del vídeo con ffprobe | Vigente |
+| [D-040](#d-040-descargar-los-episodios-que-faltan-o-la-serie-completa) | Descargar los episodios que faltan (o la serie completa) | Vigente (ampliada por D-041 y D-042) |
+| [D-041](#d-041-la-biblioteca-dice-qué-episodios-se-tienen) | La biblioteca dice qué episodios se tienen | Vigente |
+| [D-042](#d-042-calidad-real-antes-de-descargar) | Calidad real antes de descargar | Vigente |
 
 ---
 
@@ -356,7 +364,7 @@ Formato: **Contexto** (qué problema había), **Decisión**, **Alternativas desc
     - Reintenta las partes que se detienen (hasta 5 veces) y falla si no avanza en 15 minutos.
     - Tras un reinicio, lo que se estaba descargando vuelve a la cola y TDLib continúa donde lo dejó.
     - Cancelar para la descarga, **borra lo descargado a medias** y deja el progreso a cero.
-  - **Dónde quedan los archivos**: en la caché de TDLib (`db/tdlib/documents`), porque la biblioteca final (disco y carpetas) aún no está definida.
+  - **Dónde quedan los archivos**: en la caché de TDLib (`db/tdlib/documents`), porque la biblioteca final (disco y carpetas) aún no está definida. *Actualizado por D-032 y D-034: TDLib descarga en el búfer de* Ajustes *y la importación lleva cada descarga a la biblioteca.*
   - **Web**:
     - Botón "Almacenar en disco" en cada versión, y "Temporada completa" en cada versión de una temporada.
     - Pestaña *Descargas* con progreso, velocidad, tiempo restante y acciones (cancelar, reintentar, quitar).
@@ -446,6 +454,9 @@ Formato: **Contexto** (qué problema había), **Decisión**, **Alternativas desc
   - Comparar códec o audio: los nombres del canal casi nunca los llevan y un x265 no es mejor que un x264 por sí mismo.
   - Leer el número de partes de la ficha («Son 3 partes en rar»): las fichas con varias versiones lo dan por versión («4K: Son 3 partes… Remux: Son 5…»).
   - Seguir obras que aún no están en el catálogo.
+- *Ampliada después*:
+  - Lo que se tiene incluye los vídeos de la carpeta de la obra en la biblioteca (D-041).
+  - Antes de decidir, se comprueba la calidad real de lo que se podría pedir (D-042), como mucho 10 archivos por pasada. La calidad máxima y las mejoras se aplican sobre esa calidad.
 - **Consecuencias**: la evaluación (`tracking::plan`) es una función pura, probada con catálogos de ejemplo. La ejecuta `Tracker` en su hilo cuando cambia el catálogo, cuando se sigue algo y cada 5 min si hay algo esperando.
 - **Verificación** (07/10/2026):
   - Tests con el formato real del tema «Series en emisión»: solo el episodio posterior a seguir; espera mientras el `.part2.rar` de un episodio en 3 partes es la última parte; la temporada vuelta a subir no cuenta; 4K como mejora de 1080p (cancela si la 1080p seguía en cola); límite de 1080p; películas y 3D.
@@ -481,6 +492,7 @@ Formato: **Contexto** (qué problema había), **Decisión**, **Alternativas desc
   - **Tabla `activity`**: registra lo que hace el sistema solo. Episodio o película en cola, mejora en cola, descarga automática terminada o fallida, versión sustituida. También seguir y dejar de seguir, para entender después por qué se descargó algo. Se conservan las 5000 entradas más recientes.
   - **Web**: botón «Seguir» en cada ficha, con la calidad máxima. Filtro «En seguimiento» en el catálogo. Pestaña *Actividad* con lo que se sigue y el historial.
   - Las descargas guardan su origen (`manual` / `auto`) y la obra seguida que las pidió (`follow_id`).
+- *Ampliada por D-041*: la importación también sustituye las otras versiones del mismo episodio que encuentre en la carpeta, aunque no vengan de una descarga. El historial lo anota como `replaced` si la descarga era manual.
 - **Verificación** (07/10/2026): tests de `removeFiles` (no toca nada fuera de la biblioteca, ni enlaces, ni la versión nueva; quita las carpetas vacías sin borrar la raíz). En la Pi, *El show de los Muppets - Especial*:
   1. Se descargó a mano en 1080p.
   2. Al seguirla (con la fecha retrasada a antes de su publicación), el seguimiento pidió la 4K HDR como mejora.
@@ -522,6 +534,7 @@ Formato: **Contexto** (qué problema había), **Decisión**, **Alternativas desc
   - Por cada episodio que falta se elige su mejor versión dentro de la calidad elegida (la del seguimiento si se sigue la serie) y sin 3D. Un archivo con varios episodios (1x01-02) cubre todos los que trae.
   - Un episodio cuenta como «tenido» si alguna de sus versiones está en cola, descargándose, importándose o en la biblioteca. Una descarga fallida o cancelada no cuenta.
   - Lo elige el servidor (`POST /api/catalog/{chat}/{ficha}/download`) con la misma lógica que el seguimiento (`tracking::missingEpisodes`), probada con tests. Antes comprueba que caben en la biblioteca de series con el margen de *Ajustes*.
+- *Ampliada después*: cuentan también los episodios que ya hay en la biblioteca (D-041), y la mejor versión se elige con la calidad comprobada si existe (D-042).
 - **Verificación**: en la Pi, la serie de prueba muestra «Tienes 1 de 2 episodios conocidos» y el botón para el que falta. Westworld (35 episodios, 143 GB) se rechaza porque no cabe en los 101 GB libres, sin poner nada en cola.
 
 ## D-041: La biblioteca dice qué episodios se tienen

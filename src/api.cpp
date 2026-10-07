@@ -648,7 +648,7 @@ void registerDownloadRoutes(httplib::Server& server, DbManager& db, Catalog& cat
         sendJson(res, 202, {{"ok", true}});
     });
 
-    // Quitar del historial. Los archivos de una descarga terminada se quedan en la caché de TDLib.
+    // Quitar del historial. Los archivos que la descarga llevó a la biblioteca no se tocan.
     server.Delete(R"(/api/downloads/(\d+))", [&db](const httplib::Request& req, httplib::Response& res) {
         const auto id = parseId(req.matches[1].str());
         const auto download = id ? db.getDownload(*id) : std::nullopt;

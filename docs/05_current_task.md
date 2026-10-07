@@ -5,6 +5,13 @@
 > - El seguimiento solo actúa sobre lo publicado **después** de seguir una obra. Seguir no descarga el catálogo antiguo; para eso están los botones de temporada.
 > - El mensaje nuevo no se parsea desde la actualización de TDLib. La actualización dispara una sincronización rápida, y el mensaje se guarda y se analiza por el camino de siempre (cursor, catálogo, parser). Así no hay dos caminos ni huecos si se pierde una actualización.
 > - Conservar la versión anterior es una opción de *Ajustes* («Conservar la versión anterior al mejorarla»). Por defecto se borra cuando la nueva ya está en la biblioteca.
+>
+> Después, a raíz de las pruebas de Plácido con su canal «Prueba Claude», se añadieron:
+> - El nombre de la serie a partir de los archivos (D-038).
+> - La calidad real de cada vídeo con ffprobe (D-039).
+> - El botón «Serie completa» / episodios que faltan (D-040).
+> - La biblioteca como fuente de lo que se tiene (D-041).
+> - La calidad real antes de descargar (D-042).
 
 **Fase Actual:** Inicio de Fase 4 (Seguimiento / Tele-ARR).
 
