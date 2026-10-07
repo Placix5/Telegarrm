@@ -6,7 +6,7 @@ Telegarrm es un servicio daemon (stack ARR, como Sonarr y Radarr) que utiliza Te
 Desde la web (`http://<ip-de-la-pi>:8080/`):
 - **Catálogo**: las series y películas publicadas en los canales y grupos que elijas, con portada, sinopsis y títulos de episodio de TMDB.
   - Arriba, «Añadidas recientemente»: lo último que se ha publicado.
-  - Si tienes abierta una obra y se publica algo nuevo de ella, aparece un aviso en la esquina.
+  - La ficha de una obra se actualiza sola. Si se publica algo nuevo de ella mientras la miras, aparece un aviso en la esquina y la fila nueva se ilumina.
   - Cada episodio o película muestra sus versiones (1080p, 4K HDR, REMUX…).
   - La calidad real de cada versión se puede comprobar sin descargarla: «?», o «Comprobar calidades» por temporada.
   - Marca lo que ya tienes en la biblioteca.
@@ -153,7 +153,8 @@ Los pasos del inicio de sesión responden `{"ok": true}`, o `{"error": "..."}` c
 ### Fase 4.1: mejoras de uso
 - El logo de la cabecera lleva al catálogo.
 - «Añadidas recientemente»: fila con las 12 obras con publicaciones más recientes, con «hace 2 h», «ayer»…
-- Avisos en directo (D-043): si se está viendo la ficha de una obra y llega algo nuevo de ella por Telegram, aparece un aviso en la esquina con un botón para actualizar la ficha. El catálogo anota las novedades y la web las consulta con el sondeo de `/api/status` que ya hacía.
+- Avisos en directo (D-043): si se está viendo la ficha de una obra y llega algo nuevo de ella por Telegram, aparece un aviso en la esquina. El catálogo anota las novedades y la web las consulta con el sondeo de `/api/status` que ya hacía.
+- La ficha abierta se actualiza sola (D-045): al terminar una descarga suya (aparece «✓ En tu biblioteca» y se recuentan los episodios), al llegar una novedad (la fila nueva se ilumina) y cada 30 s. Sin perder la posición.
 - Barras de desplazamiento y controles nativos con el tema del sistema (claro u oscuro).
 - Confirmaciones propias en lugar de las del navegador (D-044): explican qué va a pasar y resumen los datos (episodios, tamaño, calidad). Lo destructivo va en rojo y con el foco en «Cancelar». Los errores salen como avisos en la esquina.
 

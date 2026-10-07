@@ -50,6 +50,7 @@ Formato: **Contexto** (qué problema había), **Decisión**, **Alternativas desc
 | [D-042](#d-042-calidad-real-antes-de-descargar) | Calidad real antes de descargar | Vigente |
 | [D-043](#d-043-novedades-en-la-web-fase-41) | Novedades en la web (Fase 4.1) | Vigente |
 | [D-044](#d-044-confirmaciones-y-errores-con-el-estilo-de-la-página) | Confirmaciones y errores con el estilo de la página | Vigente |
+| [D-045](#d-045-la-ficha-abierta-se-actualiza-sola) | La ficha abierta se actualiza sola | Vigente |
 
 ---
 
@@ -593,7 +594,7 @@ Formato: **Contexto** (qué problema había), **Decisión**, **Alternativas desc
     - Un canal que se lee por primera vez, o el arranque del servicio, tampoco.
     - Lo publicado hace más de 24 h, tampoco.
   - **Entrega a la web por sondeo**: `/api/status`, que la web ya pide cada 2 s, trae el identificador de la última novedad, y `GET /api/events?after=N` da las siguientes. El aviso llega como mucho 2 s después de que el catálogo lo conozca: unos 20 s tras publicarse, por la agrupación de D-036.
-  - **Aviso**: tarjeta en la esquina inferior derecha («Nuevo en «Serie»: 4x10 (1080p)»), con botón para actualizar la ficha y otro para cerrar. Desaparece sola a los 15 s, no roba el foco, se anuncia como `role="status"` y respeta `prefers-reduced-motion`.
+  - **Aviso**: tarjeta en la esquina inferior derecha («Nuevo en «Serie»: 4x10 (1080p)») con un botón para cerrar. Desde D-045 la ficha se actualiza sola, así que ya no lleva botón para actualizarla. Desaparece sola a los 15 s, no roba el foco, se anuncia como `role="status"` y respeta `prefers-reduced-motion`.
 - **Verificación**:
   - Tests con el catálogo real sobre una BD temporal: un episodio nuevo es novedad; la segunda parte de un RAR ya conocido, no; tampoco lo antiguo ni un canal nuevo.
   - En la Pi, la fila de recientes y el aviso se ven bien en Chrome (modo oscuro).
@@ -610,3 +611,14 @@ Formato: **Contexto** (qué problema había), **Decisión**, **Alternativas desc
     - Esc o pulsar fuera cancela. El `<dialog>` nativo da gratis el foco atrapado y la accesibilidad.
   - **Errores**: avisos en la esquina, como los de novedades (D-043), con borde rojo.
 - **Descartado**: una librería de diálogos (D-016: la web no tiene dependencias).
+
+## D-045: La ficha abierta se actualiza sola
+*07/10/2026 · Fase 4.1, petición de Plácido*
+
+- **Contexto**: en la ficha solo se actualizaban los botones de descarga. Todo lo demás se calculaba al abrirla y no cambiaba: «✓ En tu biblioteca», el recuadro «Tienes X de Y episodios», los episodios nuevos, las calidades comprobadas. Plácido notaba que la página no se actualizaba en tiempo real.
+- **Decisión**: la ficha abierta se vuelve a pedir y se redibuja en su sitio (`refreshDetail`), solo si su JSON ha cambiado:
+  - cuando cambia el estado de una descarga de esa obra (la web ya sondea las descargas cada 2 s): entra en cola, termina, falla, se sustituye…;
+  - cuando llega una novedad de esa obra (D-043): la fila nueva se ilumina un momento y el aviso dice que ya aparece en la ficha;
+  - cada 30 s, por si cambia algo que no avisa (ej. un archivo borrado a mano de la biblioteca).
+- **Sin molestar**: se conservan el desplazamiento, la «Ficha original» desplegada y la calidad elegida en «Serie completa». No se redibuja mientras se comprueban calidades, con un diálogo abierto o con un desplegable en uso. Abrir una ficha sigue mostrando «Cargando…»; refrescarla, no.
+- **Descartado**: actualizar a mano cada parte de la ficha. Habría que repetir la lógica del dibujo para cada caso. Redibujar entero, pero solo cuando algo cambia, es más simple y en la práctica no se nota.

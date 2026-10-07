@@ -101,7 +101,8 @@ HTML, CSS y JavaScript sin dependencias ni compilación (D-016), servidos desde 
 Las novedades llegan a la web sin conexiones permanentes (D-043):
 - Al recalcular un canal, `Catalog` anota los archivos lógicos nuevos como novedades (las 100 últimas, en memoria).
 - `/api/status`, que la web pide cada 2 s, trae el número de la última novedad, y `/api/events` da las siguientes.
-- Si una es de la obra abierta, aparece un aviso en la esquina.
+- Si una es de la obra abierta, la ficha se redibuja en su sitio y aparece un aviso en la esquina.
+- La ficha abierta también se redibuja cuando cambia una de sus descargas o cada 30 s, solo si su contenido ha cambiado (D-045).
 
 ## Seguridad
 

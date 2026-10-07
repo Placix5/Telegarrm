@@ -2,6 +2,7 @@
 
 const STATUS_POLL_MS = 2000;
 const CATALOG_POLL_MS = 15000;
+const DETAIL_POLL_MS = 30000;
 
 // Fechas, números y tamaños con formato español, hora peninsular y unidades del SI (base 1000)
 const DATE_FORMAT = new Intl.DateTimeFormat("es-ES", {
@@ -336,11 +337,13 @@ function qualityControls(release) {
   button.addEventListener("click", async () => {
     button.disabled = true;
     button.textContent = "…";
+    detailBusy++;
     try {
       release.probe = await api(`/api/releases/${release.chat_id}/${release.message_id}/probe`, { method: "POST" });
     } catch (e) {
       release.probe = { error: e.message };
     }
+    detailBusy--;
     button.disabled = false;
     button.textContent = "?";
     update();
@@ -357,6 +360,7 @@ function probeAllButton(releases, onDone) {
   button.hidden = pending.length === 0;
   button.addEventListener("click", async () => {
     button.disabled = true;
+    detailBusy++;
     for (let i = 0; i < pending.length; i++) {
       button.textContent = `Comprobando ${i + 1} de ${pending.length}…`;
       try {
@@ -365,6 +369,7 @@ function probeAllButton(releases, onDone) {
         pending[i].probe = { error: e.message };
       }
     }
+    detailBusy--;
     onDone();
   });
   return button;
@@ -493,11 +498,19 @@ function versionsTable(releases) {
   return node;
 }
 
-// Obra de la ficha abierta (para los avisos de novedades)
+// Ficha abierta: la obra (para los avisos de novedades), su ruta y su JSON (para saber si ha cambiado)
 let currentDetail = null;
+let detailRoute = null;
+let detailJson = null;
+let detailBusy = 0;               // Comprobando calidades: no se redibuja hasta que termine
+let seriesQualityChoice = null;   // Calidad elegida en «Serie completa» (se conserva al redibujar)
+let detailDownloads = "";         // Estado de las descargas de la obra abierta (si cambia, se redibuja)
 
 async function loadDetail(chatId, anchorId) {
   currentDetail = null;  // Hasta que cargue, no es la ficha de ninguna obra
+  detailRoute = { chatId, anchorId };
+  detailJson = null;
+  seriesQualityChoice = null;
   const container = $("detail-content");
   container.replaceChildren(el("p", "hint", "Cargando…"));
   let item;
@@ -507,8 +520,54 @@ async function loadDetail(chatId, anchorId) {
     container.replaceChildren(el("p", "err", e.message));
     return;
   }
+  renderDetail(item);
+}
 
+// Vuelve a pedir la ficha abierta y, si algo ha cambiado (descargas que terminan, episodios nuevos,
+// calidades comprobadas...), la redibuja en su sitio: sin «Cargando…» ni saltos (D-045)
+async function refreshDetail() {
+  const route = detailRoute;
+  if (!route || !currentDetail || currentRoute().view !== "detail") return;
+  let item;
+  try {
+    item = await api(`/api/catalog/${route.chatId}/${route.anchorId}`);
+  } catch (e) {
+    return;
+  }
+  // Mientras tanto no ha cambiado de ficha ni se está usando algo que el redibujo estropearía
+  const active = document.activeElement;
+  const choosing = active && active.tagName === "SELECT" && $("detail-content").contains(active);
+  if (route !== detailRoute || detailBusy || choosing || $("dialog").open) return;
+  if (JSON.stringify(item) === detailJson) return;
+  const container = $("detail-content");
+  const scroll = window.scrollY;
+  const details = container.querySelector("details");
+  const open = details ? details.open : false;
+  renderDetail(item);
+  const newDetails = container.querySelector("details");
+  if (newDetails) newDetails.open = open;
+  window.scrollTo(0, scroll);
+}
+
+// Resalta un momento las filas de unos archivos (los que acaban de publicarse)
+function flashReleases(messageIds) {
+  for (const id of messageIds) {
+    const button = document.querySelector(`#detail-content button[data-message="${id}"]`);
+    const row = button && button.closest("tr");
+    if (row) {
+      row.classList.remove("flash");
+      void row.offsetWidth;  // Reinicia la animación si ya estaba
+      row.classList.add("flash");
+      setTimeout(() => row.classList.remove("flash"), 3000);
+    }
+  }
+}
+
+function renderDetail(item) {
   currentDetail = item;
+  detailJson = JSON.stringify(item);
+  detailDownloads = detailDownloadState();
+  const container = $("detail-content");
   const info = el("div");
   const title = el("h2", "", item.title);
   const badges = el("div", "badges");
@@ -555,7 +614,7 @@ async function loadDetail(chatId, anchorId) {
 
   const files = el("div", "files");
   const onDisk = episodesOnDisk(item);
-  const reload = () => loadDetail(chatId, anchorId);
+  const reload = () => refreshDetail();
   if (item.kind === "movie" && (item.on_disk || []).length) {
     info.append(el("p", "on-disk", `✓ En tu biblioteca: ${item.on_disk.map(diskLabel).join(", ")}`));
   }
@@ -582,6 +641,15 @@ async function loadDetail(chatId, anchorId) {
   container.replaceChildren(detail, files);
   document.title = `${item.title} · Telegarrm`;
   updateDownloadButtons();
+}
+
+// "mensaje:estado" de las descargas de los archivos de la ficha abierta
+function detailDownloadState() {
+  if (!currentDetail) return "";
+  return currentDetail.releases.map((release) => {
+    const download = downloadsByKey.get(releaseKey(release.chat_id, release.message_id));
+    return download ? `${release.message_id}:${download.status}` : "";
+  }).filter(Boolean).join(",");
 }
 
 function qualitySelect(value, onChange) {
@@ -667,7 +735,11 @@ function seriesBox(item) {
     ? `Tienes ${formatNumber(library.owned)} de ${plural(library.episodes, "episodio conocido", "episodios conocidos")} (descargados o en cola).`
     : `${plural(library.episodes, "episodio conocido", "episodios conocidos")}; no tienes ninguno.`;
   const button = el("button", "small", "");
-  const select = qualitySelect(item.follow ? item.follow.max_quality : "", () => update());
+  const select = qualitySelect(seriesQualityChoice !== null ? seriesQualityChoice : item.follow ? item.follow.max_quality : "",
+    () => {
+      seriesQualityChoice = select.value;
+      update();
+    });
   const update = () => {
     const missing = library.missing[select.value];
     button.disabled = !missing.episodes;
@@ -704,7 +776,7 @@ function seriesBox(item) {
       toastError(e.message);
     }
     await refreshDownloads();
-    loadDetail(item.chat_id, item.anchor_id);  // Vuelve a contar lo que falta
+    refreshDetail();  // Vuelve a contar lo que falta
   });
   update();
   box.append(el("p", "hint", summary), select, button);
@@ -901,6 +973,12 @@ async function refreshDownloads() {
   $("downloads-count").hidden = active === 0;
   if (currentRoute().view === "downloads") renderDownloads();
   updateDownloadButtons();
+  // Si una descarga de la obra abierta cambia de estado (entra en cola, termina, falla...), la ficha se
+  // redibuja: «En tu biblioteca», «Tienes X de Y episodios»...
+  if (currentRoute().view === "detail" && currentDetail && detailDownloadState() !== detailDownloads) {
+    detailDownloads = detailDownloadState();
+    refreshDetail();
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1109,8 +1187,9 @@ async function checkEvents(lastId) {
   for (const event of events) {
     if (route.view === "detail" && currentDetail && event.item.chat_id === currentDetail.chat_id &&
         event.item.anchor_id === currentDetail.anchor_id) {
-      showToast(`Novedad en «${event.item.title}»`, describeNews(event), "Actualizar la ficha",
-        () => loadDetail(route.chatId, route.anchorId));
+      await refreshDetail();  // Ya aparece en la ficha, resaltado un momento
+      flashReleases(event.releases.map((release) => release.message_id));
+      showToast(`Novedad en «${event.item.title}»`, `${describeNews(event)} Ya aparece en la ficha.`);
     }
   }
   if (events.length && route.view === "catalog") loadCatalog();
@@ -1433,3 +1512,7 @@ setInterval(() => {
   if (telegramReady && currentRoute().view === "catalog") loadCatalog();
   if (telegramReady && currentRoute().view === "activity") loadActivity();
 }, CATALOG_POLL_MS);
+// La ficha abierta, por si cambia algo que no avisa (ej. un archivo borrado a mano de la biblioteca)
+setInterval(() => {
+  if (telegramReady && currentRoute().view === "detail") refreshDetail();
+}, DETAIL_POLL_MS);
