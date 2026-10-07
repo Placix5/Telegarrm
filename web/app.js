@@ -10,6 +10,18 @@ const DATE_FORMAT = new Intl.DateTimeFormat("es-ES", {
 const SIZE_FORMAT = new Intl.NumberFormat("es-ES", { maximumFractionDigits: 1 });
 const formatDate = (unixSeconds) => DATE_FORMAT.format(new Date(unixSeconds * 1000));
 const formatDay = (unixSeconds) => formatDate(unixSeconds).split(",")[0];
+
+// "hace 5 min", "hace 3 h", "ayer", "hace 4 días" o la fecha (días según la hora de Madrid)
+function relativeTime(unixSeconds) {
+  const now = Date.now() / 1000;
+  const seconds = now - unixSeconds;
+  if (seconds < 60) return "ahora mismo";
+  if (seconds < 3600) return `hace ${Math.floor(seconds / 60)} min`;
+  if (formatDay(unixSeconds) === formatDay(now)) return `hace ${Math.floor(seconds / 3600)} h`;
+  if (formatDay(unixSeconds) === formatDay(now - 86400)) return "ayer";
+  if (seconds < 7 * 86400) return `hace ${Math.ceil(seconds / 86400)} días`;
+  return formatDay(unixSeconds);
+}
 const formatNumber = (n) => n.toLocaleString("es-ES");
 function formatSize(bytes) {
   const units = [["TB", 1e12], ["GB", 1e9], ["MB", 1e6], ["kB", 1e3]];
@@ -67,6 +79,8 @@ const CHAT_GROUPS = [
 
 const KIND_LABEL = { series: "Serie", movie: "Película" };
 const MAX_QUALITY = [["", "La mejor calidad"], ["1080p", "Hasta 1080p"], ["720p", "Hasta 720p"]];
+const RECENT_COUNT = 12;     // Obras en «Añadidas recientemente»
+const TOAST_MS = 15000;      // Lo que dura un aviso si no se toca
 
 // Errores habituales de Telegram traducidos
 function translateError(message) {
@@ -215,6 +229,20 @@ function itemMeta(item) {
   return parts.join(" · ");
 }
 
+// Tarjeta de una obra; en «Añadidas recientemente», con cuándo se publicó lo último
+function catalogCard(item, withWhen) {
+  const card = el("a", "card");
+  card.href = `#/catalogo/${itemPath(item)}`;
+  const body = el("div", "card-body");
+  body.append(el("div", "card-title", item.title), el("div", "card-meta", itemMeta(item)));
+  if (withWhen) body.append(el("div", "card-when", relativeTime(item.updated_at)));
+  const poster = posterElement(item);
+  if (item.airing) poster.append(el("span", "ribbon", "En emisión"));
+  if (item.followed) poster.append(el("span", "ribbon follow", "Siguiendo"));
+  card.append(poster, body);
+  return card;
+}
+
 function renderCatalog() {
   const query = normalize($("catalog-search").value.trim());
   const kind = $("catalog-kind").value;
@@ -227,18 +255,15 @@ function renderCatalog() {
     .sort(sort);
 
   const grid = $("catalog-grid");
-  grid.replaceChildren();
-  for (const item of visible) {
-    const card = el("a", "card");
-    card.href = `#/catalogo/${itemPath(item)}`;
-    const body = el("div", "card-body");
-    body.append(el("div", "card-title", item.title), el("div", "card-meta", itemMeta(item)));
-    const poster = posterElement(item);
-    if (item.airing) poster.append(el("span", "ribbon", "En emisión"));
-    if (item.followed) poster.append(el("span", "ribbon follow", "Siguiendo"));
-    card.append(poster, body);
-    grid.append(card);
-  }
+  grid.replaceChildren(...visible.map((item) => catalogCard(item, false)));
+
+  // Añadidas recientemente (D-043): lo publicado hace menos tiempo, sin búsqueda y con el filtro de tipo
+  const recent = catalogItems
+    .filter((item) => !kind || (kind === "airing" ? item.airing : kind === "followed" ? item.followed : item.kind === kind))
+    .sort((a, b) => b.updated_at - a.updated_at)
+    .slice(0, RECENT_COUNT);
+  $("catalog-recent").hidden = Boolean(query) || recent.length === 0;
+  $("recent-row").replaceChildren(...recent.map((item) => catalogCard(item, true)));
 
   if (!catalogItems.length) {
     $("catalog-summary").textContent =
@@ -461,7 +486,11 @@ function versionsTable(releases) {
   return node;
 }
 
+// Obra de la ficha abierta (para los avisos de novedades)
+let currentDetail = null;
+
 async function loadDetail(chatId, anchorId) {
+  currentDetail = null;  // Hasta que cargue, no es la ficha de ninguna obra
   const container = $("detail-content");
   container.replaceChildren(el("p", "hint", "Cargando…"));
   let item;
@@ -472,6 +501,7 @@ async function loadDetail(chatId, anchorId) {
     return;
   }
 
+  currentDetail = item;
   const info = el("div");
   const title = el("h2", "", item.title);
   const badges = el("div", "badges");
@@ -934,6 +964,87 @@ $("activity-more").addEventListener("click", async () => {
 });
 
 // ---------------------------------------------------------------------------
+// Novedades y avisos emergentes (D-043)
+// ---------------------------------------------------------------------------
+
+let lastEventId = null;  // Última novedad vista (null hasta el primer sondeo: lo anterior no se avisa)
+
+// Aviso en la esquina: no roba el foco, se cierra solo y se puede cerrar o seguir su acción
+function showToast(title, text, actionText, onAction) {
+  const toast = el("div", "toast");
+  toast.setAttribute("role", "status");
+  const body = el("div", "toast-body");
+  body.append(el("strong", "", title), el("p", "", text));
+  const close = () => {
+    clearTimeout(timer);
+    toast.classList.add("leaving");
+    setTimeout(() => toast.remove(), 200);
+  };
+  if (actionText) {
+    const action = el("button", "small", actionText);
+    action.addEventListener("click", () => {
+      close();
+      onAction();
+    });
+    body.append(action);
+  }
+  const closeButton = el("button", "toast-close", "×");
+  closeButton.setAttribute("aria-label", "Cerrar aviso");
+  closeButton.addEventListener("click", close);
+  toast.append(body, closeButton);
+  $("toasts").append(toast);
+  let timer = setTimeout(close, TOAST_MS);
+  // Mientras el ratón está encima no se cierra
+  toast.addEventListener("mouseenter", () => clearTimeout(timer));
+  toast.addEventListener("mouseleave", () => {
+    timer = setTimeout(close, TOAST_MS / 3);
+  });
+}
+
+// "el 1x03 (720p)", "los episodios 1x03 y 1x04", "una versión 4K HDR"
+function describeNews(event) {
+  const label = (release) => (release.quality ? ` (${versionLabel(release)})` : "");
+  const episodes = event.releases.filter((release) => release.episode !== null);
+  if (episodes.length === 1) return `Acaba de publicarse el ${episodeLabel(episodes[0])}${label(episodes[0])}.`;
+  if (episodes.length > 1 && episodes.length <= 4) {
+    const labels = episodes.map(episodeLabel);
+    return `Acaban de publicarse los episodios ${labels.slice(0, -1).join(", ")} y ${labels[labels.length - 1]}.`;
+  }
+  if (episodes.length > 4) return `Acaban de publicarse ${episodes.length} episodios.`;
+  if (event.releases.length === 1) {
+    return event.releases[0].quality ? `Acaba de publicarse una versión ${versionLabel(event.releases[0])}.`
+      : "Acaba de publicarse una versión nueva.";
+  }
+  return `Acaban de publicarse ${event.releases.length} versiones nuevas.`;
+}
+
+// Con cada sondeo del estado: si hay novedades de la obra abierta, se avisa
+async function checkEvents(lastId) {
+  if (lastEventId === null || lastId < lastEventId) {
+    lastEventId = lastId;  // Primera vez o el servicio se ha reiniciado
+    return;
+  }
+  if (lastId === lastEventId) return;
+  const after = lastEventId;
+  lastEventId = lastId;
+  let events;
+  try {
+    events = await api(`/api/events?after=${after}`);
+  } catch (e) {
+    return;
+  }
+  const route = currentRoute();
+  for (const event of events) {
+    if (route.view === "detail" && currentDetail && event.item.chat_id === currentDetail.chat_id &&
+        event.item.anchor_id === currentDetail.anchor_id) {
+      showToast(`Novedad en «${event.item.title}»`, describeNews(event), "Actualizar la ficha",
+        () => loadDetail(route.chatId, route.anchorId));
+    }
+  }
+  if (events.length && route.view === "catalog") loadCatalog();
+}
+
+// ---------------------------------------------------------------------------
 // Ajustes
 // ---------------------------------------------------------------------------
 
@@ -1235,6 +1346,7 @@ async function refresh() {
   }
   if (ready && currentRoute().view === "channels") refreshChannels();
   if (ready) refreshDownloads();
+  if (data.events) checkEvents(data.events.last_id);
 }
 
 refresh();

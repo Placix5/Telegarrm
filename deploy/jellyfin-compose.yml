@@ -1,0 +1,22 @@
+services:
+  jellyfin:
+    image: lscr.io/linuxserver/jellyfin:latest
+    container_name: jellyfin
+    environment:
+      # PUID y PGID aseguran que Jellyfin pueda leer los archivos generados por Telegarrm
+      # Si el usuario en la Raspberry es 'plax', 1000 suele ser el valor correcto. (Comprobar con 'id -u')
+      - PUID=1000
+      - PGID=1000
+      - TZ=Europe/Madrid
+    volumes:
+      # Carpeta donde Jellyfin guardará sus metadatos y bases de datos internamente
+      - ./jellyfin_config:/config
+      
+      # Rutas donde Telegarrm deja los archivos (Revisar D-033 en DECISIONS.md)
+      # MUY IMPORTANTE: Se montan como 'Solo Lectura' (:ro) por seguridad, 
+      # así Jellyfin no puede borrar accidentalmente los archivos de Telegarrm.
+      - /srv/media/peliculas:/data/peliculas:ro
+      - /srv/media/series:/data/series:ro
+    ports:
+      - 8096:8096
+    restart: unless-stopped

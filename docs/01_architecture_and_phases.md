@@ -1,6 +1,6 @@
 # Arquitectura de Telegarrm
 
-*Actualizada el 07/10/2026, con la Fase 4 terminada.*
+*Actualizada el 07/10/2026, con la Fase 4.1 terminada.*
 
 El plan inicial (de Gemini) preveía una tabla `media` con las series y películas. No llegó a existir: el catálogo se calcula en memoria a partir de los mensajes guardados (D-020), así que una mejora del parser se aplica sin migraciones. Los motivos de cada decisión están en [DECISIONS.md](DECISIONS.md) y el plan, en [ROADMAP.md](ROADMAP.md).
 
@@ -92,11 +92,16 @@ Telegram ⇄ TDLib ⇄ TelegramClient (hilo receptor: respuestas y actualizacion
 | `db_manager.cpp` | SQLite |
 | `signal_watcher.cpp` | Parada ordenada |
 
-Las reglas de decisión (parser, catálogo, seguimiento, episodios que faltan, nombres, borrado seguro) son funciones puras o casi. Se prueban en `tests/parser_tests.cpp` con ejemplos reales de los canales (411 comprobaciones; D-022).
+Las reglas de decisión (parser, catálogo, seguimiento, episodios que faltan, nombres, borrado seguro, novedades) son funciones puras o casi. Se prueban en `tests/parser_tests.cpp` con ejemplos reales de los canales (428 comprobaciones; D-022).
 
 ## Web
 
 HTML, CSS y JavaScript sin dependencias ni compilación (D-016), servidos desde `web/`: un cambio se ve al recargar la página, sin reiniciar el servicio. Rutas con `#/…` (catálogo, ficha, descargas, actividad, canales, ajustes y estado) y sondeo periódico de la API.
+
+Las novedades llegan a la web sin conexiones permanentes (D-043):
+- Al recalcular un canal, `Catalog` anota los archivos lógicos nuevos como novedades (las 100 últimas, en memoria).
+- `/api/status`, que la web pide cada 2 s, trae el número de la última novedad, y `/api/events` da las siguientes.
+- Si una es de la obra abierta, aparece un aviso en la esquina.
 
 ## Seguridad
 

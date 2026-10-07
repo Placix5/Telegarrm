@@ -48,6 +48,7 @@ Formato: **Contexto** (qué problema había), **Decisión**, **Alternativas desc
 | [D-040](#d-040-descargar-los-episodios-que-faltan-o-la-serie-completa) | Descargar los episodios que faltan (o la serie completa) | Vigente (ampliada por D-041 y D-042) |
 | [D-041](#d-041-la-biblioteca-dice-qué-episodios-se-tienen) | La biblioteca dice qué episodios se tienen | Vigente |
 | [D-042](#d-042-calidad-real-antes-de-descargar) | Calidad real antes de descargar | Vigente |
+| [D-043](#d-043-novedades-en-la-web-fase-41) | Novedades en la web (Fase 4.1) | Vigente |
 
 ---
 
@@ -576,3 +577,23 @@ Formato: **Contexto** (qué problema había), **Decisión**, **Alternativas desc
   - Descubre fichas falsas: *Padre no hay más que uno* dice 1080p y es 4K. Y los dos «.mp4» de *Gente Hablando* son en realidad FLV.
   - El búfer queda limpio después de cada comprobación.
 - **Descartado**: descargar entero para mirar (llenaría el búfer) y fiarse del tamaño o de la duración.
+
+## D-043: Novedades en la web (Fase 4.1)
+*07/10/2026 · Fase 4.1, petición de Plácido y del arquitecto*
+
+- **Contexto**: mejoras de uso de la web:
+  - El logo lleva al catálogo.
+  - El catálogo destaca lo añadido recientemente.
+  - Si se está viendo la ficha de una obra y llega por Telegram algo nuevo de esa obra, aparece un aviso emergente.
+- **Decisión**:
+  - **Añadidas recientemente**: fila horizontal encima de la cuadrícula con las 12 obras con la publicación más reciente (`updated_at`, la fecha del último archivo), con «hace 2 h», «ayer»… Solo sin búsqueda escrita y respetando el filtro de tipo.
+  - **Novedades en el servidor**: al recalcular un canal, `Catalog` compara los archivos lógicos nuevos con los que ya conocía (por cualquiera de sus partes). Los nuevos generan una novedad por obra, con su identificador, la obra y los archivos. Se guardan las 100 últimas, solo en memoria.
+    - Una parte que se suma a un archivo ya conocido no cuenta.
+    - Un canal que se lee por primera vez, o el arranque del servicio, tampoco.
+    - Lo publicado hace más de 24 h, tampoco.
+  - **Entrega a la web por sondeo**: `/api/status`, que la web ya pide cada 2 s, trae el identificador de la última novedad, y `GET /api/events?after=N` da las siguientes. El aviso llega como mucho 2 s después de que el catálogo lo conozca: unos 20 s tras publicarse, por la agrupación de D-036.
+  - **Aviso**: tarjeta en la esquina inferior derecha («Nuevo en «Serie»: 4x10 (1080p)»), con botón para actualizar la ficha y otro para cerrar. Desaparece sola a los 15 s, no roba el foco, se anuncia como `role="status"` y respeta `prefers-reduced-motion`.
+- **Verificación**:
+  - Tests con el catálogo real sobre una BD temporal: un episodio nuevo es novedad; la segunda parte de un RAR ya conocido, no; tampoco lo antiguo ni un canal nuevo.
+  - En la Pi, la fila de recientes y el aviso se ven bien en Chrome (modo oscuro).
+- **Descartado**: Server-Sent Events o WebSocket. `cpp-httplib` atiende cada conexión con un hilo de su grupo (8 en la Pi) y una conexión abierta por pestaña lo agotaría; además complica la parada ordenada. El sondeo ya existía y apenas añade carga.

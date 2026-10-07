@@ -3,6 +3,7 @@
 // Los casos "reales" reproducen mensajes de canales sincronizados en la Pi (06/10/2026).
 
 #include <cstdint>
+#include <ctime>
 #include <algorithm>
 #include <filesystem>
 #include <fstream>
@@ -1457,6 +1458,61 @@ void testFindVideoStart() {
     CHECK(library::findVideoStart(std::string("FLV\x01\x05\x00\x00\x00\x09", 9)) == std::optional<std::size_t>(0));
 }
 
+
+void testCatalogEvents() {
+    namespace fs = std::filesystem;
+    const fs::path base = fs::temp_directory_path() / ("telegarrm_events_" + std::to_string(::getpid()));
+    fs::remove_all(base);
+    fs::create_directories(base);
+    {
+        DbManager db((base / "test.db").string());
+        CHECK(db.open());
+        const auto now = static_cast<std::int64_t>(std::time(nullptr));
+        const auto inChat = [](std::int64_t chatId, Message message, std::int64_t date) {
+            message.chatId = chatId;
+            message.date = date;
+            return message;
+        };
+        CHECK(db.addChannel(-500, "Prueba Claude"));
+        CHECK(db.saveSyncBatch(-500, {inChat(-500, video(1, "1x01 - Ultimate Spiderman.mkv", 100), now - 100)},
+                               {1, 1, true}));
+        Catalog catalog(db);
+        catalog.rebuildChannel(-500);
+        CHECK_EQ(catalog.lastEventId(), std::int64_t{0});  // Al arrancar no hay novedades
+
+        // Llega el 1x02: una novedad de la obra, con su archivo
+        CHECK(db.saveSyncBatch(-500, {inChat(-500, video(2, "1x02 - Ultimate Spiderman.mkv", 100), now)}, {2, 1, true}));
+        catalog.rebuildChannel(-500);
+        CHECK_EQ(catalog.lastEventId(), std::int64_t{1});
+        auto events = catalog.eventsAfter(0);
+        CHECK(events.size() == 1 && events[0].releases.size() == 1 && events[0].releases[0].episode == 2);
+        CHECK(events.size() == 1 && events[0].anchorMessageId == 1 && events[0].title == "Ultimate Spiderman");
+
+        // Un RAR en dos partes: la primera es novedad; la segunda, no (es el mismo archivo)
+        CHECK(db.saveSyncBatch(-500, {inChat(-500, video(3, "1x03 - Ultimate Spiderman.part1.rar", 2000, "", ""), now)},
+                               {3, 1, true}));
+        catalog.rebuildChannel(-500);
+        CHECK(db.saveSyncBatch(-500, {inChat(-500, video(4, "1x03 - Ultimate Spiderman.part2.rar", 500, "", ""), now)},
+                               {4, 1, true}));
+        catalog.rebuildChannel(-500);
+        CHECK_EQ(catalog.lastEventId(), std::int64_t{2});
+        events = catalog.eventsAfter(1);
+        CHECK(events.size() == 1 && events[0].releases[0].episode == 3);
+
+        // Algo antiguo que aparece ahora (ej. al leer el historial) no es novedad
+        CHECK(db.saveSyncBatch(-500, {inChat(-500, video(5, "1x04 - Ultimate Spiderman.mkv", 100), now - 3 * 86400)},
+                               {5, 1, true}));
+        catalog.rebuildChannel(-500);
+        // Un canal nuevo tampoco, aunque su contenido sea reciente
+        CHECK(db.addChannel(-600, "Otro canal"));
+        CHECK(db.saveSyncBatch(-600, {inChat(-600, video(1, "Otra serie 1x01.mkv", 100), now)}, {1, 1, true}));
+        catalog.rebuildChannel(-600);
+        CHECK_EQ(catalog.lastEventId(), std::int64_t{2});
+        CHECK(catalog.eventsAfter(2).empty());
+    }
+    fs::remove_all(base);
+}
+
 int main() {
     testEpisodes();
     testFichas();
@@ -1492,6 +1548,7 @@ int main() {
     testLibraryOnDisk();
     testImportSupersedes();
     testFindVideoStart();
+    testCatalogEvents();
 
     std::cout << (checks - failures) << "/" << checks << " comprobaciones correctas" << std::endl;
     return failures == 0 ? 0 : 1;

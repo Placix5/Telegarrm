@@ -5,6 +5,8 @@ Telegarrm es un servicio daemon (stack ARR, como Sonarr y Radarr) que utiliza Te
 ## Qué hace
 Desde la web (`http://<ip-de-la-pi>:8080/`):
 - **Catálogo**: las series y películas publicadas en los canales y grupos que elijas, con portada, sinopsis y títulos de episodio de TMDB.
+  - Arriba, «Añadidas recientemente»: lo último que se ha publicado.
+  - Si tienes abierta una obra y se publica algo nuevo de ella, aparece un aviso en la esquina.
   - Cada episodio o película muestra sus versiones (1080p, 4K HDR, REMUX…).
   - La calidad real de cada versión se puede comprobar sin descargarla: «?», o «Comprobar calidades» por temporada.
   - Marca lo que ya tienes en la biblioteca.
@@ -106,7 +108,8 @@ Desplegar una versión nueva del programa no necesita `sudo`: `cmake --build bui
 ## API
 | Método y ruta | Descripción |
 | --- | --- |
-| `GET /api/status` | Estado del servicio, de la BD (`version` leída de `settings`), de Telegram y de TMDB (`metadata`: obras encontradas y sin encontrar). HTTP 503 si la BD falla. |
+| `GET /api/status` | Estado del servicio, de la BD (`version` leída de `settings`), de Telegram, de TMDB (`metadata`: obras encontradas y sin encontrar) y la última novedad del catálogo (`events.last_id`). HTTP 503 si la BD falla. |
+| `GET /api/events?after={id}` | Novedades del catálogo posteriores a `id`: archivos nuevos de cada obra recién publicados en Telegram (D-043). La web las usa para avisar a quien está viendo esa obra |
 | `POST /api/telegram/auth/phone` | `{"phone_number": "+34..."}` |
 | `POST /api/telegram/auth/code` | `{"code": "12345"}` |
 | `POST /api/telegram/auth/password` | `{"password": "..."}` (verificación en dos pasos) |
@@ -141,11 +144,18 @@ Ejemplo de `/api/status`:
 {"status": "Telegarrm is running", "version": "0.1.0",
  "database": {"status": "ok", "version": "0.1.0"},
  "telegram": {"authorization_state": "authorizationStateReady", "connection_state": "connectionStateReady"},
- "metadata": {"enabled": true, "working": false, "total": 2227, "matched": 1973, "unmatched": 254}}
+ "metadata": {"enabled": true, "working": false, "total": 2227, "matched": 1973, "unmatched": 254},
+ "events": {"last_id": 0}}
 ```
 Los pasos del inicio de sesión responden `{"ok": true}`, o `{"error": "..."}` con HTTP 400 (dato incorrecto, ej. `PHONE_CODE_INVALID`), 409 (Telegram no espera ese dato ahora) o 504 (Telegram no responde).
 
 ## Historial de cambios
+### Fase 4.1: mejoras de uso
+- El logo de la cabecera lleva al catálogo.
+- «Añadidas recientemente»: fila con las 12 obras con publicaciones más recientes, con «hace 2 h», «ayer»…
+- Avisos en directo (D-043): si se está viendo la ficha de una obra y llega algo nuevo de ella por Telegram, aparece un aviso en la esquina con un botón para actualizar la ficha. El catálogo anota las novedades y la web las consulta con el sondeo de `/api/status` que ya hacía.
+- Barras de desplazamiento y controles nativos con el tema del sistema (claro u oscuro).
+
 ### Fase 4: seguimiento (Tele-ARR)
 - **Tiempo real** (D-036): los canales vigilados se abren en TDLib (`openChat`) y cada `updateNewMessage` dispara una sincronización rápida. Los avisos se agrupan para no saturar TDLib.
 - **Seguimiento** (D-035): botón «Seguir» en cada ficha, con calidad máxima.

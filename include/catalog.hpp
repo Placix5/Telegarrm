@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <deque>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -80,6 +81,18 @@ public:
 
     using ItemPtr = std::shared_ptr<const Item>;
 
+    // Novedad (D-043): archivos lógicos nuevos de una obra recién publicados en Telegram. Sirven para
+    // avisar en la web a quien está viendo esa obra.
+    struct Event {
+        std::int64_t id = 0;
+        std::int64_t at = 0;               // Unix, segundos (cuando el catálogo lo supo)
+        std::int64_t chatId = 0;           // Obra (su identificador en el catálogo)
+        std::int64_t anchorMessageId = 0;
+        std::string title;
+        std::string kind;
+        std::vector<Release> releases;     // Los archivos nuevos
+    };
+
     // Mensajes de un canal para construir el catálogo de forma aislada (tests)
     struct ChannelInput {
         std::int64_t chatId = 0;
@@ -108,6 +121,11 @@ public:
     };
     std::optional<ReleaseRef> findRelease(std::int64_t chatId, std::int64_t messageId) const;
 
+    // Novedades posteriores a afterId (0 = todas las que se conservan), de la más antigua a la más nueva
+    std::vector<Event> eventsAfter(std::int64_t afterId) const;
+    // Identificador de la última novedad (0 = ninguna desde que arrancó el servicio)
+    std::int64_t lastEventId() const;
+
     // Construye el catálogo de unos canales sin caché ni BD (para los tests)
     static std::vector<Item> buildItems(const std::vector<ChannelInput>& channels);
 
@@ -124,8 +142,10 @@ private:
     std::map<std::int64_t, std::vector<Block>> blocks_;
     std::unordered_map<std::int64_t, std::unique_ptr<ParseCache>> caches_;
 
-    mutable std::mutex mutex_;  // Protege items_ y releaseIndex_
+    mutable std::mutex mutex_;  // Protege items_, releaseIndex_, events_ y nextEventId_
     std::vector<ItemPtr> items_;
     // (chat, mensaje de cualquier parte) -> (obra, índice del Release)
     std::map<std::pair<std::int64_t, std::int64_t>, std::pair<ItemPtr, std::size_t>> releaseIndex_;
+    std::deque<Event> events_;  // Las últimas novedades, solo en memoria
+    std::int64_t nextEventId_ = 1;
 };

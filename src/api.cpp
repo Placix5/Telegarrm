@@ -82,6 +82,10 @@ void sendError(httplib::Response& res, int status, const std::string& message) {
     sendJson(res, status, {{"error", message}});
 }
 
+Json nullable(const std::string& value) {
+    return value.empty() ? Json(nullptr) : Json(value);
+}
+
 bool requireTelegramReady(TelegramClient& telegram, httplib::Response& res) {
     if (typeOf(telegram.authorizationState()) != "authorizationStateReady") {
         sendError(res, 409, "Primero hay que iniciar sesión en Telegram");
@@ -161,9 +165,11 @@ Json messageJson(const DbManager::Message& message) {
             {"topic_id", message.topicId}};
 }
 
-void registerStatusRoutes(httplib::Server& server, DbManager& db, TelegramClient& telegram, MetadataService& metadata) {
-    // Estado del servicio, de la BD (lee 'version' de settings), de la sesión de Telegram y de TMDB
-    server.Get("/api/status", [&db, &telegram, &metadata](const httplib::Request&, httplib::Response& res) {
+void registerStatusRoutes(httplib::Server& server, DbManager& db, TelegramClient& telegram, MetadataService& metadata,
+                          Catalog& catalog) {
+    // Estado del servicio, de la BD (lee 'version' de settings), de la sesión de Telegram, de TMDB y la
+    // última novedad del catálogo (la web lo pide cada 2 s y así se entera de lo nuevo, D-043)
+    server.Get("/api/status", [&db, &telegram, &metadata, &catalog](const httplib::Request&, httplib::Response& res) {
         Json body = {{"status", "Telegarrm is running"}, {"version", TELEGARRM_VERSION}};
         int status = 200;
 
@@ -190,8 +196,41 @@ void registerStatusRoutes(httplib::Server& server, DbManager& db, TelegramClient
                             {"total", stats.total},
                             {"matched", stats.matched},
                             {"unmatched", stats.unmatched}};
+        body["events"] = {{"last_id", catalog.lastEventId()}};
 
         sendJson(res, status, body);
+    });
+
+    // Novedades del catálogo posteriores a ?after=N: archivos nuevos de cada obra recién publicados
+    server.Get("/api/events", [&catalog](const httplib::Request& req, httplib::Response& res) {
+        const auto after = parseId(req.has_param("after") ? req.get_param_value("after") : "0");
+        if (!after || *after < 0) {
+            sendError(res, 400, "Parámetro 'after' no válido");
+            return;
+        }
+        Json result = Json::array();
+        for (const Catalog::Event& event : catalog.eventsAfter(*after)) {
+            Json releases = Json::array();
+            for (const Catalog::Release& release : event.releases) {
+                const bool isEpisode = release.episode > 0;
+                releases.push_back({{"message_id", release.parts.front().messageId},
+                                    {"name", release.name},
+                                    {"quality", nullable(release.quality)},
+                                    {"hdr", release.hdr},
+                                    {"tags", release.tags},
+                                    {"season", isEpisode ? Json(release.season) : Json(nullptr)},
+                                    {"episode", isEpisode ? Json(release.episode) : Json(nullptr)},
+                                    {"episode_end", release.episodeEnd > 0 ? Json(release.episodeEnd) : Json(nullptr)}});
+            }
+            result.push_back({{"id", event.id},
+                              {"at", event.at},
+                              {"item", {{"chat_id", event.chatId},
+                                        {"anchor_id", event.anchorMessageId},
+                                        {"title", event.title},
+                                        {"kind", event.kind}}},
+                              {"releases", releases}});
+        }
+        sendJson(res, 200, result);
     });
 }
 
@@ -226,10 +265,6 @@ void registerAuthRoutes(httplib::Server& server, TelegramClient& telegram) {
             sendJson(res, 200, {{"ok", true}});
         });
     }
-}
-
-Json nullable(const std::string& value) {
-    return value.empty() ? Json(nullptr) : Json(value);
 }
 
 using InfoPtr = MetadataService::InfoPtr;
@@ -1146,7 +1181,7 @@ void registerSettingsRoutes(httplib::Server& server, DbManager& db, const ApiSer
 }
 
 void registerApiRoutes(httplib::Server& server, const ApiServices& services) {
-    registerStatusRoutes(server, services.db, services.telegram, services.metadata);
+    registerStatusRoutes(server, services.db, services.telegram, services.metadata, services.catalog);
     registerAuthRoutes(server, services.telegram);
     registerChannelRoutes(server, services.db, services.telegram, services.sync, services.catalog);
     registerCatalogRoutes(server, services.db, services.telegram, services.catalog, services.metadata, services.tmdb);

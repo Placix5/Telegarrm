@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cctype>
 #include <chrono>
+#include <ctime>
 #include <iostream>
 #include <map>
 #include <set>
@@ -671,6 +672,14 @@ void Catalog::removeChannel(std::int64_t chatId) {
     publish();
 }
 
+namespace {
+
+// Novedades: solo lo publicado en las últimas 24 h y las 100 más recientes (D-043)
+constexpr std::int64_t kEventMaxAge = 24 * 3600;
+constexpr std::size_t kMaxEvents = 100;
+
+}  // namespace
+
 void Catalog::publish() {
     std::vector<const Block*> all;
     for (const auto& entry : blocks_) {
@@ -688,9 +697,67 @@ void Catalog::publish() {
         }
         items.push_back(std::move(shared));
     }
+
+    // Novedades: archivos lógicos que no estaban, de canales que ya estaban en el catálogo (al arrancar
+    // o al leer un canal por primera vez no hay novedades). Solo publish() modifica releaseIndex_ y
+    // siempre con rebuildMutex_, así que leerlo aquí sin mutex_ es seguro.
+    const auto now = static_cast<std::int64_t>(std::time(nullptr));
+    std::set<std::int64_t> knownChats;
+    for (const auto& entry : releaseIndex_) {
+        knownChats.insert(entry.first.first);
+    }
+    std::vector<Event> fresh;
+    for (const ItemPtr& item : items) {
+        Event event;
+        for (const Release& release : item->releases) {
+            if (release.date < now - kEventMaxAge || !knownChats.count(release.chatId)) {
+                continue;
+            }
+            const bool known = std::any_of(release.parts.begin(), release.parts.end(), [&](const Part& part) {
+                return releaseIndex_.count({release.chatId, part.messageId}) > 0;
+            });
+            if (!known) {
+                event.releases.push_back(release);
+            }
+        }
+        if (!event.releases.empty()) {
+            event.at = now;
+            event.chatId = item->chatId;
+            event.anchorMessageId = item->anchorMessageId;
+            event.title = item->title;
+            event.kind = item->kind;
+            fresh.push_back(std::move(event));
+        }
+    }
+
     std::lock_guard<std::mutex> lock(mutex_);
     items_ = std::move(items);
     releaseIndex_ = std::move(index);
+    for (Event& event : fresh) {
+        event.id = nextEventId_++;
+        std::cout << "[Catálogo] Novedad en «" << event.title << "»: " << event.releases.size() << " archivo(s)"
+                  << std::endl;
+        events_.push_back(std::move(event));
+    }
+    while (events_.size() > kMaxEvents) {
+        events_.pop_front();
+    }
+}
+
+std::vector<Catalog::Event> Catalog::eventsAfter(std::int64_t afterId) const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    std::vector<Event> result;
+    for (const Event& event : events_) {
+        if (event.id > afterId) {
+            result.push_back(event);
+        }
+    }
+    return result;
+}
+
+std::int64_t Catalog::lastEventId() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return nextEventId_ - 1;
 }
 
 std::optional<Catalog::ReleaseRef> Catalog::findRelease(std::int64_t chatId, std::int64_t messageId) const {

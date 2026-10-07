@@ -9,7 +9,7 @@
 <body>
 <header class="topbar">
   <div class="topbar-inner">
-    <h1>Telegarrm <small id="version"></small></h1>
+    <h1><a href="#/catalogo" class="home" title="Ir al catálogo">Telegarrm</a> <small id="version"></small></h1>
     <nav aria-label="Secciones">
       <a href="#/catalogo" data-view="catalog">Catálogo</a>
       <a href="#/descargas" data-view="downloads">Descargas <span class="count" id="downloads-count" hidden></span></a>
@@ -37,6 +37,10 @@
         <option value="title">Por título</option>
         <option value="recent">Novedades primero</option>
       </select>
+    </div>
+    <div class="recent" id="catalog-recent" hidden>
+      <h2>Añadidas recientemente</h2>
+      <div class="recent-row" id="recent-row"></div>
     </div>
     <p class="hint" id="catalog-summary"></p>
     <div class="grid" id="catalog-grid"></div>
@@ -172,6 +176,8 @@
   <p>This product uses the TMDB API but is not endorsed or certified by TMDB.<br>
      <span class="hint">(Este producto usa la API de TMDB, pero TMDB no lo respalda ni lo certifica.)</span></p>
 </footer>
+<!-- Avisos emergentes (novedades de la obra que se está viendo) -->
+<div class="toasts" id="toasts"></div>
 <script src="app.js"></script>
 </body>
 </html>

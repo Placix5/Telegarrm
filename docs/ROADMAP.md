@@ -62,6 +62,11 @@ Formato real visto: canales de una serie con una ficha (foto + pie con título, 
 - [x] **La biblioteca dice qué se tiene** (D-041): cuentan los vídeos que ya hay en la carpeta de la obra, aunque vengan de un canal quitado o se copiaran a mano. Al importar un episodio, sus otras versiones se sustituyen: queda la más reciente.
 - [x] **Calidad real antes de descargar** (D-042): se leen solo los primeros MB del archivo (también dentro de ZIP y RAR) y se analizan con ffprobe. Botón «?» por versión, «Comprobar calidades» por temporada; el seguimiento comprueba antes de decidir.
 - [x] **Episodios que faltan / serie completa** (D-040): en la ficha de una serie, cuántos episodios conocidos se tienen y un botón para descargar los que faltan (o la serie entera), con la mejor versión de cada uno dentro de la calidad elegida. Comprueba antes que caben en la biblioteca.
+## Fase 4.1: mejoras de uso (completada)
+- [x] El logo de la cabecera lleva al catálogo.
+- [x] «Añadidas recientemente» encima del catálogo (las 12 obras con publicaciones más recientes).
+- [x] Aviso emergente si llega algo nuevo de la obra que se está viendo (D-043): novedades del catálogo consultadas con el sondeo de `/api/status`, sin conexiones permanentes.
+
 ## Siguientes pasos
 Por decidir con Plácido; ninguno está empezado.
 
@@ -82,4 +87,4 @@ Por decidir con Plácido; ninguno está empezado.
 - Renombrar los archivos de la biblioteca cuya etiqueta de calidad no coincide con el vídeo (importados antes de D-039).
 
 ### Hecho de lo transversal
-- [x] Tests (`ctest`) del parser, el catálogo, la BD, la biblioteca y el seguimiento: 411 comprobaciones, algunas con vídeos y comprimidos reales generados con ffmpeg y 7-Zip.
+- [x] Tests (`ctest`) del parser, el catálogo, la BD, la biblioteca y el seguimiento: 428 comprobaciones, algunas con vídeos y comprimidos reales generados con ffmpeg y 7-Zip.
