@@ -181,6 +181,35 @@ namespace {
 using Block = Catalog::Block;
 using Item = Catalog::Item;
 
+bool keysCompatible(const std::string& a, const std::string& b);
+
+// "1x01 - Ultimate Spiderman.mkv", "1x02 - Ultimate Spiderman.mkv"...: el texto tras el marcador
+// es el nombre de la serie si se repite en más de la mitad de los episodios (y en dos como mínimo;
+// con un solo episodio no se puede saber si es la serie o el título del episodio)
+std::string repeatedEpisodeTitle(const std::vector<Release>& releases) {
+    std::map<std::string, std::pair<int, std::string>> counts;  // Clave -> (episodios, texto original)
+    int episodes = 0;
+    for (const Release& release : releases) {
+        if (release.episode == 0) {
+            continue;
+        }
+        ++episodes;
+        const std::string key = media::titleKey(release.episodeTitle);
+        if (!key.empty()) {
+            auto& entry = counts[key];
+            if (entry.first++ == 0) {
+                entry.second = release.episodeTitle;
+            }
+        }
+    }
+    for (const auto& [key, entry] : counts) {
+        if (entry.first >= 2 && entry.first * 2 > episodes) {
+            return entry.second;
+        }
+    }
+    return "";
+}
+
 void finishBlock(Block& block) {
     const media::Ficha& ficha = block.ficha;
     for (Release& release : block.releases) {
@@ -212,6 +241,15 @@ void finishBlock(Block& block) {
     }
     if (block.title.empty() && block.kind == "movie" && !block.releases.empty()) {
         block.title = media::cleanTitle(block.releases.front().name);
+    }
+    if (block.title.empty() && block.kind == "series") {
+        // Sin ficha ni nombre de serie en los ficheros: el nombre repetido tras el marcador de episodio.
+        // Si el canal se llama igual, su título suele estar mejor escrito ("Spider-Man").
+        const std::string repeated = repeatedEpisodeTitle(block.releases);
+        if (!repeated.empty() &&
+            !keysCompatible(media::titleKey(repeated), media::titleKey(media::cleanTitle(block.channelTitle)))) {
+            block.title = repeated;
+        }
     }
     if (block.title.empty()) {
         block.title = media::cleanTitle(block.channelTitle);
@@ -247,7 +285,8 @@ bool keysCompatible(const std::string& a, const std::string& b) {
 // troceado se reconocen antes, por su nombre base.) El álbum no sirve: un mismo álbum puede
 // llevar las últimas partes de una película y las primeras de la siguiente.
 bool belongsToBlock(const Block& block, const ParsedFile& parsed) {
-    if (block.releases.empty()) {
+    // Sin nombre ("1x02 - ...") no se puede atribuir a otra obra: sigue en la abierta
+    if (block.releases.empty() || parsed.titleKey.empty()) {
         return true;
     }
     return std::any_of(block.matchKeys.begin(), block.matchKeys.end(),

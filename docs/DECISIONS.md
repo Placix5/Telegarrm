@@ -484,3 +484,10 @@ Formato: **Contexto** (qué problema había), **Decisión**, **Alternativas desc
   4. Quedó `El show de los Muppets (2026) - 4K HDR.mkv`, se borró la 1080p y la descarga anterior pasó a *Sustituida*.
   5. El historial lo cuenta: «… ya está en la biblioteca y sustituye a la versión 1080p (1 archivo borrado)».
 - Las tres descargas anteriores a la migración v7 recibieron su `library_files` a mano, para que también se puedan sustituir.
+
+## D-038: Nombre de la serie repetido en los archivos
+*07/10/2026 · Fase 4*
+
+- **Contexto**: Plácido creó el canal «Prueba Claude» para probar el seguimiento y subió `1x01 - Ultimate Spiderman.mkv`, sin ficha. En el formato `1x01 - Texto`, el texto tras el marcador puede ser la serie o el título del episodio. Sin ficha ni nombre de serie en el fichero, el catálogo usaba el nombre del canal: la serie se llamaba «Prueba Claude» y TMDB no la encontraba. En el canal original funcionaba porque había ficha y el canal se llamaba como la serie.
+- **Decisión**: sin ficha ni nombre de serie en los ficheros, si el texto tras el marcador se repite en más de la mitad de los episodios, y como mínimo en dos, es el nombre de la serie. Si el canal se llama igual, se queda el título del canal, que suele estar mejor escrito («Spider-Man»). Con un solo episodio no se puede saber y sigue mandando el canal.
+- **Consecuencias**: la obra no cambia de identidad al cambiar de nombre (la identifica su primer archivo), así que un seguimiento hecho antes de que llegue el segundo episodio sigue funcionando y su título se actualiza solo.

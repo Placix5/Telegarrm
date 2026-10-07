@@ -189,7 +189,11 @@ void ChannelSync::onUpdate(const Json& update) {
         if (pending_.empty()) {
             firstEventAt_ = now;
         }
-        pending_.insert(chatId);
+        if (pending_.insert(chatId).second) {
+            // Una línea por canal y grupo de avisos (una película en cinco partes no deja cinco)
+            std::cout << "[Sync] Aviso de mensaje nuevo en el chat " << chatId << ": se leerá en unos segundos"
+                      << std::endl;
+        }
         lastEventAt_ = now;
     }
     cv_.notify_all();

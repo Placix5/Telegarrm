@@ -323,6 +323,25 @@ void testCatalogLibraryChannel() {
     CHECK(movieC->releases[0].archive);
 }
 
+void testCatalogRepeatedSeriesName() {
+    // Canal de prueba de Plácido (07/10/2026): sin ficha y con un nombre que no es el de la serie
+    std::vector<Message> messages = {video(1, "1x01 - Ultimate Spiderman.mkv", 364'520'659)};
+    auto items = build(-5530696118, "Prueba Claude", messages);
+    // Con un solo episodio no se sabe si "Ultimate Spiderman" es la serie o el título del episodio
+    CHECK(items.size() == 1 && items[0].title == "Prueba Claude");
+    // Con dos que lo repiten, es la serie; sigue siendo la misma obra (la identifica su primer archivo)
+    messages.push_back(video(2, "1x02 - Ultimate Spiderman.mkv", 364'000'000));
+    items = build(-5530696118, "Prueba Claude", messages);
+    CHECK(items.size() == 1 && items[0].title == "Ultimate Spiderman" && items[0].anchorMessageId == 1);
+    CHECK(items.size() == 1 && items[0].releases[1].episodeTitle.empty());
+    // Si el canal se llama como la serie, se queda su título (mejor escrito)
+    items = build(-100, "Ultimate Spider-Man [Castellano]", messages);
+    CHECK(items.size() == 1 && items[0].title == "Ultimate Spider-Man");
+    // Títulos de episodio distintos: no hay nombre repetido
+    items = build(-400, "Mi canal", {video(1, "1x01 - Piloto.mkv", 100), video(2, "1x02 - El regreso.mkv", 100)});
+    CHECK(items.size() == 1 && items[0].title == "Mi canal");
+}
+
 void testCatalogWithoutFicha() {
     // Sin ficha: el título sale de los nombres de fichero; una resubida cuenta como el mismo episodio
     const std::vector<Message> messages = {
@@ -1181,6 +1200,7 @@ int main() {
     testCatalogGeneratorRex();
     testCatalogLibraryChannel();
     testCatalogWithoutFicha();
+    testCatalogRepeatedSeriesName();
     testBigChannelFichas();
     testCatalogMovieVersions();
     testCatalogAiringSeries();
