@@ -52,6 +52,7 @@ Formato: **Contexto** (qué problema había), **Decisión**, **Alternativas desc
 | [D-044](#d-044-confirmaciones-y-errores-con-el-estilo-de-la-página) | Confirmaciones y errores con el estilo de la página | Vigente |
 | [D-045](#d-045-la-ficha-abierta-se-actualiza-sola) | La ficha abierta se actualiza sola | Vigente |
 | [D-046](#d-046-la-web-en-el-móvil) | La web en el móvil | Vigente |
+| [D-047](#d-047-canales-de-anime-crunchyshur) | Canales de anime (CrunchyShur) | Vigente |
 
 ---
 
@@ -642,3 +643,36 @@ Formato: **Contexto** (qué problema había), **Decisión**, **Alternativas desc
     - El contador de *Descargas* enseñaba «0» porque su `display` anulaba el atributo `hidden`.
     - Las etiquetas «En emisión» y «Siguiendo» se pisaban en las tarjetas; «Siguiendo» va ahora abajo.
 - **Verificación**: en el marco de 390 px, ninguna de las 8 pantallas (catálogo, ficha de serie y de película, descargas, actividad, canales, ajustes y estado) es más ancha que la ventana, y ninguna tabla necesita desplazarse. El escritorio sigue igual.
+
+## D-047: Canales de anime (CrunchyShur)
+*08/10/2026*
+
+- **Contexto**: Plácido añadió CrunchyShur, un foro con un tema por obra (451 temas) y nombres de archivo a la manera del anime. *My Hero Academia* salía incompleta y la temporada 2 de *Vigilantes* daba una obra por episodio. En realidad le pasaba a todo el canal: de sus 19 576 vídeos, 17 915 no tenían ningún marcador de episodio reconocible, y el catálogo daba 9 595 obras, casi todas «películas» de un episodio.
+  - **Formatos**: `Serie - 01` (9 389 archivos), `Serie S2 - 08` (3 733), `Serie 003` (2 680), `Serie T2 - 01` (456), `Serie S3 EP11`, `42 - Título`, `Serie - Final Season - 01`.
+  - **Temporadas**: van en fotos («Temporada 1 - Boku no Hero Academia», «Serie S2», «Serie: Final Season»).
+  - **Arcos**: las series largas tienen una ficha por arco («Exámenes Chūnin»).
+- **Requisito de Plácido**: *Las Cositas* es lo primero. Si no se puede arreglar CrunchyShur sin tocarlo, no se toca nada.
+- **Decisión**: las reglas del anime solo se aplican en los **canales de anime**, que se detectan solos por sus nombres de archivo: al menos 20 archivos y una cuarta parte con numeración del anime y sin marcador normal. *Las Cositas* tiene un 0,4 %; CrunchyShur, un 80 %. En esos canales:
+  - **Episodios**: `T2 - 01`, `S2 - 08` y `S3 EP11` dicen la temporada. `Serie - 01`, `Serie 003`, `Serie 53` y `42 - Título` son **numeración absoluta**: la temporada sale de la ficha y, sin ella, es la 1. No cuentan si el número va tras OVA, ONA, Especial, Película, Opening… ni si es un año.
+  - **Episodio suelto**: un número absoluto suelto no es un episodio. Hacen falta al menos dos números distintos en el bloque, o una ficha o tema de serie («Ocean's 11»).
+  - **Temporadas en la ficha**: «Season 2», «2nd Season», «Serie S2», «Serie T3» y «Final Season» se quitan del título, para que todas las temporadas sean la misma obra. «Final Season» pasa a ser la siguiente a la última numerada (la 8 en *My Hero Academia*).
+  - **Título alternativo**: es la línea pegada debajo del título de la ficha, si no es un dato («My Hero Academia: Vigilantes»).
+  - **Temas**: cada tema que no sea de organización («Listado Animes», «Solicitud…») es una obra.
+    - Sus extras con ficha propia (OVA, ONA, Especial, «Película 1», «T2 Cap 00») se unen a la serie del tema como otros archivos.
+    - Un arco cuyo título no se parece al del tema es la serie del tema.
+    - Los archivos con el nombre de la obra del tema son suyos.
+    - Las películas con título propio («Boku no Hero Academia the Movie 4: You're Next») siguen siendo obras aparte.
+  - **Aislamiento**: las obras de un canal de anime no se unen con las de otros canales. Al añadir CrunchyShur, 24 obras de *Las Cositas* se habían unido a las suyas y habían cambiado de identificador (*Vinland Saga*, *Arcane*, *Black Mirror*…). Vuelven a ser solo de *Las Cositas*.
+- **Verificación**: con `tools/catalog_dump.cpp` (objetivo `telegarrm_catalog_dump`, que no se instala) se calculó el catálogo de una copia de la BD.
+  - El catálogo de *Las Cositas* es **idéntico línea a línea** con el código anterior y con el nuevo, y con CrunchyShur y sin él: las mismas 2 226 obras que antes de añadir CrunchyShur.
+  - CrunchyShur pasa de 9 595 obras a 1 242:
+    - *My Hero Academia*: 8 temporadas y 170 episodios, más OVAs, especiales y películas numeradas.
+    - *Vigilantes*: 2 temporadas y 26 episodios.
+    - *Naruto*: 220 episodios.
+    - *Bleach KAI*: 178.
+  - Tests con nombres reales del canal (463 comprobaciones).
+- **Descartado**: activar los formatos del anime en todos los canales. Cambiaba 45 obras de *Las Cositas*:
+  - *Ataque a los Titanes: La temporada final* perdía parte del título.
+  - *Insidious: Capítulo 2* pasaba a ser una serie.
+  - *Ladybug* ganaba 100 episodios (`Ladybug - 027`): podría ser una mejora, pero es un cambio, y queda para que Plácido lo decida.
+- **Pendiente**: *Hunter x Hunter (2011)* sale en dos obras, porque parte de sus archivos llevan el nombre del grupo que los subtituló (`[BB]`). Unas 40 «películas» siguen siendo especiales numerados («SP 06», «OVA 03»).

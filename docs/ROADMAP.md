@@ -1,6 +1,6 @@
 # Hoja de ruta de Telegarrm
 
-*Estado al 07/10/2026: Fases 1 a 4.1 completadas y subidas a GitHub.*
+*Estado al 08/10/2026: Fases 1 a 4.1 completadas; canales de anime (D-047).*
 
 Documento vivo con el plan de implementación; los motivos de cada decisión están en [DECISIONS.md](DECISIONS.md) y cómo está construido, en [01_architecture_and_phases.md](01_architecture_and_phases.md). Lo mantiene Claude Code (desarrollo y plan técnico); Gemini revisa el código y la documentación; Plácido decide prioridades y valida en uso real.
 
@@ -71,6 +71,12 @@ Formato real visto: canales de una serie con una ficha (foto + pie con título, 
 - [x] La ficha abierta se actualiza sola (D-045) cuando termina una descarga suya, llega una novedad o cada 30 s, sin perder la posición.
 - [x] **Móvil** (D-046): pestañas en 3×2, tablas que no ensanchan la página (y que en el móvil se reorganizan en bloques), botones y selectores de 44 px al tacto, avisos al 90 % del ancho.
 - [x] Confirmaciones con el estilo de la página, con un resumen de lo que se va a hacer, y errores como avisos en la esquina, en lugar de los cuadros del navegador (D-044).
+
+## Canales de anime (08/10/2026)
+- [x] CrunchyShur (un tema por obra, nombres como `Serie - 01`, `Serie S2 - 08`, `Serie T2 - 01`): episodios, temporadas de las fichas («S2», «Final Season»), extras y arcos unidos a la serie del tema (D-047). Solo en los canales que se detectan como de anime.
+- [x] *Las Cositas* idéntica antes y después, comprobado con `tools/catalog_dump.cpp`. Sus 24 obras que se habían unido a CrunchyShur vuelven a ser suyas.
+- [ ] *Hunter x Hunter (2011)* sale en dos obras, por el nombre del grupo de subtítulos (`[BB]`) delante; unos 40 especiales numerados («SP 06», «OVA 03») salen como películas sueltas.
+- [ ] Decidir si los 105 archivos `Ladybug - 027` de *Las Cositas* deben leerse como episodios (cambiaría *Ladybug*: +100 episodios).
 
 ## Siguientes pasos
 Por decidir con Plácido; ninguno está empezado.

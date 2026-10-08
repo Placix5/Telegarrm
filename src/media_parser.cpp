@@ -353,7 +353,80 @@ PartInfo splitParts(const std::string& fileName) {
     return {fileName, 0};
 }
 
-std::optional<EpisodeInfo> parseEpisode(const std::string& text) {
+namespace {
+
+// Lo que hay antes del número no es una serie sino un extra o una película: "Serie - OVA 2" no llega aquí,
+// pero "Serie 5 ONA - 01", "Película 07" u "Opening 5" sí
+bool precededBySpecial(const std::string& before) {
+    static const std::regex kSpecial(
+        R"((?:^|[^0-9a-z])(?:ova|onas?|oad|especial|special|sp|pel(?:í|Í|i)cula|movie|film|opening|ending|op|ed|ncop|nced|pv|cm|vol(?:umen)?|parte?|trailer|tr(?:á|Á|a)iler)\s*$)",
+        kIcase);
+    return std::regex_search(before, kSpecial);
+}
+
+bool isYear(int number) {
+    return number >= 1900 && number <= 2099;
+}
+
+// "Boku no Hero - Final Season" -> "Boku no Hero" y la marca de última temporada
+bool takeFinalSeason(std::string& name) {
+    static const std::regex kFinal(R"(\s*[-:]?\s*final season\s*$)", kIcase);
+    std::smatch match;
+    if (!std::regex_search(name, match, kFinal)) {
+        return false;
+    }
+    name = trimSeparators(name.substr(0, static_cast<std::size_t>(match.position(0))));
+    return true;
+}
+
+// Formatos del anime (canal CrunchyShur, 08/10/2026). Primero los que dicen la temporada ("T2 - 01",
+// "S2 - 08", "S3 EP11"); después la numeración absoluta, que no la dice
+std::optional<EpisodeInfo> parseAnimeEpisode(const std::string& clean) {
+    // Guiones bajos como espacios: "One_Piece_Capitulo_8_Título"
+    std::string text = clean;
+    std::replace(text.begin(), text.end(), '_', ' ');
+
+    struct Pattern {
+        std::regex regex;
+        bool withSeason;  // El grupo 1 es la temporada y el 2 el episodio; si no, el 1 es el episodio
+    };
+    static const Pattern kPatterns[] = {
+        {std::regex(R"((?:^|\s)[TS](\d{1,2})\s*-\s*(\d{1,4})(?:v\d)?(?![0-9]|p\b))", kIcase), true},
+        {std::regex(R"((?:^|\s)S(\d{1,2})\s*EP?\s*(\d{1,4})(?![0-9]))", kIcase), true},
+        // "Serie - 01", "Serie - 001 [h264]", "Serie - 01 - Título", "Serie - 25 END"
+        {std::regex(R"(\s-\s*(\d{1,4})(?:v\d)?(?=\s|\.|\[|\(|$))", kIcase), false},
+        // "Serie 003 [7E936FD9]", "Kochikame 165 - Título" (sin guion, solo con 3 o 4 cifras)
+        {std::regex(R"(\s(\d{3,4})(?:v\d)?(?=\s*(?:\[|\(|-\s|$)))", kIcase), false},
+        // "42 - Despertar"
+        {std::regex(R"(^(\d{1,3})\s*-\s+(?=\S))", kIcase), false},
+        // "FWnF Bleach Kai 53", "BB Code Geass R2 14 [hash]": dos cifras al final (sin contar corchetes)
+        {std::regex(R"(\s(\d{2,4})(?:v\d)?(?:\s*(?:\[[^\]]*\]|\([^)]*\)))*\s*$)", kIcase), false},
+    };
+    for (const Pattern& pattern : kPatterns) {
+        std::smatch match;
+        if (!std::regex_search(text, match, pattern.regex)) {
+            continue;
+        }
+        const std::string before = text.substr(0, static_cast<std::size_t>(match.position(0)));
+        const int episode = std::stoi(match[pattern.withSeason ? 2 : 1].str());
+        if (precededBySpecial(before) || (!pattern.withSeason && isYear(episode))) {
+            continue;  // "Serie 5 ONA - 01", "Batman - 1989"
+        }
+        EpisodeInfo info;
+        info.season = pattern.withSeason ? std::stoi(match[1].str()) : 1;
+        info.episode = episode;
+        info.absolute = !pattern.withSeason;
+        info.seriesName = cleanTitle(before);
+        info.finalSeason = takeFinalSeason(info.seriesName);
+        info.episodeTitle = cleanTitle(text.substr(static_cast<std::size_t>(match.position(0) + match.length(0))));
+        return info;
+    }
+    return std::nullopt;
+}
+
+}  // namespace
+
+std::optional<EpisodeInfo> parseEpisode(const std::string& text, bool animeFormats) {
     const std::string clean = removeExtension(text);
 
     // Cada patrón captura temporada, episodio y, opcionalmente, el último episodio de un rango
@@ -380,10 +453,16 @@ std::optional<EpisodeInfo> parseEpisode(const std::string& text) {
         info.episodeTitle = cleanTitle(clean.substr(static_cast<std::size_t>(match.position(0) + match.length(0))));
         return info;
     }
-    return std::nullopt;
+    return animeFormats ? parseAnimeEpisode(clean) : std::nullopt;
 }
 
-Ficha parseFicha(const std::string& caption) {
+bool isAnimeNumbered(const std::string& fileName) {
+    const std::string clean = removeExtension(fileName);
+    // Sin marcador "normal" (S01E01, 1x01...) y con uno del anime
+    return !parseEpisode(fileName, false) && parseAnimeEpisode(clean).has_value();
+}
+
+Ficha parseFicha(const std::string& caption, bool animeFormats) {
     Ficha ficha;
     static const std::regex kMetadataLine(R"(^(?:#|@|https?:|t\.me|cr(?:é|É|e)ditos?)|^(?:19|20)\d{2}$|^\d{3,4}p$)", kIcase);
     static const std::string kCalendar = "\xF0\x9F\x93\x85";  // 📅
@@ -410,6 +489,49 @@ Ficha parseFicha(const std::string& caption) {
     std::smatch seasonMatch;
     if (std::regex_search(titleLine, seasonMatch, kSeason)) {
         ficha.season = std::stoi(seasonMatch[1].str());
+    }
+
+    // Canales de anime (D-047): "Serie Season 2", "Serie 2nd Season", "Serie S2", "Serie T3" y
+    // "Serie: Final Season", que además se quitan del título para que se una con las otras temporadas
+    if (animeFormats) {
+        static const std::regex kAnimeSeasons[] = {
+            std::regex(R"(\s*[-:]?\s*\bseason\s*(\d{1,2})\b)", kIcase),
+            std::regex(R"(\s*[-:]?\s*\b(\d{1,2})(?:st|nd|rd|th) season\b)", kIcase),
+            std::regex(R"(\s+[ST](\d{1,2})\s*$)", kIcase),
+        };
+        for (const std::regex& pattern : kAnimeSeasons) {
+            std::smatch match;
+            if (ficha.season == 0 && std::regex_search(ficha.title, match, pattern)) {
+                ficha.season = std::stoi(match[1].str());
+                ficha.title = trimSeparators(std::regex_replace(ficha.title, pattern, " "));
+            }
+        }
+        if (ficha.season == 0) {
+            ficha.finalSeason = takeFinalSeason(ficha.title);
+        }
+    }
+
+    // Canales de anime: la línea pegada debajo del título, si es un título y no un dato ("Vigilante:
+    // Boku no Hero Academia Illegals" / "My Hero Academia: Vigilantes"). Las etiquetas, las listas
+    // y los datos ("⭐ MyAnimeList Score") no cuentan.
+    if (animeFormats) {
+        const std::vector<std::string> lines = splitLines(caption);
+        std::size_t first = 0;
+        while (first < lines.size() && trimSeparators(stripSymbols(lines[first])).empty()) {
+            ++first;
+        }
+        if (first + 1 < lines.size()) {
+            const std::string raw = trimSpaces(lines[first + 1]);
+            const std::string second = trimSeparators(stripSymbols(raw));
+            static const std::regex kNotATitle(
+                R"(^(?:[#>@\-•*]|https?:|t\.me)|score|sinopsis|g(?:é|É|e)nero|episodios?\b|temporadas?\b|^\d+$|:\s*$)", kIcase);
+            const std::string alternate = cleanTitle(second);
+            const std::string key = titleKey(alternate);
+            if (!second.empty() && !std::regex_search(raw, kNotATitle) && !std::regex_search(second, kNotATitle) &&
+                second.size() <= 120 && key.size() >= 4 && key != titleKey(ficha.title)) {
+                addUnique(ficha.alternateTitles, alternate);
+            }
+        }
     }
 
     // Paréntesis del título que no son año, calidad ni idioma: "Hijack (Secuestro en el aire)".

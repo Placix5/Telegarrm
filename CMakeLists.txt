@@ -73,3 +73,7 @@ if(TELEGARRM_BUILD_TESTS)
     target_link_libraries(telegarrm_tests PRIVATE telegarrm_core)
     add_test(NAME parser COMMAND telegarrm_tests)
 endif()
+
+# Herramienta de desarrollo (no se instala): catálogo de una copia de la BD, para comparar cambios del parser
+add_executable(telegarrm_catalog_dump EXCLUDE_FROM_ALL tools/catalog_dump.cpp)
+target_link_libraries(telegarrm_catalog_dump PRIVATE telegarrm_core)

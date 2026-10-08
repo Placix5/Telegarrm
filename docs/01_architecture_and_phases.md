@@ -81,7 +81,7 @@ Telegram ⇄ TDLib ⇄ TelegramClient (hilo receptor: respuestas y actualizacion
 | `telegram_client.cpp` | TDLib: peticiones asíncronas y síncronas, autorización y reparto de actualizaciones |
 | `channel_sync.cpp` | Historial y mensajes nuevos de los canales vigilados |
 | `media_parser.cpp` | Nombres de fichero y fichas: episodios, título, año, calidad, etiquetas, partes e idiomas |
-| `catalog.cpp` | Obras (`Item`) y archivos lógicos (`Release`) a partir de los mensajes |
+| `catalog.cpp` | Obras (`Item`) y archivos lógicos (`Release`) a partir de los mensajes; detecta los canales de anime (D-047) |
 | `tmdb_client.cpp`, `metadata.cpp` | Cliente de TMDB con caché y límite de peticiones; coincidencia de cada obra |
 | `download_manager.cpp` | Cola de descargas, importación, sustitución de versiones e historial de descargas |
 | `library.cpp` | Descompresión, ffprobe, nombres para Jellyfin, vídeos de la biblioteca y borrado seguro |
@@ -92,7 +92,7 @@ Telegram ⇄ TDLib ⇄ TelegramClient (hilo receptor: respuestas y actualizacion
 | `db_manager.cpp` | SQLite |
 | `signal_watcher.cpp` | Parada ordenada |
 
-Las reglas de decisión (parser, catálogo, seguimiento, episodios que faltan, nombres, borrado seguro, novedades) son funciones puras o casi. Se prueban en `tests/parser_tests.cpp` con ejemplos reales de los canales (428 comprobaciones; D-022).
+Las reglas de decisión (parser, catálogo, seguimiento, episodios que faltan, nombres, borrado seguro, novedades) son funciones puras o casi. Se prueban en `tests/parser_tests.cpp` con ejemplos reales de los canales (463 comprobaciones; D-022). `tools/catalog_dump.cpp` calcula el catálogo de una copia de la BD para comparar un cambio del parser obra por obra (D-047).
 
 ## Web
 

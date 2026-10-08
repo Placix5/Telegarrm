@@ -34,6 +34,7 @@ Funciona igual en el móvil: las pestañas se reorganizan, las tablas se convier
   - `signal_watcher.cpp`: parada ordenada con SIGINT/SIGTERM (clase `SignalWatcher`)
 - `include/`: Cabeceras y dependencias de un solo archivo (`httplib.h`, `nlohmann/json.hpp`)
 - `tests/`: Tests (`ctest`) del parser, el catálogo, la BD, la biblioteca y el seguimiento, con ejemplos reales de los canales
+- `tools/`: Herramientas de desarrollo; `catalog_dump.cpp` calcula el catálogo de una copia de la BD para comparar cambios del parser
 - `web/`: Interfaz web (`index.html`, `style.css`, `app.js`, sin dependencias)
 - `deploy/`: Servicio de systemd, regla de polkit, script de instalación y un borrador de `docker compose` para Jellyfin (`jellyfin-compose.yml`, pendiente de revisar: ver la hoja de ruta)
 - `db/`: Datos generados al ejecutar: `telegarrm.db` (SQLite), `tdlib/` (sesión de Telegram) y `tmdb/` (carátulas)
@@ -152,6 +153,14 @@ Ejemplo de `/api/status`:
 Los pasos del inicio de sesión responden `{"ok": true}`, o `{"error": "..."}` con HTTP 400 (dato incorrecto, ej. `PHONE_CODE_INVALID`), 409 (Telegram no espera ese dato ahora) o 504 (Telegram no responde).
 
 ## Historial de cambios
+### Canales de anime
+- Canales como CrunchyShur, con un tema por obra y nombres de anime (`Serie - 01`, `Serie S2 - 08`, `Serie T2 - 01`, `Serie 003`, `42 - Título`), se detectan solos por sus nombres de archivo y se leen con sus reglas (D-047):
+  - La temporada sale de la ficha («Temporada 2», «Serie S2») y «Final Season» es la siguiente a la última.
+  - OVAs, especiales y películas numeradas se unen a la serie del tema, y también los arcos con ficha propia.
+  - Sus obras no se mezclan con las de otros canales.
+- *Las Cositas* no cambia: se comprobó obra por obra con `tools/catalog_dump.cpp` (`cmake --build build --target telegarrm_catalog_dump`), que calcula el catálogo de una copia de la BD.
+- CrunchyShur pasa de 9 595 obras a 1 242 (*My Hero Academia*: 8 temporadas y 170 episodios). Tests: 463 comprobaciones.
+
 ### Fase 4.1: mejoras de uso
 - El logo de la cabecera lleva al catálogo.
 - «Añadidas recientemente»: fila con las 12 obras con publicaciones más recientes, con «hace 2 h», «ayer»…

@@ -49,6 +49,9 @@ public:
         int episode = 0;
         int episodeEnd = 0;                // Último episodio si trae varios
         std::string episodeTitle;
+        // Numeración absoluta del anime ("Serie - 01"): el nombre no dice la temporada (D-047)
+        bool absoluteEpisode = false;
+        bool finalSeason = false;          // "Serie - Final Season - 01"
         std::int64_t date = 0;             // Unix, segundos (publicación de la última parte)
     };
 

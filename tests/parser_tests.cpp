@@ -1513,6 +1513,126 @@ void testCatalogEvents() {
     fs::remove_all(base);
 }
 
+
+// --- Canales de anime (D-047), con nombres reales de CrunchyShur (08/10/2026) ---
+
+void testAnimeEpisodes() {
+    const auto anime = [](const std::string& name) { return media::parseEpisode(name, true); };
+    auto e = anime("[Ñ] Boku no Hero Academia - 01 [BD 720p] [142592D6].mkv");
+    CHECK(e && e->absolute && e->season == 1 && e->episode == 1);
+    CHECK(e && media::titleKey(e->seriesName).find("bokunoheroacademia") != std::string::npos);
+    e = anime("[Ñ] Boku no Hero Academia T2 - 25.mkv");
+    CHECK(e && !e->absolute && e->season == 2 && e->episode == 25);
+    e = anime("Boku no Hero Academia T6 - 25 END [1080p].mkv");
+    CHECK(e && e->season == 6 && e->episode == 25);
+    e = anime("My Hero Academia Vigilantes S2 - 08.mkv");
+    CHECK(e && !e->absolute && e->season == 2 && e->episode == 8 && e->seriesName == "My Hero Academia Vigilantes");
+    e = anime("Boku no Hero - Final Season - 10.mkv");
+    CHECK(e && e->absolute && e->finalSeason && e->episode == 10 && e->seriesName == "Boku no Hero");
+    e = anime("Dragon Ball - 001 [h264 AAC ES-JP].mp4");
+    CHECK(e && e->absolute && e->episode == 1 && e->seriesName == "Dragon Ball");
+    e = anime("[NTF] Naruto Shippuden 003 [7E936FD9].avi");
+    CHECK(e && e->absolute && e->episode == 3);
+    e = anime("FWnF Bleach Kai 53.mkv");
+    CHECK(e && e->absolute && e->episode == 53);
+    e = anime("[AS] LHG HD - 01 - En la noche eterna.mp4");
+    CHECK(e && e->episode == 1 && e->episodeTitle == "En la noche eterna");
+    e = anime("42 - Despertar.mkv");
+    CHECK(e && e->episode == 42 && e->episodeTitle == "Despertar");
+    e = anime("JoJo's Bizarre Adventure Diamond is Unbreakable S3 EP11.mkv");
+    CHECK(e && !e->absolute && e->season == 3 && e->episode == 11);
+    // No son episodios: un ONA, un año, una película numerada
+    CHECK(!anime("Boku no Hero Academia 5 ONA - 01 HLB.mkv"));
+    CHECK(!anime("Batman - 1989.mkv"));
+    CHECK(!anime("[Ñ] Boku no Hero Academia - Película 1.part1.rar"));
+    // Fuera de los canales de anime, nada cambia (Las Cositas: "Ladybug - 027.mkv" no es un episodio)
+    CHECK(!media::parseEpisode("Ladybug - 027.mkv"));
+    CHECK(!media::parseEpisode("[Ñ] Boku no Hero Academia - 01 [BD 720p].mkv"));
+    CHECK(media::isAnimeNumbered("Ladybug - 027.mkv"));
+    CHECK(!media::isAnimeNumbered("Ladybug 1x27.mkv"));
+    CHECK(!media::isAnimeNumbered("Rocky (1976) (1080p).zip.001"));
+
+    // Fichas
+    media::Ficha f = media::parseFicha(
+        "Vigilante: Boku no Hero Academia Illegals S2\nMy Hero Academia: Vigilantes Season 2\n\n\xE2\xAD\x90\xEF\xB8\x8F MyAnimeList Score: 8.00",
+        true);
+    CHECK_EQ(f.title, "Vigilante: Boku no Hero Academia Illegals");
+    CHECK_EQ(f.season, 2);
+    CHECK_EQ(f.alternateTitles, Strings{"My Hero Academia: Vigilantes"});
+    f = media::parseFicha("Boku no Hero Academia: Final Season\n\n\xE2\xAD\x90\xEF\xB8\x8F MyAnimeList Score:", true);
+    CHECK(f.finalSeason && f.title == "Boku no Hero Academia");
+    f = media::parseFicha("Temporada 3 - Boku no Hero Academia", true);
+    CHECK(f.season == 3 && f.title == "Boku no Hero Academia");
+    // Fuera de los canales de anime, igual que siempre
+    f = media::parseFicha("Ataque a los Titanes: La temporada final\n\nSINOPSIS:");
+    CHECK(!f.finalSeason && f.title == "Ataque a los Titanes: La temporada final");
+    f = media::parseFicha("Rocas Cochambrosas\nCumbres Mocarrosas");
+    CHECK(f.alternateTitles.empty());
+}
+
+void testCatalogAnimeChannel() {
+    const std::vector<DbManager::Topic> topics = {{3840, "Boku no Hero Academia", 0}, {2187, "Naruto", 0},
+                                                  {4067, "Listado Animes", 0}};
+    std::vector<Message> messages;
+    std::int64_t id = 1;
+    const auto add = [&](Message message, std::int64_t topic) { messages.push_back(inTopic(message, topic)); };
+    const auto two = [](int n) { return (n < 10 ? "0" : "") + std::to_string(n); };
+    add(photo(id++, "Temporada 1 - Boku no Hero Academia"), 3840);
+    for (int n = 1; n <= 13; ++n) {
+        add(video(id++, "[Ñ] Boku no Hero Academia - " + two(n) + " [BD 720p].mkv", 500), 3840);
+    }
+    add(photo(id++, "OVA 1 - ¡Rescate! ¡Entrenamiento de salvamento!"), 3840);
+    add(video(id++, "[Ñ] Boku no Hero Academia - OVA 1 [720p].mkv", 300), 3840);
+    add(photo(id++, "Temporada 2 - Boku no Hero Academia"), 3840);
+    for (int n = 1; n <= 12; ++n) {
+        add(video(id++, "[Ñ] Boku no Hero Academia T2 - " + two(n) + ".mkv", 500), 3840);
+    }
+    add(photo(id++, "Boku no Hero Academia the Movie 4: You're Next\nMy Hero Academia: You're Next\n\n"
+                    "\xE2\xAD\x90\xEF\xB8\x8F MyAnimeList Score: 7.51"), 3840);
+    add(video(id++, "Boku no Hero Academia - You're Next [1080p].part1.rar", 2000, "", ""), 3840);
+    add(video(id++, "Boku no Hero Academia - You're Next [1080p].part2.rar", 1000, "", ""), 3840);
+    add(photo(id++, "Boku no Hero Academia: Final Season\n\n\xE2\xAD\x90\xEF\xB8\x8F MyAnimeList Score:"), 3840);
+    for (int n = 1; n <= 5; ++n) {
+        add(video(id++, "Boku no Hero - Final Season - " + two(n) + ".mkv", 1500), 3840);
+    }
+    // Una ficha por arco: son la serie del tema
+    add(photo(id++, "Exámenes Chūnin"), 2187);
+    for (int n = 20; n <= 25; ++n) {
+        add(video(id++, "Naruto - 0" + std::to_string(n) + ".mkv", 300), 2187);
+    }
+    add(photo(id++, "Destrucción de la Hoja"), 2187);
+    for (int n = 26; n <= 30; ++n) {
+        add(video(id++, "Naruto - 0" + std::to_string(n) + ".mkv", 300), 2187);
+    }
+
+    const auto items = build(-700, "CrunchyShur", messages, topics);
+    const Catalog::Item* hero = nullptr;
+    const Catalog::Item* movie = nullptr;
+    const Catalog::Item* naruto = nullptr;
+    for (const Catalog::Item& item : items) {
+        hero = item.title == "Boku no Hero Academia" && item.kind == "series" ? &item : hero;
+        movie = item.kind == "movie" && item.title.find("You're Next") != std::string::npos ? &item : movie;
+        naruto = item.title == "Naruto" ? &item : naruto;
+    }
+    CHECK_EQ(static_cast<int>(items.size()), 3);
+    CHECK(hero != nullptr && movie != nullptr && naruto != nullptr);
+    if (hero) {
+        // T1 (de la ficha), T2 y la "Final Season", que pasa a ser la 3; la OVA, como otro archivo
+        CHECK_EQ(hero->seasonCount, 3);
+        CHECK_EQ(hero->episodeCount, 30);
+        CHECK_EQ(static_cast<int>(hero->releases.size()), 31);
+        const bool finalIsThird = std::any_of(hero->releases.begin(), hero->releases.end(),
+                                              [](const Catalog::Release& r) { return r.season == 3 && r.episode == 5; });
+        CHECK(finalIsThird);
+    }
+    if (movie) {
+        CHECK_EQ(movie->alternateTitles, Strings{"My Hero Academia: You're Next"});
+    }
+    if (naruto) {
+        CHECK(naruto->kind == "series" && naruto->seasonCount == 1 && naruto->episodeCount == 11);
+    }
+}
+
 int main() {
     testEpisodes();
     testFichas();
@@ -1549,6 +1669,8 @@ int main() {
     testImportSupersedes();
     testFindVideoStart();
     testCatalogEvents();
+    testAnimeEpisodes();
+    testCatalogAnimeChannel();
 
     std::cout << (checks - failures) << "/" << checks << " comprobaciones correctas" << std::endl;
     return failures == 0 ? 0 : 1;

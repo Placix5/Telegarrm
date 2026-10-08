@@ -6,6 +6,7 @@
 #include <ctime>
 #include <iostream>
 #include <map>
+#include <regex>
 #include <set>
 #include <tuple>
 #include <utility>
@@ -59,6 +60,28 @@ std::string kindFromTopic(const std::string& topicName) {
     return "";
 }
 
+// Temporada provisional de lo que la ficha llama "Final Season": al montar la obra pasa a ser la
+// siguiente a la última numerada
+constexpr int kFinalSeason = 1000;
+
+// En un canal de anime, cada tema es una obra ("Boku no Hero Academia"), salvo los de organización
+bool isWorkTopic(const std::string& topicName) {
+    const std::string key = media::titleKey(topicName);
+    static const char* const kCategories[] = {"general", "listado", "solicitud", "peticion", "aviso", "indice",
+                                              "chat", "vods", "anuncio", "novedad", "normas", "pelicula", "serie"};
+    return !key.empty() && std::none_of(std::begin(kCategories), std::end(kCategories),
+                                        [&key](const char* word) { return key.find(word) != std::string::npos; });
+}
+
+// Ficha de un extra de la serie: "OVA 1 - ¡Rescate!", "Especial 2 - Despegue", "Película 1 - Dos Héroes",
+// "ONA 2 - ...", "T2 Cap 00 - Análisis de Heroes", "OVAS T3 (I & II) - ..."
+bool isExtraFicha(const std::string& title) {
+    static const std::regex kExtra(
+        R"(^\s*(?:ovas?|onas?|oads?|especial(?:es)?|specials?|pel(?:í|Í|i)cula\s*\d+|movie\s*\d+|t\d{1,2}\s*cap)\b)",
+        std::regex::icase | std::regex::ECMAScript);
+    return std::regex_search(title, kExtra);
+}
+
 bool isAiringTopic(const std::string& topicName) {
     return media::titleKey(topicName).find("emision") != std::string::npos;
 }
@@ -105,6 +128,26 @@ struct Catalog::ParseCache {
     std::unordered_map<std::int64_t, ParsedFicha> fichas;
     // Las partes de un archivo troceado (sin pie) comparten el análisis de su nombre base
     std::unordered_map<std::string, ParsedFile> bases;
+    // Canal de anime (D-047): se analiza con sus formatos. Si cambia, lo analizado no vale.
+    bool anime = false;
+    std::unordered_map<std::int64_t, bool> animeNames;  // ¿Nombre con numeración del anime? (por mensaje)
+
+    void setAnime(bool value) {
+        if (value != anime) {
+            anime = value;
+            files.clear();
+            fichas.clear();
+            bases.clear();
+        }
+    }
+
+    bool animeNumbered(const Message& message) {
+        const auto it = animeNames.find(message.messageId);
+        if (it != animeNames.end()) {
+            return it->second;
+        }
+        return animeNames[message.messageId] = media::isAnimeNumbered(message.fileName.value_or(""));
+    }
 
     const ParsedFile& file(const Message& message) {
         const std::string name = message.fileName.value_or("");
@@ -118,9 +161,9 @@ struct Catalog::ParseCache {
             const media::PartInfo part = media::splitParts(name);
             if (part.number > 0 && isBlank(message.text)) {
                 const auto base = bases.find(part.base);
-                parsed = base != bases.end() ? base->second : (bases[part.base] = analyze(part.base, ""));
+                parsed = base != bases.end() ? base->second : (bases[part.base] = analyze(part.base, "", anime));
             } else {
-                parsed = analyze(name, message.text);
+                parsed = analyze(name, message.text, anime);
             }
             parsed.media = true;
             parsed.archive = media::isArchive(name);
@@ -131,7 +174,7 @@ struct Catalog::ParseCache {
     }
 
     // Análisis caro (expresiones regulares) de un nombre y su pie
-    static ParsedFile analyze(const std::string& name, const std::string& caption) {
+    static ParsedFile analyze(const std::string& name, const std::string& caption, bool anime) {
         ParsedFile parsed;
         const std::string text = caption.empty() ? name : name + " " + caption;
         parsed.quality = media::detectQuality(text);
@@ -139,9 +182,9 @@ struct Catalog::ParseCache {
         parsed.tags = media::detectTags(text);
         parsed.tmdbId = media::detectTmdbId(text).value_or(0);
         // El nombre del fichero manda; si no tiene marcador, se prueba con el pie
-        parsed.episode = media::parseEpisode(name);
+        parsed.episode = media::parseEpisode(name, anime);
         if (!parsed.episode && !caption.empty()) {
-            parsed.episode = media::parseEpisode(caption);
+            parsed.episode = media::parseEpisode(caption, anime);
         }
         parsed.titleKey = parsed.episode ? media::titleKey(parsed.episode->seriesName)
                                          : media::titleKey(media::cleanTitle(media::splitParts(name).base));
@@ -153,7 +196,7 @@ struct Catalog::ParseCache {
         if (it != fichas.end() && it->second.caption == message.text) {
             return it->second.ficha;
         }
-        return (fichas[message.messageId] = ParsedFicha{message.text, media::parseFicha(message.text)}).ficha;
+        return (fichas[message.messageId] = ParsedFicha{message.text, media::parseFicha(message.text, anime)}).ficha;
     }
 };
 
@@ -165,6 +208,8 @@ struct Catalog::Block {
     std::string topicName;
     std::string channelTitle;
     bool hasFicha = false;
+    bool anime = false;       // Del canal de anime: solo se une con bloques de su canal (D-047)
+    bool attachToSeries = false;  // Extra (OVA, especial, película numerada) de la serie del tema
     std::int64_t poster = 0;
     std::string caption;
     media::Ficha ficha;
@@ -230,10 +275,39 @@ void finishBlock(Block& block) {
         release.hdr = release.hdr || ficha.hdr;
     }
 
+    // Numeración absoluta del anime (D-047): la temporada la da la ficha ("Temporada 2", "S2") o es la
+    // última ("Final Season"). Un número suelto en un bloque que no es de serie no es un episodio
+    // ("Ocean's 11", "300 - El origen de un imperio").
+    const std::string hint = kindFromTopic(block.topicName);
+    std::set<int> absoluteEpisodes;  // Distintos: dos versiones del mismo número no hacen una serie
+    for (const Release& release : block.releases) {
+        if (release.episode > 0 && release.absoluteEpisode) {
+            absoluteEpisodes.insert(release.episode);
+        }
+    }
+    const std::size_t absoluteCount = absoluteEpisodes.size();
+    const bool namedEpisodes = std::any_of(block.releases.begin(), block.releases.end(), [](const Release& release) {
+        return release.episode > 0 && !release.absoluteEpisode;
+    });
+    const bool seriesContext =
+        ficha.season > 0 || ficha.episode > 0 || ficha.finalSeason || hint == "series" || namedEpisodes;
+    for (Release& release : block.releases) {
+        if (!release.absoluteEpisode || release.episode == 0) {
+            continue;
+        }
+        if (absoluteCount < 2 && !seriesContext) {
+            release.season = release.episode = release.episodeEnd = 0;
+            release.episodeTitle.clear();
+        } else if (release.finalSeason || ficha.finalSeason) {
+            release.season = kFinalSeason;
+        } else if (ficha.season > 0) {
+            release.season = ficha.season;
+        }
+    }
+
     const bool hasEpisodes = std::any_of(block.releases.begin(), block.releases.end(),
                                          [](const Release& release) { return release.episode > 0; });
-    const std::string hint = kindFromTopic(block.topicName);
-    block.kind = (hasEpisodes || ficha.season > 0) ? "series" : (hint.empty() ? "movie" : hint);
+    block.kind = (hasEpisodes || ficha.season > 0 || block.attachToSeries) ? "series" : (hint.empty() ? "movie" : hint);
 
     // Título: ficha > nombre en los ficheros > (película) nombre del fichero > título del canal
     block.title = ficha.title;
@@ -257,6 +331,16 @@ void finishBlock(Block& block) {
     }
     if (block.title.empty()) {
         block.title = block.channelTitle;
+    }
+
+    // Canal de anime (D-047): un arco con ficha propia ("Exámenes Chūnin", "Saga de Trunks del Futuro")
+    // dentro del tema de una serie es esa serie. Las obras cuyo título sí se parece al del tema
+    // ("Kuroko no Basket: Tip Off") y las películas siguen siendo obras aparte.
+    if (block.anime && block.kind == "series" && isWorkTopic(block.topicName) &&
+        !keysCompatible(media::titleKey(block.title), media::titleKey(media::cleanTitle(block.topicName)))) {
+        block.title = media::cleanTitle(block.topicName);
+        appendUnique(block.keys, {media::titleKey(block.title)});
+        return;
     }
 
     std::vector<std::string> keys = {media::titleKey(block.title)};
@@ -302,6 +386,20 @@ std::vector<Block> buildBlocks(std::int64_t chatId, const std::string& channelTi
         topicNames[topic.id] = topic.name;
     }
 
+    // ¿Canal de anime? (D-047) Si al menos una cuarta parte de sus archivos (y 20 como mínimo) usa la
+    // numeración del anime ("Serie - 01", "Serie T2 - 01") y no la normal. Las Cositas: un 0,4 %;
+    // CrunchyShur: un 80 %.
+    std::size_t mediaFiles = 0;
+    std::size_t animeFiles = 0;
+    for (const Message& message : messages) {
+        if (message.fileSize && media::isMediaFile(message.fileName.value_or(""), message.mimeType.value_or(""))) {
+            ++mediaFiles;
+            animeFiles += cache.animeNumbered(message) ? 1 : 0;
+        }
+    }
+    const bool anime = animeFiles >= 20 && animeFiles * 4 >= mediaFiles;
+    cache.setAnime(anime);
+
     // Los temas de un foro se publican intercalados: las fichas se agrupan dentro de cada tema
     std::map<std::int64_t, std::vector<const Message*>> byTopic;
     for (const Message& message : messages) {
@@ -310,6 +408,9 @@ std::vector<Block> buildBlocks(std::int64_t chatId, const std::string& channelTi
 
     std::vector<Block> blocks;
     for (const auto& [topicId, topicMessages] : byTopic) {
+        const auto topicEntry = topicNames.find(topicId);
+        const std::string topicName = topicEntry != topicNames.end() ? topicEntry->second : "";
+        const bool workTopic = anime && isWorkTopic(topicName);
         std::vector<Block> topicBlocks(1);  // Bloque inicial para los archivos anteriores a la primera ficha
         std::map<std::string, std::size_t> partIndex;  // Partes ya vistas del bloque actual -> su Release
 
@@ -326,9 +427,19 @@ std::vector<Block> buildBlocks(std::int64_t chatId, const std::string& channelTi
                     block.poster = message->messageId;
                     block.caption = message->text;
                     block.ficha = cache.ficha(*message);
+                    // Canal de anime (D-047): un extra de la serie del tema se une a ella
+                    if (anime && workTopic && isExtraFicha(block.ficha.title)) {
+                        block.attachToSeries = true;
+                        block.ficha.title = topicName;
+                        block.ficha.alternateTitles.clear();
+                    }
                     block.matchKeys = {media::titleKey(block.ficha.title)};
                     for (const std::string& alternate : block.ficha.alternateTitles) {
                         block.matchKeys.push_back(media::titleKey(alternate));
+                    }
+                    // Y los archivos que llevan el nombre de la obra del tema son suyos
+                    if (anime && workTopic) {
+                        appendUnique(block.matchKeys, {media::titleKey(topicName)});
                     }
                     partIndex.clear();
                 } else if (topicBlocks.back().poster == 0) {
@@ -364,6 +475,9 @@ std::vector<Block> buildBlocks(std::int64_t chatId, const std::string& channelTi
             if (block.releases.empty() && !parsed.titleKey.empty()) {
                 appendUnique(block.matchKeys, {parsed.titleKey});
             }
+            if (block.releases.empty() && workTopic) {
+                appendUnique(block.matchKeys, {media::titleKey(topicName)});  // Canal de anime: la obra del tema
+            }
             if (!release) {
                 block.releases.emplace_back();
                 release = &block.releases.back();
@@ -379,6 +493,8 @@ std::vector<Block> buildBlocks(std::int64_t chatId, const std::string& channelTi
                     release->episode = parsed.episode->episode;
                     release->episodeEnd = parsed.episode->episodeEnd;
                     release->episodeTitle = parsed.episode->episodeTitle;
+                    release->absoluteEpisode = parsed.episode->absolute;
+                    release->finalSeason = parsed.episode->finalSeason;
                     block.fileSeriesNames.push_back(parsed.episode->seriesName);
                 }
                 if (parsed.part.number > 0) {
@@ -400,6 +516,7 @@ std::vector<Block> buildBlocks(std::int64_t chatId, const std::string& channelTi
                 continue;
             }
             block.chatId = chatId;
+            block.anime = anime;
             block.topicId = topicId;
             const auto name = topicNames.find(topicId);
             block.topicName = name != topicNames.end() ? name->second : "";
@@ -473,6 +590,19 @@ Item buildItem(std::vector<const Block*> group) {
     }
     for (const std::string& language : media::detectLanguages(first->channelTitle)) {
         appendUnique(item.languages, {language});
+    }
+
+    // "Final Season": la siguiente a la última temporada numerada de la obra
+    int lastSeason = 0;
+    for (const Release& release : item.releases) {
+        if (release.season != kFinalSeason) {
+            lastSeason = std::max(lastSeason, release.season);
+        }
+    }
+    for (Release& release : item.releases) {
+        if (release.season == kFinalSeason) {
+            release.season = lastSeason + 1;
+        }
     }
 
     if (item.kind == "series") {
@@ -569,7 +699,9 @@ std::vector<Item> mergeBlocks(const std::vector<const Block*>& blocks) {
             if (key.empty()) {
                 continue;
             }
-            const auto [it, inserted] = firstByKey.emplace(blocks[i]->kind + "|" + key, i);
+            // Las obras de un canal de anime no se mezclan con las de otros canales (D-047)
+            const std::string scope = blocks[i]->anime ? "anime" + std::to_string(blocks[i]->chatId) + "|" : "";
+            const auto [it, inserted] = firstByKey.emplace(scope + blocks[i]->kind + "|" + key, i);
             if (!inserted) {
                 parent[root(i)] = root(it->second);
             }
