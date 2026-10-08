@@ -77,6 +77,7 @@ Formato real visto: canales de una serie con una ficha (foto + pie con título, 
 - [x] *Las Cositas* idéntica antes y después, comprobado con `tools/catalog_dump.cpp`. Sus 24 obras que se habían unido a CrunchyShur vuelven a ser suyas.
 - [ ] *Hunter x Hunter (2011)* sale en dos obras, por el nombre del grupo de subtítulos (`[BB]`) delante; unos 40 especiales numerados («SP 06», «OVA 03») salen como películas sueltas.
 - [ ] Decidir si los 105 archivos `Ladybug - 027` de *Las Cositas* deben leerse como episodios (cambiaría *Ladybug*: +100 episodios).
+- [ ] TMDB no encuentra las obras que solo tienen el nombre japonés (*Boku no Hero Academia*; en TMDB es *My Hero Academia*). Las que llevan el título en inglés en la ficha sí (*Vigilantes*, *Naruto*). Posible mejora: comprobar los títulos alternativos de TMDB (`/tv/{id}/alternative_titles`) del primer resultado.
 
 ## Siguientes pasos
 Por decidir con Plácido; ninguno está empezado.

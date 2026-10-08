@@ -4,7 +4,7 @@ Telegarrm es un servicio daemon (stack ARR, como Sonarr y Radarr) que utiliza Te
 
 ## Qué hace
 Desde la web (`http://<ip-de-la-pi>:8080/`):
-- **Catálogo**: las series y películas publicadas en los canales y grupos que elijas, con portada, sinopsis y títulos de episodio de TMDB.
+- **Catálogo**: las series y películas publicadas en los canales y grupos que elijas, con portada, sinopsis y títulos de episodio de TMDB. Entiende tanto canales como *Las Cositas* (fichas y `1x01`) como foros de anime con un tema por obra (`Serie - 01`, `Serie S2 - 08`), que detecta solos.
   - Arriba, «Añadidas recientemente»: lo último que se ha publicado.
   - La ficha de una obra se actualiza sola. Si se publica algo nuevo de ella mientras la miras, aparece un aviso en la esquina y la fila nueva se ilumina.
   - Cada episodio o película muestra sus versiones (1080p, 4K HDR, REMUX…).

@@ -22,6 +22,14 @@ Telegram ⇄ TDLib ⇄ TelegramClient (hilo receptor: respuestas y actualizacion
                         (búfer → 7-Zip → ffprobe → biblioteca /srv/media)
 ```
 
+## Canales
+
+El catálogo distingue dos tipos de canal, que detecta solo por los nombres de sus archivos (D-047):
+- **Normales**, como *Las Cositas*: fichas (foto con pie) seguidas de sus archivos, episodios `1x01` o `S01E01` y temas por categoría («Películas», «Series en emisión»…).
+- **De anime**, como CrunchyShur: un tema por obra y numeración del anime (`Serie - 01`, `Serie S2 - 08`, `Serie T2 - 01`). Lo son si al menos una cuarta parte de sus archivos usa esa numeración.
+  - Solo en ellos se aplican sus reglas: temporadas de la ficha, «Final Season», y extras y arcos unidos a la serie del tema.
+  - Sus obras no se mezclan con las de otros canales, así que añadir un canal de anime no cambia el resto del catálogo.
+
 ## Hilos
 
 | Hilo | Qué hace | Cuándo trabaja |

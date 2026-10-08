@@ -675,4 +675,7 @@ Formato: **Contexto** (qué problema había), **Decisión**, **Alternativas desc
   - *Ataque a los Titanes: La temporada final* perdía parte del título.
   - *Insidious: Capítulo 2* pasaba a ser una serie.
   - *Ladybug* ganaba 100 episodios (`Ladybug - 027`): podría ser una mejora, pero es un cambio, y queda para que Plácido lo decida.
-- **Pendiente**: *Hunter x Hunter (2011)* sale en dos obras, porque parte de sus archivos llevan el nombre del grupo que los subtituló (`[BB]`). Unas 40 «películas» siguen siendo especiales numerados («SP 06», «OVA 03»).
+- **Pendiente**:
+  - *Hunter x Hunter (2011)* sale en dos obras, porque parte de sus archivos llevan el nombre del grupo que los subtituló (`[BB]`).
+  - Unas 40 «películas» siguen siendo especiales numerados («SP 06», «OVA 03»).
+  - TMDB no encuentra las obras con solo el nombre japonés (*Boku no Hero Academia*), aunque sí las que tienen el título en inglés en la ficha (*Vigilantes*, *Naruto*). Tras la primera ronda en la Pi: 2 397 de 3 469 obras encontradas.
