@@ -562,6 +562,7 @@ Item buildItem(std::vector<const Block*> group) {
     item.title = main->title;
     item.year = mostCommonYear(group);
     item.channelTitle = first->channelTitle;
+    item.anime = first->anime;
     item.description = main->hasFicha ? main->caption : "";
 
     const std::string titleKey = media::titleKey(item.title);

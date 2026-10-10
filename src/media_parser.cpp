@@ -462,6 +462,60 @@ bool isAnimeNumbered(const std::string& fileName) {
     return !parseEpisode(fileName, false) && parseAnimeEpisode(clean).has_value();
 }
 
+namespace {
+
+const std::regex kTitleParens(R"(\(([^()]*)\))");
+const std::regex kOnlyYear(R"(^\s*(?:19|20)\d{2}\s*$)");
+
+// Paréntesis con datos técnicos: "(1080p AV1)", "(1080p - Versión del Blu-ray)", "(DVDRip y 1080p los
+// episodios del 6 al 12)", "(TVRip)". Lo que quede al quitarles la calidad no es un título (D-048).
+bool technicalParens(const std::string& inner) {
+    static const std::regex kSource(
+        R"((?:^|[^0-9a-z])(?:dvd(?:-?rip)?|vhs(?:-?rip)?|tv-?rip|hdtv|bd-?rip|br-?rip|web-?dl|web-?rip|blu-?ray|remux|hdr(?:10)?\+?|x26[45]|h\.?26[45]|hevc|av1)(?![0-9a-z]))",
+        kIcase);
+    return !detectQuality(inner).empty() || std::regex_search(inner, kSource);
+}
+
+// ¿El paréntesis va al final del título? Después solo hay calidad, etiquetas u otros paréntesis
+// ("Here (Aquí) (1080p)", "Hijack (Secuestro en el aire)") o un guion que separa el resto
+// ("Apocalipsis en el instituto (High School of the Dead) - Temporada 1 + OVA"). Solo esos pueden ser
+// títulos alternativos.
+bool trailingParens(const std::string& line, std::size_t end) {
+    static const std::regex kDashFollows(R"(^\s+-\s)");
+    const std::string rest = line.substr(end);
+    return cleanTitle(rest).empty() || std::regex_search(rest, kDashFollows);
+}
+
+// Paréntesis que son parte del título: al principio ("(500) días juntos"), pegados a una palabra
+// ("(Des)encanto") o seguidos de más título ("Evangelion: 1.0 You Are (Not) Alone"). Se quitan
+// solo los paréntesis. El año y los datos técnicos siguen fuera del título.
+std::string unwrapTitleParens(const std::string& line) {
+    const auto wordByte = [](char c) {
+        const auto byte = static_cast<unsigned char>(c);
+        return byte >= 0x80 || std::isalnum(byte) != 0;
+    };
+    static const std::regex kWordFollows(R"(^\s+[^\s\-:|·•(\[])");
+    std::string result;
+    std::size_t last = 0;
+    for (auto it = std::sregex_iterator(line.begin(), line.end(), kTitleParens); it != std::sregex_iterator(); ++it) {
+        const auto start = static_cast<std::size_t>(it->position(0));
+        const std::size_t end = start + static_cast<std::size_t>(it->length(0));
+        const std::string inner = (*it)[1].str();
+        const bool atStart = trimSpaces(line.substr(0, start)).empty();
+        const bool glued = (start > 0 && wordByte(line[start - 1])) || (end < line.size() && wordByte(line[end]));
+        const bool wordFollows = std::regex_search(line.substr(end), kWordFollows);
+        const bool partOfTitle = !trimSpaces(inner).empty() && !trailingParens(line, end) &&
+                                 (atStart || glued || wordFollows) && !std::regex_match(inner, kOnlyYear) &&
+                                 !technicalParens(inner);
+        result += line.substr(last, start - last);
+        result += partOfTitle ? inner : it->str();
+        last = end;
+    }
+    return result + line.substr(last);
+}
+
+}  // namespace
+
 Ficha parseFicha(const std::string& caption, bool animeFormats) {
     Ficha ficha;
     static const std::regex kMetadataLine(R"(^(?:#|@|https?:|t\.me|cr(?:é|É|e)ditos?)|^(?:19|20)\d{2}$|^\d{3,4}p$)", kIcase);
@@ -482,7 +536,7 @@ Ficha parseFicha(const std::string& caption, bool animeFormats) {
         }
     }
 
-    ficha.title = cleanTitle(titleLine);
+    ficha.title = cleanTitle(unwrapTitleParens(titleLine));
 
     // "Ted Lasso - Temporada 4 (1080p)": una sola temporada en el título
     static const std::regex kSeason(R"(\btemporada\s*(\d{1,2})(?!\s*(?:-|a|al|y)\s*\d))", kIcase);
@@ -534,13 +588,18 @@ Ficha parseFicha(const std::string& caption, bool animeFormats) {
         }
     }
 
-    // Paréntesis del título que no son año, calidad ni idioma: "Hijack (Secuestro en el aire)".
-    // Lo que queda de "(1080p y 1080p REMUX)" es "y": un alternativo así uniría obras distintas.
-    static const std::regex kParens(R"(\(([^)]*)\))");
-    static const std::regex kOnlyYear(R"(^(?:19|20)\d{2}$)");
+    // Paréntesis del final del título que no son año, calidad ni idioma: "Hijack (Secuestro en el
+    // aire)". Lo que queda de "(1080p y 1080p REMUX)" es "y", de "(1080p AV1)" es "AV1" y de "You Are
+    // (Not) Alone" es "Not": un alternativo así uniría obras distintas (D-048).
     static const std::string kStopwords[] = {"and", "the", "del", "las", "los", "con", "por", "para"};
-    for (auto it = std::sregex_iterator(titleLine.begin(), titleLine.end(), kParens); it != std::sregex_iterator(); ++it) {
-        const std::string alternate = cleanTitle((*it)[1].str());
+    for (auto it = std::sregex_iterator(titleLine.begin(), titleLine.end(), kTitleParens); it != std::sregex_iterator();
+         ++it) {
+        const std::string inner = (*it)[1].str();
+        if (!trailingParens(titleLine, static_cast<std::size_t>(it->position(0) + it->length(0))) ||
+            technicalParens(inner)) {
+            continue;
+        }
+        const std::string alternate = cleanTitle(inner);
         const std::string key = titleKey(alternate);
         const bool meaningful = key.size() >= 3 && std::find(std::begin(kStopwords), std::end(kStopwords), key) ==
                                                        std::end(kStopwords);

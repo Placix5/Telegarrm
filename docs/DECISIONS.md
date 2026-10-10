@@ -53,6 +53,7 @@ Formato: **Contexto** (qué problema había), **Decisión**, **Alternativas desc
 | [D-045](#d-045-la-ficha-abierta-se-actualiza-sola) | La ficha abierta se actualiza sola | Vigente |
 | [D-046](#d-046-la-web-en-el-móvil) | La web en el móvil | Vigente |
 | [D-047](#d-047-canales-de-anime-crunchyshur) | Canales de anime (CrunchyShur) | Vigente |
+| [D-048](#d-048-la-misma-obra-en-varios-canales) | La misma obra en varios canales | Vigente |
 
 ---
 
@@ -679,3 +680,51 @@ Formato: **Contexto** (qué problema había), **Decisión**, **Alternativas desc
   - *Hunter x Hunter (2011)* sale en dos obras, porque parte de sus archivos llevan el nombre del grupo que los subtituló (`[BB]`).
   - Unas 40 «películas» siguen siendo especiales numerados («SP 06», «OVA 03»).
   - TMDB no encuentra las obras con solo el nombre japonés (*Boku no Hero Academia*), aunque sí las que tienen el título en inglés en la ficha (*Vigilantes*, *Naruto*). Tras la primera ronda en la Pi: 2 397 de 3 469 obras encontradas.
+
+## D-048: La misma obra en varios canales
+*10/10/2026*
+
+- **Contexto**: Plácido vio dos problemas:
+  - **Una película con otras dentro**: *Kimetsu no Yaiba: Guardianes de la Noche - La fortaleza infinita* tenía en su lista *Obsession* y *Mortal Kombat II*. Las tres fichas acaban en «(1080p AV1)»: el parser tomaba «AV1» como título alternativo y unía las tres obras. TMDB la confundió además con la película *AV-1*, y la descarga de Plácido acabó en `AV-1 (2022) [tmdbid-912268]`. Pasaba lo mismo con «(Not)» en las tres de *Evangelion* y con «(Parte uno)» en *Rebel Moon*.
+  - **La misma serie, dos veces**: *Boku no Hero Academia* (CrunchyShur) y *My Hero Academia* (*Las Cositas*) salían separadas. D-047 aisló los canales de anime a propósito, y TMDB no encontraba el nombre japonés. Ya había 64 obras con la misma ficha de TMDB en dos sitios (*Spy x Family*, *Arcane*, *Rick y Morty*…).
+- **Propuesta de Plácido**: reconocer que son la misma obra por TMDB. Si no fuera posible, elegir primero el canal y después la obra.
+- **Decisión**:
+  - **Paréntesis de las fichas**. Solo son títulos alternativos los del final del título, o seguidos de un guion: «Here (Aquí) (1080p)», «Apocalipsis en el instituto (High School of the Dead) - Temporada 1». Nunca los que llevan datos técnicos («(1080p AV1)», «(1080p - Versión del Blu-ray)», «(TVRip)»). Los paréntesis que son parte del título quedan en él sin los paréntesis: «(500) días juntos», «(Des)encanto», «You Are (Not) Alone».
+  - **Criterio de TMDB** (versión 3):
+    - **Mismas palabras**: un título con las mismas palabras en otro orden (al menos tres) es el mismo título: «Guardianes de la noche: Kimetsu no Yaiba La fortaleza infinita».
+    - **Títulos alternativos**: si ningún nombre encaja, se miran los títulos alternativos de los tres primeros resultados (`/{tv|movie}/{id}/alternative_titles`, en caché 30 días). Solo cuentan los iguales: «Boku no Hero Academia», tipo «Romaji».
+    - **Exclusiones**: no valen las abreviaturas ni, en series, los de una temporada, un arco o un especial («Season 3 Romaji», «second series title», «Staffel 2»).
+    - **Canales de anime**: publican cada arco o secuela como una serie aparte desde la temporada 1, y muchos arcos no llevan tipo en TMDB («Gintama.: Porori-hen»). Por eso en sus series no vale un alternativo si la obra se llama como la serie de TMDB y algo más («Full Metal Panic! The Second Raid», «Bakemonogatari»), y solo valen los de tipo romaji, inglés, título completo… Si no, sus episodios irían a la temporada 1 de la serie en la biblioteca y sustituirían a los de verdad (D-041).
+    - **Revisión de todo**: al cambiar de versión, `MetadataService` vuelve a buscar todas las obras, mostrando mientras los datos anteriores. La fecha del cambio se guarda en `tmdb_matcher_changed_at`, para que un reinicio a mitad no deje obras con el criterio anterior.
+  - **Catálogo agrupado**. `works::group` junta las obras con la misma ficha de TMDB (tipo e identificador). `/api/catalog` da una entrada por grupo:
+    - Lleva los datos de la obra principal: la del canal añadido antes (*Las Cositas*), después la que se llama como en TMDB y después la de más episodios.
+    - El título es el de TMDB, con lo de todas sumado y la de cada canal en `sources`.
+    - La ficha (`/api/catalog/{chat}/{ficha}`) trae también `sources`.
+    - En la web, la tarjeta dice «En 2 canales» y la ficha empieza con los canales donde está, cada uno con su enlace. Filtro nuevo por canal.
+    - Las novedades de la misma obra en otro canal también avisan.
+  - **Cada obra sigue siendo suya**: archivos, numeración, seguimiento y descargas. Lo que se descarga de cualquiera va a la misma carpeta de la biblioteca, porque la carpeta lleva el identificador de TMDB, así que cuenta como «ya lo tienes» en todas.
+- **Alternativas descartadas**:
+  - **Unir los archivos de todos los canales en una sola obra**, con las versiones de cada episodio juntas: sería lo más cómodo, pero la numeración no siempre coincide. CrunchyShur publica cada arco como una serie desde la temporada 1 (*Yuukaku-hen* es la temporada 3 en TMDB), y un 1x01 de un canal no sería el 1x01 del otro. Queda como mejora si se resuelve la numeración.
+  - **Solo elegir el canal antes que la obra** (la otra propuesta de Plácido): no junta lo que es lo mismo. Se añade como filtro.
+  - **Activar las reglas del anime en todos los canales** o quitar el aislamiento de D-047: cambiaba *Las Cositas*.
+- **Verificación**: `tools/catalog_dump.cpp` admite `--tmdb`, que añade la coincidencia guardada y la del criterio nuevo de cada obra.
+  - **Parser**: en *Las Cositas* cambian 18 obras (que pasan a ser 25) y todas son las de los paréntesis.
+    - Se separan *La fortaleza infinita*, *Obsession* y *Mortal Kombat II*; las tres de *Evangelion*, y las cuatro de *Rebel Moon*.
+    - *Desencanto* y *500 días juntos* recuperan el título completo.
+    - Desaparecen los alternativos sin sentido («Ultimate», «UNCUT», «16:9 y 4:3», «sin Granulado», «TVRip»…).
+    - Efecto secundario: *Ataque a los Titanes: La temporada final* y sus «capítulos finales» (4x29 y 4x30) eran una obra solo porque las dos fichas decían «Versión del Blu-ray». Ahora salen separadas.
+  - **TMDB** en la Pi, tras volver a buscar todas las obras: 2 570 de 3 481 encontradas (antes, 2 400).
+    - *Las Cositas*: 58 nuevas y ninguna perdida. Se corrigen 2: *La fortaleza infinita* (era *AV-1*) y *Ranma ½*, que pasa a la serie de 1989 (la de sus 161 episodios) en lugar de la de 2024.
+    - CrunchyShur: 117 nuevas (*Boku no Hero Academia*, *Shingeki no Kyojin*, *Kono Subarashii Sekai ni Shukufuku wo!*…). Ningún arco ni secuela cae en la serie de TMDB que lo tiene como temporada.
+    - 91 obras están en más de un sitio (antes había 64 con la misma ficha de TMDB).
+  - **Claves compartidas**: TMDB se consulta una vez por clave de obra (tipo, título y año), y *Look Back* (2024) tiene la misma en los dos canales. CrunchyShur se calcula antes, así que su obra, sin identificador de TMDB en los archivos, se buscaba primero y caía en una película rusa con el mismo título; *Las Cositas* la habría heredado. Ahora:
+    - Para cada clave se busca con la obra que lleve el identificador de TMDB en sus archivos.
+    - Una obra con identificador cuyo dato guardado no salió de él se vuelve a buscar.
+  - Tests: 494 comprobaciones, con búsquedas de TMDB sacadas de la caché, sin red: *Boku no Hero Academia*, un arco de *Gintama* y el título en otro orden.
+- **Consecuencias**:
+  - Si cambia la ficha de TMDB de una obra ya descargada, su carpeta no se mueve sola. Plácido tiene que recolocar dos descargas: *La fortaleza infinita*, que está en la carpeta de *AV-1*, y la temporada 4 de *Boku no Hero Academia*, que está en una carpeta sin identificador de TMDB.
+  - **Pendiente**:
+    - Unir los arcos de los canales de anime a su serie, con la temporada que les corresponde en TMDB.
+    - TMDB tiene mal el título en castellano de *Battle for the Planet of the Apes* («La conquista del planeta de los simios»). Por eso las dos películas de *Las Cositas* (*La conquista…* y *Batalla…*) salen juntas.
+    - *Ranma ½* de CrunchyShur (la de 2024) comparte clave con la de *Las Cositas*: tiene los datos de la de 1989, y lo que se descargue de ella iría a esa carpeta.
+

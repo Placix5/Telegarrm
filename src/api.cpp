@@ -19,6 +19,7 @@
 #include "db_manager.hpp"
 #include "download_manager.hpp"
 #include "httplib.h"
+#include "media_parser.hpp"
 #include "metadata.hpp"
 #include "release_prober.hpp"
 #include "settings.hpp"
@@ -331,6 +332,124 @@ Json itemSummaryJson(const Catalog::Item& item, const InfoPtr& info, const DbMan
             {"followed", follow != nullptr}};
 }
 
+// Prioridad de cada canal para elegir la obra principal de un grupo (D-048): primero el que se
+// añadió antes (Las Cositas)
+std::map<std::int64_t, int> channelRank(DbManager& db) {
+    std::vector<DbManager::Channel> channels = db.listChannels();
+    std::stable_sort(channels.begin(), channels.end(), [](const DbManager::Channel& a, const DbManager::Channel& b) {
+        return std::make_pair(a.addedAt, a.id) < std::make_pair(b.addedAt, b.id);
+    });
+    std::map<std::int64_t, int> rank;
+    for (const DbManager::Channel& channel : channels) {
+        rank.emplace(channel.id, static_cast<int>(rank.size()));
+    }
+    return rank;
+}
+
+// Obras del catálogo agrupadas por TMDB (D-048)
+std::vector<std::vector<Catalog::ItemPtr>> workGroups(DbManager& db, const std::vector<Catalog::ItemPtr>& items,
+                                                      const MetadataService& metadata) {
+    return works::group(items, [&metadata](const Catalog::Item& item) { return metadata.lookup(item); },
+                        channelRank(db));
+}
+
+// Una de las obras de un grupo: dónde está y qué tiene
+Json sourceJson(const Catalog::Item& item, const DbManager::Follow* follow) {
+    return {{"chat_id", item.chatId},
+            {"anchor_id", item.anchorMessageId},
+            {"channel_title", item.channelTitle},
+            {"title", item.title},
+            {"kind", item.kind},
+            {"seasons", item.seasonCount},
+            {"episodes", item.episodeCount},
+            {"release_count", item.releases.size()},
+            {"qualities", item.qualities},
+            {"followed", follow != nullptr}};
+}
+
+// Añade sin repetir (por su clave de título) y sin el título de la obra
+void addTitle(Json& titles, const std::string& title, const std::string& mainTitle) {
+    const std::string key = media::titleKey(title);
+    if (key.empty() || key == media::titleKey(mainTitle)) {
+        return;
+    }
+    for (const Json& existing : titles) {
+        if (media::titleKey(existing.get<std::string>()) == key) {
+            return;
+        }
+    }
+    titles.push_back(title);
+}
+
+void addUniqueValues(Json& values, const std::vector<std::string>& more) {
+    for (const std::string& value : more) {
+        if (std::find(values.begin(), values.end(), Json(value)) == values.end()) {
+            values.push_back(value);
+        }
+    }
+}
+
+// Obra del catálogo de la web: un grupo de obras que son la misma (D-048). Con una sola, sus datos;
+// con varias, los de la principal (la primera) con el título de TMDB y lo de todas sumado.
+Json groupSummaryJson(const std::vector<Catalog::ItemPtr>& group, const MetadataService& metadata,
+                      const FollowIndex& follows) {
+    const Catalog::Item& main = *group.front();
+    const InfoPtr info = metadata.lookup(main);
+    Json summary = itemSummaryJson(main, info, findFollow(follows, main));
+    Json sources = Json::array();
+    for (const Catalog::ItemPtr& item : group) {
+        sources.push_back(sourceJson(*item, findFollow(follows, *item)));
+    }
+    summary["sources"] = sources;
+    if (group.size() < 2) {
+        return summary;
+    }
+
+    const std::string title = info && !info->title.empty() ? info->title : main.title;
+    Json alternates = Json::array();
+    std::vector<std::string> qualities;
+    int seasons = 0;
+    int episodes = 0;
+    std::size_t releases = 0;
+    std::int64_t size = 0;
+    std::int64_t updatedAt = 0;
+    for (const Catalog::ItemPtr& item : group) {
+        addTitle(alternates, item->title, title);
+        for (const std::string& alternate : item->alternateTitles) {
+            addTitle(alternates, alternate, title);
+        }
+        for (const std::string& quality : item->qualities) {
+            if (std::find(qualities.begin(), qualities.end(), quality) == qualities.end()) {
+                qualities.push_back(quality);
+            }
+        }
+        addUniqueValues(summary["languages"], item->languages);
+        addUniqueValues(summary["topics"], item->topics);
+        summary["airing"] = summary["airing"].get<bool>() || item->airing;
+        summary["followed"] = summary["followed"].get<bool>() || findFollow(follows, *item) != nullptr;
+        summary["hdr"] = summary["hdr"].get<bool>() ||
+                         std::any_of(item->releases.begin(), item->releases.end(),
+                                     [](const Catalog::Release& release) { return release.hdr; });
+        seasons = std::max(seasons, item->seasonCount);
+        episodes = std::max(episodes, item->episodeCount);
+        releases += item->releases.size();
+        size += item->totalSize;
+        updatedAt = std::max(updatedAt, item->updatedAt);
+    }
+    std::stable_sort(qualities.begin(), qualities.end(), [](const std::string& a, const std::string& b) {
+        return media::qualityRank(a) > media::qualityRank(b);
+    });
+    summary["title"] = title;
+    summary["alternate_titles"] = alternates;
+    summary["qualities"] = qualities;
+    summary["seasons"] = seasons;
+    summary["episodes"] = episodes;
+    summary["release_count"] = releases;
+    summary["total_size"] = size;
+    summary["updated_at"] = updatedAt;
+    return summary;
+}
+
 // Series: episodios conocidos, cuántos se tienen y qué falta por cada calidad máxima (D-040)
 Json seriesLibraryJson(const Catalog::Item& item, const std::vector<tracking::Owned>& owned) {
     const tracking::EpisodeCount count = tracking::countEpisodes(item, owned);
@@ -455,12 +574,13 @@ void sendFile(httplib::Response& res, const std::string& path, const char* conte
 
 void registerCatalogRoutes(httplib::Server& server, DbManager& db, TelegramClient& telegram, Catalog& catalog,
                            MetadataService& metadata, TmdbClient& tmdb) {
+    // Una entrada por obra: las que son la misma según TMDB van juntas, con sus fuentes (D-048)
     server.Get("/api/catalog", [&db, &catalog, &metadata](const httplib::Request&, httplib::Response& res) {
         const std::vector<Catalog::ItemPtr> items = catalog.items();
         const FollowIndex follows = followIndex(db, items, metadata);
         Json result = Json::array();
-        for (const Catalog::ItemPtr& item : items) {
-            result.push_back(itemSummaryJson(*item, metadata.lookup(*item), findFollow(follows, *item)));
+        for (const std::vector<Catalog::ItemPtr>& group : workGroups(db, items, metadata)) {
+            result.push_back(groupSummaryJson(group, metadata, follows));
         }
         sendJson(res, 200, result);
     });
@@ -474,7 +594,8 @@ void registerCatalogRoutes(httplib::Server& server, DbManager& db, TelegramClien
             sendError(res, 404, "Elemento no encontrado en el catálogo");
             return;
         }
-        const FollowIndex follows = followIndex(db, catalog.items(), metadata);
+        const std::vector<Catalog::ItemPtr> items = catalog.items();
+        const FollowIndex follows = followIndex(db, items, metadata);
         // Lo que se tiene: descargas y vídeos que ya están en la biblioteca (D-041)
         const AppSettings settings = loadSettings(db);
         const std::vector<library::DiskVideo> disk = library::videosOnDisk(
@@ -497,6 +618,23 @@ void registerCatalogRoutes(httplib::Server& server, DbManager& db, TelegramClien
                               {"hdr", video.hdr}});
         }
         detail["on_disk"] = onDisk;
+        // La misma obra en otros canales o con otro nombre (D-048), con esta incluida
+        Json sources = Json::array();
+        for (const std::vector<Catalog::ItemPtr>& group : workGroups(db, items, metadata)) {
+            const bool here = std::any_of(group.begin(), group.end(), [&item](const Catalog::ItemPtr& member) {
+                return member->chatId == item->chatId && member->anchorMessageId == item->anchorMessageId;
+            });
+            if (!here) {
+                continue;
+            }
+            for (const Catalog::ItemPtr& member : group) {
+                Json source = sourceJson(*member, findFollow(follows, *member));
+                source["current"] = member->chatId == item->chatId && member->anchorMessageId == item->anchorMessageId;
+                sources.push_back(source);
+            }
+            break;
+        }
+        detail["sources"] = sources;
         sendJson(res, 200, detail);
     });
 

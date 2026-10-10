@@ -1,6 +1,6 @@
 # Hoja de ruta de Telegarrm
 
-*Estado al 08/10/2026: Fases 1 a 4.1 completadas; canales de anime (D-047).*
+*Estado al 10/10/2026: Fases 1 a 4.1 completadas; canales de anime (D-047) y obras agrupadas por TMDB (D-048).*
 
 Documento vivo con el plan de implementación; los motivos de cada decisión están en [DECISIONS.md](DECISIONS.md) y cómo está construido, en [01_architecture_and_phases.md](01_architecture_and_phases.md). Lo mantiene Claude Code (desarrollo y plan técnico); Gemini revisa el código y la documentación; Plácido decide prioridades y valida en uso real.
 
@@ -77,7 +77,16 @@ Formato real visto: canales de una serie con una ficha (foto + pie con título, 
 - [x] *Las Cositas* idéntica antes y después, comprobado con `tools/catalog_dump.cpp`. Sus 24 obras que se habían unido a CrunchyShur vuelven a ser suyas.
 - [ ] *Hunter x Hunter (2011)* sale en dos obras, por el nombre del grupo de subtítulos (`[BB]`) delante; unos 40 especiales numerados («SP 06», «OVA 03») salen como películas sueltas.
 - [ ] Decidir si los 105 archivos `Ladybug - 027` de *Las Cositas* deben leerse como episodios (cambiaría *Ladybug*: +100 episodios).
-- [ ] TMDB no encuentra las obras que solo tienen el nombre japonés (*Boku no Hero Academia*; en TMDB es *My Hero Academia*). Las que llevan el título en inglés en la ficha sí (*Vigilantes*, *Naruto*). Posible mejora: comprobar los títulos alternativos de TMDB (`/tv/{id}/alternative_titles`) del primer resultado.
+- [x] TMDB no encontraba las obras que solo tienen el nombre japonés (*Boku no Hero Academia*; en TMDB es *My Hero Academia*): resuelto con los títulos alternativos de TMDB (D-048).
+
+## La misma obra en varios canales (10/10/2026)
+- [x] Fichas que unían películas distintas por un paréntesis: «(1080p AV1)» juntaba *La fortaleza infinita*, *Obsession* y *Mortal Kombat II*; «You Are (Not) Alone», las tres de *Evangelion* (D-048).
+- [x] TMDB: mismas palabras en otro orden y títulos alternativos (romaji, inglés…), sin arcos ni secuelas en los canales de anime.
+- [x] Catálogo con una tarjeta por obra (las de la misma ficha de TMDB, juntas), filtro por canal y, en la ficha, los canales donde está.
+- [ ] Los arcos y secuelas de los canales de anime siguen siendo obras aparte (*Gintama. Porori-hen*, *Full Metal Panic! The Second Raid*). Para unirlos haría falta saber qué temporada de TMDB es cada uno; TMDB lo apunta a veces en el tipo de sus títulos alternativos («Season 3 Romaji»).
+- [ ] Si cambia la ficha de TMDB de una obra ya descargada, su carpeta de la biblioteca no se mueve sola.
+- [ ] *Ataque a los Titanes: La temporada final* y sus «capítulos finales» (4x29 y 4x30) eran una obra solo porque las dos fichas decían «Versión del Blu-ray»; ahora salen separadas.
+- [ ] Datos de TMDB mal puestos que juntan obras distintas: *La conquista del planeta de los simios* y *Batalla por el planeta de los simios* salen juntas, y *Ranma ½* de 2024 (CrunchyShur) comparte datos con la de 1989 (*Las Cositas*).
 
 ## Siguientes pasos
 Por decidir con Plácido; ninguno está empezado.
@@ -103,4 +112,4 @@ Por decidir con Plácido; ninguno está empezado.
 - Renombrar los archivos de la biblioteca cuya etiqueta de calidad no coincide con el vídeo (importados antes de D-039).
 
 ### Hecho de lo transversal
-- [x] Tests (`ctest`) del parser, el catálogo, la BD, la biblioteca y el seguimiento: 428 comprobaciones, algunas con vídeos y comprimidos reales generados con ffmpeg y 7-Zip.
+- [x] Tests (`ctest`) del parser, el catálogo, la BD, la biblioteca, el seguimiento y TMDB: 494 comprobaciones, algunas con vídeos y comprimidos reales generados con ffmpeg y 7-Zip.

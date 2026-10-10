@@ -10,6 +10,8 @@
 #include <functional>
 #include <iostream>
 #include <iterator>
+#include <map>
+#include <memory>
 #include <set>
 #include <sstream>
 #include <string>
@@ -479,6 +481,17 @@ void testCatalogAlternateTitles() {
     CHECK_EQ(items[0].title, "Hijack");
     CHECK_EQ(items[0].alternateTitles, Strings{"Secuestro en el aire"});
     CHECK_EQ(items[0].seasonCount, 2);
+
+    // D-048: tres películas con "(1080p AV1)" en la ficha (Las Cositas, 10/2026) son tres obras
+    const std::vector<Message> av1 = {
+        inTopic(photo(10, "Kimetsu no Yaiba: Guardianes de la Noche - La fortaleza infinita (1080p AV1)"), 2),
+        inTopic(video(11, "Kimetsu no Yaiba La fortaleza infinita (1080p).mkv", 100), 2),
+        inTopic(photo(12, "Obsession [Versión Cines] (1080p AV1)"), 2),
+        inTopic(video(13, "Obsession (1080p).mkv", 100), 2),
+        inTopic(photo(14, "Mortal Kombat II (1080p AV1)"), 2),
+        inTopic(video(15, "Mortal Kombat II (1080p).mkv", 100), 2),
+    };
+    CHECK_EQ(static_cast<int>(build(-500, "Las Cositas", av1, kTopics).size()), 3);
 }
 
 void testCatalogRemakes() {
@@ -600,6 +613,38 @@ void testRealRegressions() {
     CHECK_EQ(media::cleanTitle("Vaiana (2026) (4K HDR) ROTULADO CASTELLANO"), "Vaiana");
     // El HDR de otra versión mencionado más abajo no cuenta
     CHECK(!media::parseFicha("Vaiana (2026) (1080p)\n\nTambién disponible en 4K HDR").hdr);
+
+    // D-048: los datos técnicos entre paréntesis no son títulos alternativos ("AV1" unía tres películas)
+    {
+        const media::Ficha f = media::parseFicha(
+            "Kimetsu no Yaiba: Guardianes de la Noche - La fortaleza infinita (1080p AV1)\n\nSINOPSIS:\n\nEl arco final.");
+        CHECK_EQ(f.title, "Kimetsu no Yaiba: Guardianes de la Noche - La fortaleza infinita");
+        CHECK(f.alternateTitles.empty());
+    }
+    CHECK(media::parseFicha("Ataque a los Titanes: La temporada final (1080p - Versión del Blu-ray)").alternateTitles.empty());
+    CHECK(media::parseFicha("The Warriors (Los amos de la noche) (1080p Ultimate Director's Cut)").alternateTitles ==
+          Strings{"Los amos de la noche"});
+    CHECK(media::parseFicha("Agallas, el perro cobarde - Temporada 1 (DVDRip y 1080p los episodios del 6 al 12)")
+              .alternateTitles.empty());
+    // Paréntesis que son parte del título: no son alternativos y su texto se queda en el título
+    {
+        const media::Ficha f = media::parseFicha("Evangelion: 1.0 You Are (Not) Alone (1080p)");
+        CHECK_EQ(f.title, "Evangelion: 1.0 You Are Not Alone");
+        CHECK(f.alternateTitles.empty());
+    }
+    CHECK_EQ(media::parseFicha("(Des)encanto - Temporada 1 (1080p)\n\nCastellano y VOSE").title, "Desencanto");
+    CHECK_EQ(media::parseFicha("(500) días juntos (1080p)").title, "500 días juntos");
+    // Un paréntesis en mitad del título tampoco es un alternativo, aunque no se una al título
+    {
+        const media::Ficha f = media::parseFicha("Rebel Moon (Parte uno): La niña del fuego (1080p)");
+        CHECK_EQ(f.title, "Rebel Moon : La niña del fuego");
+        CHECK(f.alternateTitles.empty());
+    }
+    // Lo que va antes de un guion sigue siendo el final del título
+    CHECK(media::parseFicha("Apocalipsis en el instituto (High School of the Dead) - Temporada 1 + OVA (1080p)")
+              .alternateTitles == Strings{"High School of the Dead"});
+    // El año entre paréntesis sigue fuera del título
+    CHECK_EQ(media::parseFicha("Doctor Who (2005) Temporada 3 (1080p)").title, "Doctor Who");
 }
 
 void testCatalogFilesWithoutFicha() {
@@ -1633,6 +1678,115 @@ void testCatalogAnimeChannel() {
     }
 }
 
+// D-048: criterio de TMDB con respuestas guardadas en la caché (sin red)
+void testTmdbMatching() {
+    namespace fs = std::filesystem;
+    const fs::path base = fs::temp_directory_path() / ("telegarrm_tmdb_" + std::to_string(::getpid()));
+    fs::remove_all(base);
+    fs::create_directories(base);
+    {
+        DbManager db((base / "test.db").string());
+        CHECK(db.open());
+        Catalog catalog(db);
+        TmdbClient tmdb(db, "token-de-prueba", (base / "images").string());  // Todo sale de la caché
+        MetadataService metadata(db, catalog, tmdb);
+        const auto cache = [&db](const std::string& request, const std::string& body) {
+            CHECK(db.putCachedResponse(request, 200, body));
+        };
+        const auto work = [](const std::string& kind, const std::string& title, bool anime) {
+            Catalog::Item item;
+            item.kind = kind;
+            item.title = title;
+            item.anime = anime;
+            return item;
+        };
+
+        // "Boku no Hero Academia" es el romaji de "My Hero Academia": TMDB lo encuentra, pero el
+        // resultado no lo dice; sí sus títulos alternativos
+        cache("/3/search/tv?include_adult=false&language=es-ES&query=Boku+no+Hero+Academia",
+              R"({"results":[{"id":280110,"name":"My Hero Academia: Vigilantes","original_name":"ヴィジランテ","first_air_date":"2025-04-07"},
+                             {"id":65930,"name":"My Hero Academia","original_name":"僕のヒーローアカデミア","first_air_date":"2016-04-03"}]})");
+        cache("/3/tv/280110/alternative_titles?language=es-ES",
+              R"({"results":[{"iso_3166_1":"JP","title":"Vigilante: Boku no Hero Academia Illegals","type":"Romaji"}]})");
+        cache("/3/tv/65930/alternative_titles?language=es-ES",
+              R"({"results":[{"iso_3166_1":"JP","title":"BNHA","type":"Abbreviation"},
+                             {"iso_3166_1":"JP","title":"Boku no Hero Academia","type":"Romaji"}]})");
+        cache("/3/tv/65930?append_to_response=external_ids&language=es-ES",
+              R"({"id":65930,"name":"My Hero Academia","original_name":"僕のヒーローアカデミア","first_air_date":"2016-04-03"})");
+        auto info = metadata.resolve(work("series", "Boku no Hero Academia", true));
+        CHECK(info && info->providerId == 65930 && info->title == "My Hero Academia");
+
+        // Un arco publicado como serie en un canal de anime no es la serie de TMDB (sus episodios
+        // irían a la temporada 1 de la serie), aunque TMDB lo tenga como título alternativo
+        cache("/3/search/tv?include_adult=false&language=es-ES&query=Gintama.+Porori-hen",
+              R"({"results":[{"id":57041,"name":"Gintama","original_name":"銀魂","first_air_date":"2006-04-04"}]})");
+        cache("/3/tv/57041/alternative_titles?language=es-ES",
+              R"({"results":[{"iso_3166_1":"JP","title":"Gintama.: Porori-hen","type":""}]})");
+        info = metadata.resolve(work("series", "Gintama. Porori-hen", true));
+        CHECK(info && info->mediaType.empty() && info->matchedBy == "none");
+
+        // Las mismas palabras en otro orden son el mismo título
+        cache("/3/search/movie?include_adult=false&language=es-ES&query=Kimetsu+no+Yaiba:+Guardianes+de+la+Noche+-+La+fortaleza+infinita",
+              R"({"results":[{"id":1311031,"title":"Guardianes de la noche: Kimetsu no Yaiba La fortaleza infinita","original_title":"劇場版「鬼滅の刃」無限城編 第一章 猗窩座再来","release_date":"2025-07-18"}]})");
+        cache("/3/movie/1311031?append_to_response=external_ids&language=es-ES",
+              R"({"id":1311031,"title":"Guardianes de la noche: Kimetsu no Yaiba La fortaleza infinita","release_date":"2025-07-18"})");
+        info = metadata.resolve(work("movie", "Kimetsu no Yaiba: Guardianes de la Noche - La fortaleza infinita", false));
+        CHECK(info && info->providerId == 1311031);
+    }
+    fs::remove_all(base);
+}
+
+// D-048: las obras con la misma ficha de TMDB van juntas en el catálogo de la web
+void testWorkGroups() {
+    const auto item = [](std::int64_t chatId, std::int64_t anchor, const std::string& title, int episodes) {
+        Catalog::Item made;
+        made.chatId = chatId;
+        made.anchorMessageId = anchor;
+        made.kind = "series";
+        made.title = title;
+        made.episodeCount = episodes;
+        return std::make_shared<const Catalog::Item>(std::move(made));
+    };
+    const auto info = [](std::int64_t id, const std::string& title, const std::string& original) {
+        auto made = std::make_shared<DbManager::Metadata>();
+        made->mediaType = "tv";
+        made->providerId = id;
+        made->title = title;
+        made->originalTitle = original;
+        return std::shared_ptr<const DbManager::Metadata>(made);
+    };
+    const std::int64_t cositas = -1002229558644;
+    const std::int64_t crunchy = -1002343287273;
+    const Catalog::ItemPtr boku = item(crunchy, 1, "Boku no Hero Academia", 170);
+    const Catalog::ItemPtr mha = item(cositas, 2, "My Hero Academia", 88);
+    const Catalog::ItemPtr ova = item(crunchy, 3, "Boku no Hero Academia: Memories", 4);
+    const Catalog::ItemPtr loose = item(cositas, 4, "Sin datos de TMDB", 3);
+    const Catalog::ItemPtr other = item(crunchy, 5, "Vigilante: Boku no Hero Academia Illegals", 26);
+    const auto heroes = info(65930, "My Hero Academia", "僕のヒーローアカデミア");
+    const std::map<const Catalog::Item*, MetadataService::InfoPtr> infos = {
+        {boku.get(), heroes}, {mha.get(), heroes}, {ova.get(), heroes},
+        {other.get(), info(280110, "My Hero Academia: Vigilantes", "ヴィジランテ")}};
+    const works::Lookup lookup = [&infos](const Catalog::Item& work) {
+        const auto it = infos.find(&work);
+        return it != infos.end() ? it->second : nullptr;
+    };
+    // Las Cositas se añadió antes: su obra es la principal aunque tenga menos episodios
+    const auto groups = works::group({boku, loose, mha, other, ova}, lookup, {{cositas, 0}, {crunchy, 1}});
+    CHECK_EQ(static_cast<int>(groups.size()), 3);
+    if (groups.size() != 3) {
+        return;
+    }
+    CHECK(groups[0] == (std::vector<Catalog::ItemPtr>{mha, boku, ova}));
+    CHECK(groups[1] == std::vector<Catalog::ItemPtr>{loose});
+    CHECK(groups[2] == std::vector<Catalog::ItemPtr>{other});
+    // En un mismo canal, primero la que se llama como en TMDB y después la de más episodios
+    const Catalog::ItemPtr named = item(crunchy, 6, "My Hero Academia", 13);
+    const auto same = works::group({boku, ova, named}, [&](const Catalog::Item& work) {
+        return &work == named.get() ? heroes : lookup(work);
+    }, {});
+    CHECK(same.size() == 1 && same[0] == (std::vector<Catalog::ItemPtr>{named, boku, ova}));
+}
+
 int main() {
     testEpisodes();
     testFichas();
@@ -1671,6 +1825,8 @@ int main() {
     testCatalogEvents();
     testAnimeEpisodes();
     testCatalogAnimeChannel();
+    testWorkGroups();
+    testTmdbMatching();
 
     std::cout << (checks - failures) << "/" << checks << " comprobaciones correctas" << std::endl;
     return failures == 0 ? 0 : 1;

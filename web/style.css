@@ -133,6 +133,19 @@ button.probe { width: 1.6rem; padding: 0.1rem 0; font-size: 0.8rem; line-height:
               scrollbar-color: var(--border) transparent; }
 .recent-row .card { scroll-snap-align: start; }
 .card-when { color: var(--accent); font-size: 0.8rem; margin-top: 0.15rem; }
+.card-sources { color: var(--muted); font-size: 0.8rem; margin-top: 0.15rem; }
+/* La misma obra en varios canales (D-048) */
+.sources-box { margin-bottom: 0.8rem; }
+.sources-box .hint { margin: 0 0 0.4rem; }
+.sources { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+.source { display: flex; flex-direction: column; gap: 0.1rem; min-width: 0; max-width: 100%; padding: 0.45rem 0.75rem;
+  border: 1px solid var(--border); border-radius: 0.6rem; background: var(--card); color: inherit;
+  text-decoration: none; font-size: 0.9rem; overflow-wrap: anywhere; }
+.source:hover, .source:focus-visible { border-color: var(--accent); }
+.source[aria-current="page"] { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent);
+  background: var(--accent-soft); }
+.source-meta { color: var(--muted); font-size: 0.8rem; }
+.source-follow { color: var(--ok); font-size: 0.8rem; }
 
 /* Avisos emergentes */
 .toasts { position: fixed; right: 1rem; bottom: 1rem; z-index: 10; display: flex; flex-direction: column; gap: 0.6rem;

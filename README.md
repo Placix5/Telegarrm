@@ -5,7 +5,8 @@ Telegarrm es un servicio daemon (stack ARR, como Sonarr y Radarr) que utiliza Te
 ## Qué hace
 Desde la web (`http://<ip-de-la-pi>:8080/`):
 - **Catálogo**: las series y películas publicadas en los canales y grupos que elijas, con portada, sinopsis y títulos de episodio de TMDB. Entiende tanto canales como *Las Cositas* (fichas y `1x01`) como foros de anime con un tema por obra (`Serie - 01`, `Serie S2 - 08`), que detecta solos.
-  - Arriba, «Añadidas recientemente»: lo último que se ha publicado.
+  - Una obra publicada en varios canales, o con otro nombre (*Boku no Hero Academia* y *My Hero Academia*), sale una sola vez: se reconoce por su ficha de TMDB. Dentro se elige de qué canal ver los archivos.
+  - Filtro por canal y, arriba, «Añadidas recientemente»: lo último que se ha publicado.
   - La ficha de una obra se actualiza sola. Si se publica algo nuevo de ella mientras la miras, aparece un aviso en la esquina y la fila nueva se ilumina.
   - Cada episodio o película muestra sus versiones (1080p, 4K HDR, REMUX…).
   - La calidad real de cada versión se puede comprobar sin descargarla: «?», o «Comprobar calidades» por temporada.
@@ -34,7 +35,7 @@ Funciona igual en el móvil: las pestañas se reorganizan, las tablas se convier
   - `signal_watcher.cpp`: parada ordenada con SIGINT/SIGTERM (clase `SignalWatcher`)
 - `include/`: Cabeceras y dependencias de un solo archivo (`httplib.h`, `nlohmann/json.hpp`)
 - `tests/`: Tests (`ctest`) del parser, el catálogo, la BD, la biblioteca y el seguimiento, con ejemplos reales de los canales
-- `tools/`: Herramientas de desarrollo; `catalog_dump.cpp` calcula el catálogo de una copia de la BD para comparar cambios del parser
+- `tools/`: Herramientas de desarrollo; `catalog_dump.cpp` calcula el catálogo de una copia de la BD para comparar cambios del parser (y, con `--tmdb`, del criterio de TMDB)
 - `web/`: Interfaz web (`index.html`, `style.css`, `app.js`, sin dependencias)
 - `deploy/`: Servicio de systemd, regla de polkit, script de instalación y un borrador de `docker compose` para Jellyfin (`jellyfin-compose.yml`, pendiente de revisar: ver la hoja de ruta)
 - `db/`: Datos generados al ejecutar: `telegarrm.db` (SQLite), `tdlib/` (sesión de Telegram) y `tmdb/` (carátulas)
@@ -123,8 +124,8 @@ Desplegar una versión nueva del programa no necesita `sudo`: `cmake --build bui
 | `POST /api/channels/{id}/sync` | Buscar mensajes nuevos ya. Normalmente no hace falta: llegan al momento (D-036) y, además, hay una ronda cada 15 min |
 | `GET /api/channels/{id}/messages?limit=50&offset=0` | Mensajes guardados, del más reciente al más antiguo (con su `topic_id`) |
 | `GET /api/channels/{id}/topics` | Temas de un grupo con temas, con cuántos mensajes tiene cada uno |
-| `GET /api/catalog` | Obras (series y películas) de todos los canales: título, títulos alternativos, año, versiones disponibles (`qualities`, `hdr`), idiomas, géneros, temas, `airing` (en emisión), `followed` (en seguimiento), temporadas, episodios, tamaño en bytes y datos de TMDB |
-| `GET /api/catalog/{chat}/{ficha}` | Obra completa: sinopsis, ficha original, seguimiento (`follow`) y sus archivos lógicos (`releases`) con calidad, HDR, etiquetas de versión, temporada y episodio, y sus partes. Vale cualquier ficha de la obra |
+| `GET /api/catalog` | Obras (series y películas) de todos los canales: título, títulos alternativos, año, versiones disponibles (`qualities`, `hdr`), idiomas, géneros, temas, `airing` (en emisión), `followed` (en seguimiento), temporadas, episodios, tamaño en bytes y datos de TMDB. Las que tienen la misma ficha de TMDB van juntas, con la de cada canal en `sources` |
+| `GET /api/catalog/{chat}/{ficha}` | Obra completa: sinopsis, ficha original, seguimiento (`follow`), la misma obra en otros canales (`sources`) y sus archivos lógicos (`releases`) con calidad, HDR, etiquetas de versión, temporada y episodio, y sus partes. Vale cualquier ficha de la obra |
 | `POST /api/catalog/{chat}/{ficha}/download` | `{"max_quality": ""}`: en una serie, pone en cola los episodios que faltan (la mejor versión de cada uno). Si no se tiene ninguno, la serie completa. 409 si no cabe en la biblioteca. La ficha de una serie trae el resumen en `library` |
 | `POST /api/releases/{chat}/{mensaje}/probe` | Calidad real de un archivo del catálogo leyendo solo sus primeros MB (D-042): `{"quality", "hdr"}`, o 409 con el motivo. La ficha trae el resultado en `releases[].probe` y lo que ya hay en la biblioteca en `on_disk` |
 | `GET /api/catalog/{chat}/{ficha}/poster` | Portada: la foto de la ficha (de Telegram) o, si no hay, la carátula de TMDB; se guardan tras la primera vez |
@@ -153,6 +154,13 @@ Ejemplo de `/api/status`:
 Los pasos del inicio de sesión responden `{"ok": true}`, o `{"error": "..."}` con HTTP 400 (dato incorrecto, ej. `PHONE_CODE_INVALID`), 409 (Telegram no espera ese dato ahora) o 504 (Telegram no responde).
 
 ## Historial de cambios
+### La misma obra en varios canales
+- El catálogo junta las obras que son la misma según TMDB, aunque estén en varios canales o con otro nombre (D-048). *Boku no Hero Academia* (CrunchyShur) y *My Hero Academia* (*Las Cositas*) salen como una sola obra; en su ficha se elige de qué canal ver los archivos. 91 obras están en más de un sitio.
+- Filtro por canal en el catálogo.
+- TMDB reconoce el título con las palabras en otro orden y los títulos alternativos (romaji, inglés…), sin confundir los arcos de un canal de anime con su serie: 2 570 de 3 481 obras encontradas (antes, 2 400).
+- Las fichas con «(1080p AV1)» o «You Are (Not) Alone» ya no juntan películas distintas: *La fortaleza infinita* sale sola, con su ficha de TMDB correcta.
+- *Las Cositas* se revisó obra por obra (`tools/catalog_dump.cpp`, ahora también con `--tmdb`): solo cambian las fichas con esos paréntesis. Tests: 494 comprobaciones.
+
 ### Canales de anime
 - Canales como CrunchyShur, con un tema por obra y nombres de anime (`Serie - 01`, `Serie S2 - 08`, `Serie T2 - 01`, `Serie 003`, `42 - Título`), se detectan solos por sus nombres de archivo y se leen con sus reglas (D-047):
   - La temporada sale de la ficha («Temporada 2», «Serie S2») y «Final Season» es la siguiente a la última.

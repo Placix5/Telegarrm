@@ -230,12 +230,21 @@ function itemMeta(item) {
   return parts.join(" · ");
 }
 
+// "En 2 canales" o "3 fichas" si la obra está en varios sitios (D-048)
+function sourcesLabel(item) {
+  const channels = new Set(item.sources.map((source) => source.chat_id)).size;
+  if (channels > 1) return `En ${channels} canales`;
+  return item.sources.length > 1 ? `${item.sources.length} fichas` : "";
+}
+
 // Tarjeta de una obra; en «Añadidas recientemente», con cuándo se publicó lo último
 function catalogCard(item, withWhen) {
   const card = el("a", "card");
   card.href = `#/catalogo/${itemPath(item)}`;
   const body = el("div", "card-body");
   body.append(el("div", "card-title", item.title), el("div", "card-meta", itemMeta(item)));
+  const sources = sourcesLabel(item);
+  if (sources) body.append(el("div", "card-sources", sources));
   if (withWhen) body.append(el("div", "card-when", relativeTime(item.updated_at)));
   const poster = posterElement(item);
   if (item.airing) poster.append(el("span", "ribbon", "En emisión"));
@@ -244,23 +253,62 @@ function catalogCard(item, withWhen) {
   return card;
 }
 
+// Filtro «Canal»: los canales de las obras del catálogo (solo se ve si hay más de uno)
+function updateChannelFilter() {
+  const select = $("catalog-channel");
+  const channels = new Map();
+  for (const item of catalogItems) {
+    for (const source of item.sources) channels.set(String(source.chat_id), source.channel_title);
+  }
+  const sorted = [...channels].sort((a, b) => a[1].localeCompare(b[1], "es", { sensitivity: "base" }));
+  const key = JSON.stringify(sorted);
+  if (select.dataset.key === key) return;
+  select.dataset.key = key;
+  const value = select.value;
+  const all = el("option", "", "Todos los canales");
+  all.value = "";
+  select.replaceChildren(all, ...sorted.map(([id, title]) => {
+    const option = el("option", "", title);
+    option.value = id;
+    return option;
+  }));
+  select.value = channels.has(value) ? value : "";
+  select.hidden = channels.size < 2;
+}
+
+// La obra tal como está en un canal (filtro «Canal»): la tarjeta lleva a su ficha de ese canal
+function inChannel(item, chatId) {
+  const source = chatId ? item.sources.find((candidate) => String(candidate.chat_id) === chatId) : null;
+  if (!source || (source.chat_id === item.chat_id && source.anchor_id === item.anchor_id)) return item;
+  return Object.assign({}, item, {
+    chat_id: source.chat_id, anchor_id: source.anchor_id, channel_title: source.channel_title, title: source.title,
+    seasons: source.seasons, episodes: source.episodes, qualities: source.qualities, followed: source.followed,
+  });
+}
+
 function renderCatalog() {
+  updateChannelFilter();
   const query = normalize($("catalog-search").value.trim());
   const kind = $("catalog-kind").value;
+  const channel = $("catalog-channel").value;
   const byTitle = (a, b) => a.title.localeCompare(b.title, "es", { sensitivity: "base" });
   const sort = $("catalog-sort").value === "recent" ? (a, b) => b.updated_at - a.updated_at || byTitle(a, b) : byTitle;
-  const visible = catalogItems
+  const filtered = catalogItems
     .filter((item) => !kind || (kind === "airing" ? item.airing : kind === "followed" ? item.followed : item.kind === kind))
-    .filter((item) => !query || normalize([item.title, ...item.alternate_titles, item.channel_title, ...item.genres,
+    .filter((item) => !channel || item.sources.some((source) => String(source.chat_id) === channel))
+    .map((item) => inChannel(item, channel));
+  const visible = filtered
+    .filter((item) => !query || normalize([item.title, ...item.alternate_titles, ...item.genres,
+      ...item.sources.map((source) => `${source.title} ${source.channel_title}`),
       item.tmdb ? item.tmdb.title : "", item.tmdb ? item.tmdb.original_title : ""].join(" ")).includes(query))
     .sort(sort);
 
   const grid = $("catalog-grid");
   grid.replaceChildren(...visible.map((item) => catalogCard(item, false)));
 
-  // Añadidas recientemente (D-043): lo publicado hace menos tiempo, sin búsqueda y con el filtro de tipo
-  const recent = catalogItems
-    .filter((item) => !kind || (kind === "airing" ? item.airing : kind === "followed" ? item.followed : item.kind === kind))
+  // Añadidas recientemente (D-043): lo publicado hace menos tiempo, sin búsqueda y con los filtros
+  const recent = filtered
+    .slice()
     .sort((a, b) => b.updated_at - a.updated_at)
     .slice(0, RECENT_COUNT);
   $("catalog-recent").hidden = Boolean(query) || recent.length === 0;
@@ -281,6 +329,7 @@ async function loadCatalog() {
     const json = JSON.stringify(items);
     if (json === lastCatalogJson) return;  // Sin cambios: no se rehacen las tarjetas
     lastCatalogJson = json;
+    for (const item of items) item.sources = item.sources || [];
     catalogItems = items;
     renderCatalog();
   } catch (e) {
@@ -290,6 +339,7 @@ async function loadCatalog() {
 
 $("catalog-search").addEventListener("input", renderCatalog);
 $("catalog-kind").addEventListener("change", renderCatalog);
+$("catalog-channel").addEventListener("change", renderCatalog);
 $("catalog-sort").addEventListener("change", renderCatalog);
 
 function episodeLabel(release) {
@@ -572,6 +622,7 @@ function flashReleases(messageIds) {
 }
 
 function renderDetail(item) {
+  item.sources = item.sources || [];
   currentDetail = item;
   detailJson = JSON.stringify(item);
   detailDownloads = detailDownloadState();
@@ -584,7 +635,9 @@ function renderDetail(item) {
     ...item.languages, ...item.genres]) {
     if (text) badges.append(el("span", "badge", String(text)));
   }
-  info.append(title, badges, followControls(item));
+  info.append(title, badges);
+  if (item.sources.length > 1) info.append(sourcesBox(item));
+  info.append(followControls(item));
   if (item.library) info.append(seriesBox(item));
   const tmdb = item.tmdb;
   if (tmdb && tmdb.original_title && normalize(tmdb.original_title) !== normalize(item.title)) {
@@ -649,6 +702,32 @@ function renderDetail(item) {
   container.replaceChildren(detail, files);
   document.title = `${item.title} · Telegarrm`;
   updateDownloadButtons();
+}
+
+// La misma obra en otros canales o con otro nombre (D-048). Cada una tiene sus archivos, su numeración
+// y su seguimiento; lo que se descarga de cualquiera va a la misma carpeta de la biblioteca.
+function sourcesBox(item) {
+  const box = el("div", "sources-box");
+  const channels = new Set(item.sources.map((source) => source.chat_id)).size;
+  box.append(el("p", "hint", channels > 1 ? `Esta obra está en ${channels} canales. Elige de cuál ver los archivos:`
+    : `Esta obra tiene ${item.sources.length} fichas en el canal. Elige cuál ver:`));
+  const list = el("nav", "sources");
+  list.setAttribute("aria-label", "Dónde está esta obra");
+  for (const source of item.sources) {
+    const link = el("a", "source");
+    link.href = `#/catalogo/${source.chat_id}/${source.anchor_id}`;
+    if (source.current) link.setAttribute("aria-current", "page");
+    const what = source.kind === "series"
+      ? [plural(source.seasons, "temporada", "temporadas"), plural(source.episodes, "episodio", "episodios")]
+      : [plural(source.release_count, "versión", "versiones")];
+    if (source.qualities.length) what.push(source.qualities.map(qualityLabel).join(" · "));
+    link.append(el("strong", "", source.channel_title), el("span", "source-title", source.title),
+      el("span", "source-meta", what.join(" · ")));
+    if (source.followed) link.append(el("span", "source-follow", "✓ Siguiendo"));
+    list.append(link);
+  }
+  box.append(list);
+  return box;
 }
 
 // "mensaje:estado" de las descargas de los archivos de la ficha abierta
@@ -1193,11 +1272,18 @@ async function checkEvents(lastId) {
   }
   const route = currentRoute();
   for (const event of events) {
-    if (route.view === "detail" && currentDetail && event.item.chat_id === currentDetail.chat_id &&
-        event.item.anchor_id === currentDetail.anchor_id) {
+    if (route.view !== "detail" || !currentDetail) continue;
+    const source = currentDetail.sources.find((candidate) => candidate.chat_id === event.item.chat_id &&
+      candidate.anchor_id === event.item.anchor_id);
+    if (event.item.chat_id === currentDetail.chat_id && event.item.anchor_id === currentDetail.anchor_id) {
       await refreshDetail();  // Ya aparece en la ficha, resaltado un momento
       flashReleases(event.releases.map((release) => release.message_id));
       showToast(`Novedad en «${event.item.title}»`, `${describeNews(event)} Ya aparece en la ficha.`);
+    } else if (source) {
+      // La misma obra en otro canal (D-048)
+      await refreshDetail();
+      showToast(`Novedad en «${event.item.title}»`, `${describeNews(event)} En ${source.channel_title}.`, "Ver",
+        () => { location.hash = `#/catalogo/${source.chat_id}/${source.anchor_id}`; });
     }
   }
   if (events.length && route.view === "catalog") loadCatalog();

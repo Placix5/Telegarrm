@@ -68,6 +68,7 @@ public:
         std::vector<std::string> genres;
         std::vector<std::string> topics;     // Temas del foro donde aparece
         bool airing = false;                 // Aparece en un tema "en emisión"
+        bool anime = false;                  // De un canal de anime (D-047)
         std::string synopsis;
         std::string description;             // Ficha original (la más antigua)
         std::int64_t posterChatId = 0;

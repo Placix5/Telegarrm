@@ -1,6 +1,6 @@
 # Arquitectura de Telegarrm
 
-*Actualizada el 07/10/2026, con la Fase 4.1 terminada.*
+*Actualizada el 10/10/2026: canales de anime (D-047) y obras agrupadas por TMDB (D-048).*
 
 El plan inicial (de Gemini) preveía una tabla `media` con las series y películas. No llegó a existir: el catálogo se calcula en memoria a partir de los mensajes guardados (D-020), así que una mejora del parser se aplica sin migraciones. Los motivos de cada decisión están en [DECISIONS.md](DECISIONS.md) y el plan, en [ROADMAP.md](ROADMAP.md).
 
@@ -30,6 +30,10 @@ El catálogo distingue dos tipos de canal, que detecta solo por los nombres de s
   - Solo en ellos se aplican sus reglas: temporadas de la ficha, «Final Season», y extras y arcos unidos a la serie del tema.
   - Sus obras no se mezclan con las de otros canales, así que añadir un canal de anime no cambia el resto del catálogo.
 
+**La misma obra en varios canales** (D-048): el catálogo calcula las obras de cada canal por separado y TMDB dice cuáles son la misma (*Boku no Hero Academia* en CrunchyShur y *My Hero Academia* en *Las Cositas*). La web las muestra como una sola, y en su ficha se elige de qué canal ver los archivos. Cada una conserva su numeración, sus archivos y su seguimiento; lo que se descarga de cualquiera va a la misma carpeta de la biblioteca, porque la carpeta lleva el identificador de TMDB.
+- Para reconocer una obra, `MetadataService` compara sus títulos con el nombre del resultado de TMDB (también con las mismas palabras en otro orden) y, si ninguno encaja, con los títulos alternativos de los tres primeros resultados (el romaji, por ejemplo).
+- No valen los de una temporada, un arco o un especial. En los canales de anime, tampoco los de una secuela (*Full Metal Panic! The Second Raid*) ni los que no dicen que son el nombre de la obra entera: un arco publicado como serie aparte acabaría en la temporada 1 de la serie.
+
 ## Hilos
 
 | Hilo | Qué hace | Cuándo trabaja |
@@ -38,7 +42,7 @@ El catálogo distingue dos tipos de canal, que detecta solo por los nombres de s
 | `SignalWatcher` | Espera SIGINT/SIGTERM con `sigwait` y detiene el servidor (D-010) | Al parar |
 | `TelegramClient` | Único `td_receive`: entrega cada respuesta a su petición (`@extra`) y reparte las actualizaciones (D-009) | Siempre |
 | `ChannelSync` | Historial de los canales vigilados y mensajes nuevos: ronda completa cada 15 min y sincronización rápida 20 s después de un `updateNewMessage` (D-015, D-036) | Con mensajes nuevos |
-| `MetadataService` | Busca en TMDB las obras nuevas del catálogo (D-029, D-030) | Cuando cambia el catálogo y cada 6 h |
+| `MetadataService` | Busca en TMDB las obras nuevas del catálogo (D-029, D-030). Si cambia el criterio, vuelve a buscarlas todas, mostrando mientras los datos anteriores (D-048) | Cuando cambia el catálogo y cada 6 h |
 | `DownloadManager` | Cola de descargas, de una en una; importa cada una a la biblioteca (D-031, D-034) | Con algo en cola |
 | `Tracker` | Revisa las obras seguidas y pone en cola lo nuevo o mejor (D-035) | Cuando cambia el catálogo; cada 5 min si hay algo a medio publicar |
 
@@ -90,7 +94,7 @@ El catálogo distingue dos tipos de canal, que detecta solo por los nombres de s
 | `channel_sync.cpp` | Historial y mensajes nuevos de los canales vigilados |
 | `media_parser.cpp` | Nombres de fichero y fichas: episodios, título, año, calidad, etiquetas, partes e idiomas |
 | `catalog.cpp` | Obras (`Item`) y archivos lógicos (`Release`) a partir de los mensajes; detecta los canales de anime (D-047) |
-| `tmdb_client.cpp`, `metadata.cpp` | Cliente de TMDB con caché y límite de peticiones; coincidencia de cada obra |
+| `tmdb_client.cpp`, `metadata.cpp` | Cliente de TMDB con caché y límite de peticiones; coincidencia de cada obra y obras que son la misma (`works::group`, D-048) |
 | `download_manager.cpp` | Cola de descargas, importación, sustitución de versiones e historial de descargas |
 | `library.cpp` | Descompresión, ffprobe, nombres para Jellyfin, vídeos de la biblioteca y borrado seguro |
 | `release_prober.cpp` | Calidad real de un archivo sin descargarlo entero |
@@ -100,11 +104,13 @@ El catálogo distingue dos tipos de canal, que detecta solo por los nombres de s
 | `db_manager.cpp` | SQLite |
 | `signal_watcher.cpp` | Parada ordenada |
 
-Las reglas de decisión (parser, catálogo, seguimiento, episodios que faltan, nombres, borrado seguro, novedades) son funciones puras o casi. Se prueban en `tests/parser_tests.cpp` con ejemplos reales de los canales (463 comprobaciones; D-022). `tools/catalog_dump.cpp` calcula el catálogo de una copia de la BD para comparar un cambio del parser obra por obra (D-047).
+Las reglas de decisión (parser, catálogo, seguimiento, episodios que faltan, nombres, borrado seguro, novedades) son funciones puras o casi. Se prueban en `tests/parser_tests.cpp` con ejemplos reales de los canales (494 comprobaciones; D-022). `tools/catalog_dump.cpp` calcula el catálogo de una copia de la BD para comparar un cambio del parser obra por obra (D-047) y, con `--tmdb`, la coincidencia de TMDB guardada y la del criterio actual (D-048).
 
 ## Web
 
 HTML, CSS y JavaScript sin dependencias ni compilación (D-016), servidos desde `web/`: un cambio se ve al recargar la página, sin reiniciar el servicio. Rutas con `#/…` (catálogo, ficha, descargas, actividad, canales, ajustes y estado) y sondeo periódico de la API.
+
+El catálogo muestra una tarjeta por obra, con las de varios canales juntas («En 2 canales»), y se puede filtrar por canal. La ficha de una de esas obras empieza con los canales donde está: cada uno lleva a su ficha (D-048).
 
 Pensada también para el móvil (D-046):
 - Hasta 640 px de ancho, las pestañas forman una rejilla de 3×2 y las tablas de episodios y versiones se convierten en bloques.
