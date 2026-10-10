@@ -1,6 +1,6 @@
 # Hoja de ruta de Telegarrm
 
-*Estado al 10/10/2026: Fases 1 a 4.1 completadas; canales de anime (D-047), obras agrupadas por TMDB (D-048) y temporadas con ficha propia (D-049).*
+*Estado al 10/10/2026: Fases 1 a 4.1 completadas; canales de anime (D-047), obras agrupadas por TMDB (D-048), temporadas con ficha propia (D-049) y películas con otro nombre en TMDB (D-050).*
 
 Documento vivo con el plan de implementación; los motivos de cada decisión están en [DECISIONS.md](DECISIONS.md) y cómo está construido, en [01_architecture_and_phases.md](01_architecture_and_phases.md). Lo mantiene Claude Code (desarrollo y plan técnico); Gemini revisa el código y la documentación; Plácido decide prioridades y valida en uso real.
 
@@ -85,6 +85,8 @@ Formato real visto: canales de una serie con una ficha (foto + pie con título, 
 - [x] Catálogo con una tarjeta por obra (las de la misma ficha de TMDB, juntas), filtro por canal y, en la ficha, los canales donde está.
 - [x] Temporadas y arcos con ficha propia que continúan la numeración de su serie, unidos a ella (D-049): *Kimetsu no Yaiba* con sus 4 temporadas en los dos canales, *Miracle Workers*, *Shingeki no Kyojin*…
 - [ ] Los arcos que vuelven a empezar en la temporada 1 sin decir la temporada siguen siendo obras aparte (*Full Metal Panic! The Second Raid*).
+- [x] Películas que TMDB llama de otra forma: sin «Movie»/«Película», sin la saga de delante o con el título del archivo (D-050). *Tren infinito* sale una vez.
+- [ ] Títulos ambiguos sin año (*Bottle Rock*: TMDB tiene el corto de 1994 y la película de 1996 con el mismo título original).
 - [ ] Si cambia la ficha de TMDB de una obra ya descargada, su carpeta de la biblioteca no se mueve sola.
 - [ ] Datos de TMDB mal puestos que juntan obras distintas: *La conquista del planeta de los simios* y *Batalla por el planeta de los simios* salen juntas, y *Ranma ½* de 2024 (CrunchyShur) comparte datos con la de 1989 (*Las Cositas*).
 
@@ -112,4 +114,4 @@ Por decidir con Plácido; ninguno está empezado.
 - Renombrar los archivos de la biblioteca cuya etiqueta de calidad no coincide con el vídeo (importados antes de D-039).
 
 ### Hecho de lo transversal
-- [x] Tests (`ctest`) del parser, el catálogo, la BD, la biblioteca, el seguimiento y TMDB: 505 comprobaciones, algunas con vídeos y comprimidos reales generados con ffmpeg y 7-Zip.
+- [x] Tests (`ctest`) del parser, el catálogo, la BD, la biblioteca, el seguimiento y TMDB: 523 comprobaciones, algunas con vídeos y comprimidos reales generados con ffmpeg y 7-Zip.

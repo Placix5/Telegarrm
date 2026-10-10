@@ -1815,6 +1815,60 @@ void testTmdbMatching() {
               R"({"id":1311031,"title":"Guardianes de la noche: Kimetsu no Yaiba La fortaleza infinita","release_date":"2025-07-18"})");
         info = metadata.resolve(work("movie", "Kimetsu no Yaiba: Guardianes de la Noche - La fortaleza infinita", false));
         CHECK(info && info->providerId == 1311031);
+
+        // D-050: "Movie" no cuenta ("Kimetsu no Yaiba Movie: Mugen Ressha-hen" es su romaji)
+        const std::string trenInfinito =
+            R"({"id":635302,"title":"Guardianes de la Noche: Tren infinito","original_title":"劇場版「鬼滅の刃」無限列車編","release_date":"2020-10-16"})";
+        cache("/3/search/movie?include_adult=false&language=es-ES&query=Kimetsu+no+Yaiba+Movie:+Mugen+Ressha-hen&year=2020",
+              R"({"results":[)" + trenInfinito + "]}");
+        cache("/3/search/movie?include_adult=false&language=es-ES&query=Kimetsu+no+Yaiba+Movie:+Mugen+Ressha-hen",
+              R"({"results":[)" + trenInfinito + "]}");
+        cache("/3/movie/635302/alternative_titles?language=es-ES",
+              R"({"titles":[{"iso_3166_1":"MX","title":"Kimetsu no Yaiba: Tren infinito","type":""},
+                            {"iso_3166_1":"JP","title":"Kimetsu no Yaiba: Mugen Ressha-hen","type":"Romaji"}]})");
+        cache("/3/movie/635302?append_to_response=external_ids&language=es-ES", trenInfinito);
+        Catalog::Item mugen = work("movie", "Kimetsu no Yaiba Movie: Mugen Ressha-hen", true);
+        mugen.year = 2020;
+        info = metadata.resolve(mugen);
+        CHECK(info && info->providerId == 635302);
+
+        // Sin la saga de delante, si algún título del resultado lleva la saga ("Kimetsu no Yaiba: Tren infinito")
+        cache("/3/search/movie?include_adult=false&language=es-ES&query=Kimetsu+no+Yaiba:+Guardianes+de+la+Noche+-+Tren+Infinito",
+              R"({"results":[)" + trenInfinito + "]}");
+        info = metadata.resolve(work("movie", "Kimetsu no Yaiba: Guardianes de la Noche - Tren Infinito", false));
+        CHECK(info && info->providerId == 635302);
+        // ...pero "De entre los muertos" no es Vértigo
+        cache("/3/search/movie?include_adult=false&language=es-ES&query=Pu%C3%B1ales+por+la+espalda:+De+entre+los+muertos",
+              R"json({"results":[{"id":426,"title":"Vértigo (De entre los muertos)","original_title":"Vertigo","release_date":"1958-05-09"}]})json");
+        cache("/3/movie/426/alternative_titles?language=es-ES",
+              R"({"titles":[{"iso_3166_1":"ES","title":"De entre los muertos","type":""}]})");
+        info = metadata.resolve(work("movie", "Puñales por la espalda: De entre los muertos", false));
+        CHECK(info && info->mediaType.empty());
+
+        // Una coincidencia aproximada necesita el mismo año: el especial de 2023 no es la película de 2022
+        const std::string quintillizas =
+            R"({"results":[{"id":820067,"title":"Las Quintillizas: La Película","original_title":"映画 五等分の花嫁","release_date":"2022-05-20"}]})";
+        cache("/3/search/movie?include_adult=false&language=es-ES&query=5-toubun+no+Hanayome&year=2023", quintillizas);
+        cache("/3/search/movie?include_adult=false&language=es-ES&query=5-toubun+no+Hanayome", quintillizas);
+        cache("/3/movie/820067/alternative_titles?language=es-ES",
+              R"({"titles":[{"iso_3166_1":"JP","title":"5-toubun no Hanayome Movie","type":""}]})");
+        Catalog::Item special = work("movie", "5-toubun no Hanayome", true);
+        special.year = 2023;
+        info = metadata.resolve(special);
+        CHECK(info && info->mediaType.empty());
+
+        // Con una errata en la ficha ("Millenium"), el título del archivo
+        cache("/3/search/movie?include_adult=false&language=es-ES&query=Millenium:+Los+hombres+que+no+amaban+a+las+mujeres",
+              R"({"results":[{"id":15472,"title":"Millennium 1: Los hombres que no amaban a las mujeres","original_title":"Män som hatar kvinnor","release_date":"2009-02-27"}]})");
+        cache("/3/search/movie?include_adult=false&language=es-ES&query=Millennium+Los+hombres+que+no+amaban+a+las+mujeres",
+              R"({"results":[{"id":65754,"title":"Millennium: Los hombres que no amaban a las mujeres","original_title":"The Girl with the Dragon Tattoo","release_date":"2011-12-14"}]})");
+        cache("/3/movie/65754?append_to_response=external_ids&language=es-ES",
+              R"({"id":65754,"title":"Millennium: Los hombres que no amaban a las mujeres","release_date":"2011-12-14"})");
+        Catalog::Item millennium = work("movie", "Millenium: Los hombres que no amaban a las mujeres", false);
+        millennium.releases.emplace_back();
+        millennium.releases.back().name = "Millennium_Los_hombres_que_no_amaban_a_las_mujeres_1080p_zip";
+        info = metadata.resolve(millennium);
+        CHECK(info && info->providerId == 65754);
     }
     fs::remove_all(base);
 }

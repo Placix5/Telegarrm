@@ -154,6 +154,10 @@ Ejemplo de `/api/status`:
 Los pasos del inicio de sesión responden `{"ok": true}`, o `{"error": "..."}` con HTTP 400 (dato incorrecto, ej. `PHONE_CODE_INVALID`), 409 (Telegram no espera ese dato ahora) o 504 (Telegram no responde).
 
 ## Historial de cambios
+### Películas con otro nombre en TMDB
+- TMDB reconoce una película aunque la ficha lleve la saga delante («Kimetsu no Yaiba: Guardianes de la Noche - Tren Infinito»), diga «Movie» o «Película», o tenga una errata que el nombre del archivo no tiene (D-050). *Tren infinito* sale una sola vez, con las fichas de los dos canales.
+- *Las Cositas*: 21 películas más reconocidas en TMDB, sin cambiar ni perder ninguna. Tests: 523 comprobaciones.
+
 ### Temporadas con ficha propia
 - Una ficha de temporada o de arco con su propio título («Kimetsu no Yaiba: Guardianes de la Noche - Arco de la aldea de los herreros») se une a su serie si continúa su numeración (D-049). *Kimetsu no Yaiba* sale con sus 4 temporadas en *Las Cositas* y en CrunchyShur, y como una sola obra.
 - En los canales de anime, los arcos que vuelven a empezar en el 01 dentro de una temporada se numeran a continuación, como en TMDB, y se lee `Serie S3 - Arco - 01`.

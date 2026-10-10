@@ -55,6 +55,7 @@ Formato: **Contexto** (qué problema había), **Decisión**, **Alternativas desc
 | [D-047](#d-047-canales-de-anime-crunchyshur) | Canales de anime (CrunchyShur) | Vigente |
 | [D-048](#d-048-la-misma-obra-en-varios-canales) | La misma obra en varios canales | Vigente |
 | [D-049](#d-049-temporadas-y-arcos-con-ficha-propia) | Temporadas y arcos con ficha propia | Vigente |
+| [D-050](#d-050-películas-con-otro-nombre-en-tmdb) | Películas con otro nombre en TMDB | Vigente |
 
 ---
 
@@ -759,4 +760,21 @@ Formato: **Contexto** (qué problema había), **Decisión**, **Alternativas desc
   - Con *Kimetsu no Yaiba* reconocida en TMDB en los dos canales, D-048 las muestra como una sola obra.
   - Tests: 505 comprobaciones.
 - **Consecuencias**: un arco que vuelva a empezar en la temporada 1 sin decir la temporada sigue siendo obra aparte, igual que un spin-off.
+
+## D-050: Películas con otro nombre en TMDB
+*10/10/2026*
+
+- **Contexto**: la película de *Kimetsu no Yaiba: Tren infinito* salía dos veces. TMDB no reconocía ninguna de las dos fichas, así que D-048 no podía juntarlas:
+  - *Las Cositas*: «Kimetsu no Yaiba: Guardianes de la Noche - Tren Infinito». En TMDB es «Guardianes de la Noche: Tren infinito», sin la saga delante. Un título contenido en otro vale 50 puntos y, sin año en la ficha, no llega a 80.
+  - CrunchyShur: «Kimetsu no Yaiba Movie: Mugen Ressha-hen». TMDB tiene el romaji «Kimetsu no Yaiba: Mugen Ressha-hen», sin «Movie».
+- **Decisión** (criterio de TMDB 5, solo en películas):
+  - **Palabras de película**: «Movie», «Película», «Film» y «Gekijouban» no cuentan al comparar las palabras de dos títulos.
+  - **Sin la saga de delante**: también vale el título sin lo que va antes de «:» o de « - », si quedan al menos tres palabras («Guardianes de la Noche - Tren Infinito»). Pero solo si algún título del resultado de TMDB lleva esa saga: entre los de *Tren infinito* está «Kimetsu no Yaiba: Tren infinito». Sin esa condición, «Puñales por la espalda: De entre los muertos» era *Vértigo*, que en España fue «De entre los muertos».
+  - **Coincidencias aproximadas**: estas dos valen 90 puntos, no 100, para que un título entero igual gane siempre. Además, solo valen con el mismo año o si la ficha no lo dice: el especial *5-toubun no Hanayome* (2023) no es «5-toubun no Hanayome Movie» (2022).
+  - **Título del archivo**: si todos los archivos de una película se llaman igual, también se busca con ese nombre. Solo vale si coincide entero, no si uno contiene al otro. Así se reconoce una ficha con una errata: «Millenium: Los hombres que no amaban a las mujeres», cuyo archivo es «Millennium_Los_hombres_que_no_amaban_a_las_mujeres», es la de 2011 y no la sueca de 2009.
+- **Verificación** (`telegarrm_catalog_dump --tmdb` sobre una copia de la BD):
+  - *Las Cositas*: 21 películas nuevas reconocidas, ninguna cambia y ninguna se pierde. Entre ellas, *Tren infinito*, las de *Star Wars* con número romano («Star Wars V: El Imperio Contraataca»), *Nimh* (con errata en la ficha), *Super Mario Bros.* (1993) y *Wolf Children*.
+  - CrunchyShur: 3 nuevas (*Mugen Ressha-hen*, *Spy x Family Code: White*, *Fate/stay night: Heaven's Feel I*).
+  - Tests: 523 comprobaciones, con búsquedas de TMDB sacadas de la caché: *Mugen Ressha-hen*, *Tren infinito*, *Vértigo*, las *Quintillizas* y *Millenium*.
+- **Consecuencias**: dos fichas de *Las Cositas* sin año siguen siendo ambiguas, porque TMDB tiene otra obra con el mismo título original: *Bottle Rock* cae en el corto de 1994 y no en la película de 1996, y *El elefante* puede no ser el que es. Pasaba igual con cualquier título sin año.
 

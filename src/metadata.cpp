@@ -39,7 +39,8 @@ constexpr std::size_t kProgressEvery = 100;
 // caché de TMDB casi no cuesta) y, mientras, se siguen mostrando los datos anteriores. 2: penalización
 // leve del año en series. 3: mismas palabras en otro orden y títulos alternativos de TMDB (D-048).
 // 4: series unidas con sus continuaciones (D-049), para traer los episodios de sus temporadas nuevas.
-constexpr int kMatcherVersion = 4;
+// 5: películas sin "Movie"/"Película", sin la saga de delante y con el título del archivo (D-050).
+constexpr int kMatcherVersion = 5;
 constexpr const char* kMatcherVersionSetting = "tmdb_matcher_version";
 constexpr const char* kMatcherChangedSetting = "tmdb_matcher_changed_at";
 
@@ -76,13 +77,16 @@ bool keysContain(const std::string& a, const std::string& b) {
     return a.find(b) != std::string::npos || b.find(a) != std::string::npos;
 }
 
-// Palabras de un título, normalizadas y ordenadas: "Mugenjou-hen" -> "hen", "mugenjou"
-std::vector<std::string> titleWords(const std::string& title) {
+// Palabras de un título, normalizadas y ordenadas: "Mugenjou-hen" -> "hen", "mugenjou". Con
+// withoutMovieWords, sin las que solo dicen que es una película: "Kimetsu no Yaiba Movie: Mugen
+// Ressha-hen" tiene entonces las mismas que "Kimetsu no Yaiba: Mugen Ressha-hen" (D-050)
+std::vector<std::string> titleWords(const std::string& title, bool withoutMovieWords) {
+    static const std::set<std::string> kMovieWords = {"movie", "pelicula", "film", "gekijouban", "gekijoban"};
     std::vector<std::string> words;
     std::string word;
-    const auto flush = [&words, &word] {
+    const auto flush = [&words, &word, withoutMovieWords] {
         std::string key = media::titleKey(word);
-        if (!key.empty()) {
+        if (!key.empty() && !(withoutMovieWords && kMovieWords.count(key))) {
             words.push_back(std::move(key));
         }
         word.clear();
@@ -100,40 +104,122 @@ std::vector<std::string> titleWords(const std::string& title) {
     return words;
 }
 
-// Títulos de una obra (el principal y los alternativos) con su clave y sus palabras
+// Puntos de una coincidencia aproximada (D-050): sin "Movie"/"Película" o sin la saga de delante.
+// Solo vale con el mismo año, o si la ficha no lo dice.
+constexpr int kApproximate = 90;
+
+// Títulos de una obra con su clave y sus palabras: el principal y los alternativos (con los que se
+// busca), las películas sin la saga de delante y su título según el nombre del archivo
 struct ItemTitle {
+    std::string text;
     std::string key;
     std::vector<std::string> words;
+    std::vector<std::string> plainWords;  // Películas: sin "Movie", "Película"...
     // Junta dos cosas ("Chicken Run: Amanecer de los Nuggets + Así se hizo"): sus palabras en otro orden
     // son otra obra ("Así se hizo 'Chicken Run: Amanecer de los nuggets'")
     bool combined = false;
+    bool movie = false;
+    int exact = 100;        // Puntos si encaja: kApproximate si es el título sin la saga de delante
+    bool fromFile = false;  // Del nombre del archivo: solo vale entero, no contenido
+    // Sin la saga de delante: la saga ("kimetsunoyaiba"), que algún título del resultado debe llevar
+    std::string prefixKey;
 };
 
-ItemTitle makeTitle(const std::string& title) {
-    return {media::titleKey(title), titleWords(title), title.find(" + ") != std::string::npos};
+ItemTitle makeTitle(const std::string& title, bool movie, int exact = 100, bool fromFile = false,
+                    std::string prefixKey = "") {
+    return {title,  media::titleKey(title),
+            titleWords(title, false), movie ? titleWords(title, true) : std::vector<std::string>{},
+            title.find(" + ") != std::string::npos, movie, exact, fromFile, std::move(prefixKey)};
+}
+
+// Título de una película según el nombre de su archivo: "Millennium_Los_hombres_que_no_amaban_a_las_
+// mujeres_1080p_zip" -> "Millennium Los hombres que no amaban a las mujeres". Sirve si la ficha tiene
+// una errata ("Millenium").
+std::string fileTitle(const std::string& name) {
+    static const std::regex kArchive(R"(\s+(?:zip|rar|7z|part\s*\d+|\d{3})\s*$)", std::regex::ECMAScript | std::regex::icase);
+    std::string title = media::cleanTitle(name);
+    std::string previous;
+    while (previous != title) {
+        previous = title;
+        title = std::regex_replace(title, kArchive, "");
+    }
+    return title;
 }
 
 std::vector<ItemTitle> itemTitles(const Catalog::Item& item) {
-    std::vector<ItemTitle> titles = {makeTitle(item.title)};
-    for (const std::string& alternate : item.alternateTitles) {
-        titles.push_back(makeTitle(alternate));
+    const bool movie = item.kind == "movie";
+    std::vector<std::string> names = {item.title};
+    names.insert(names.end(), item.alternateTitles.begin(), item.alternateTitles.end());
+    std::vector<ItemTitle> titles;
+    std::set<std::string> keys;
+    for (const std::string& name : names) {
+        titles.push_back(makeTitle(name, movie));
+        keys.insert(titles.back().key);
+    }
+    if (!movie) {
+        return titles;
+    }
+    // Películas: también sin la saga de delante, si quedan al menos tres palabras y algún título del
+    // resultado lleva la saga. TMDB llama "Guardianes de la Noche: Tren infinito" a "Kimetsu no Yaiba:
+    // Guardianes de la Noche - Tren Infinito", y entre sus títulos está "Kimetsu no Yaiba: Tren
+    // infinito"; "Puñales por la espalda: De entre los muertos" no es Vértigo, que en España fue
+    // "De entre los muertos" (D-050). Vale algo menos que el título entero, que gana si también está.
+    static const std::regex kSeparator(R"(:|\s(?:-|–)\s)");
+    for (const std::string& name : names) {
+        for (auto it = std::sregex_iterator(name.begin(), name.end(), kSeparator); it != std::sregex_iterator(); ++it) {
+            const std::string rest = name.substr(static_cast<std::size_t>(it->position(0) + it->length(0)));
+            const std::string prefix = media::titleKey(name.substr(0, static_cast<std::size_t>(it->position(0))));
+            ItemTitle title = makeTitle(rest, movie, kApproximate, false, prefix);
+            if (title.words.size() >= 3 && prefix.size() >= 4 && !keys.count(title.key)) {
+                titles.push_back(std::move(title));
+            }
+        }
+    }
+    // Y el título del archivo, si todos los archivos dicen el mismo ("Toy Story Toons - Cortos" son
+    // varios cortos, cada uno con su nombre)
+    std::set<std::string> fileKeys;
+    std::string fileName;
+    for (const Catalog::Release& release : item.releases) {
+        const std::string name = fileTitle(release.name);
+        if (fileKeys.insert(media::titleKey(name)).second) {
+            fileName = name;
+        }
+    }
+    if (fileKeys.size() == 1) {
+        ItemTitle title = makeTitle(fileName, movie, 100, true);
+        if (title.words.size() >= 2 && !keys.count(title.key)) {
+            titles.push_back(std::move(title));
+        }
     }
     return titles;
 }
 
-// Cómo encaja un título de TMDB con los de la obra: 100 si es el mismo o tiene las mismas palabras
-// en otro orden (al menos tres: "Guardianes de la noche: Kimetsu no Yaiba La fortaleza infinita");
-// 50 si uno contiene al otro (solo con withContains)
-int titlePoints(const std::vector<ItemTitle>& titles, const std::string& candidate, bool withContains) {
+// Cómo encaja un título de TMDB con los de la obra:
+// - 100 si es el mismo o tiene las mismas palabras en otro orden (al menos tres: "Guardianes de la
+//   noche: Kimetsu no Yaiba La fortaleza infinita").
+// - kApproximate (90) si encaja sin la saga de delante o, en películas, sin "Movie", "Película"...
+// - 50 si uno contiene al otro (solo con withContains y con los títulos de las fichas).
+// candidateKeys: claves de todos los títulos conocidos del resultado, para las coincidencias sin la saga.
+int titlePoints(const std::vector<ItemTitle>& titles, const std::string& candidate, bool withContains,
+                const std::vector<std::string>& candidateKeys) {
+    const bool movie = !titles.empty() && titles.front().movie;
     const std::string key = media::titleKey(candidate);
-    const std::vector<std::string> words = titleWords(candidate);
+    const std::vector<std::string> words = titleWords(candidate, false);
+    const std::vector<std::string> plainWords = movie ? titleWords(candidate, true) : std::vector<std::string>{};
     int points = 0;
     for (const ItemTitle& title : titles) {
-        if (keysMatch(title.key, key) || (title.words.size() >= 3 && !title.combined && title.words == words)) {
-            return 100;
+        if (!title.prefixKey.empty() &&
+            std::none_of(candidateKeys.begin(), candidateKeys.end(), [&title](const std::string& known) {
+                return known.find(title.prefixKey) != std::string::npos;
+            })) {
+            continue;
         }
-        if (withContains && keysContain(title.key, key)) {
-            points = 50;
+        if (keysMatch(title.key, key) || (title.words.size() >= 3 && !title.combined && title.words == words)) {
+            points = std::max(points, title.exact);
+        } else if (movie && title.plainWords.size() >= 3 && !title.combined && title.plainWords == plainWords) {
+            points = std::max(points, std::min(title.exact, kApproximate));
+        } else if (withContains && title.exact == 100 && !title.fromFile && keysContain(title.key, key)) {
+            points = std::max(points, 50);
         }
     }
     return points;
@@ -151,13 +237,25 @@ int yearPoints(const Json& result, const Catalog::Item& item, bool series) {
     return difference == 0 ? 30 : difference == 1 ? 15 : (series ? -10 : -40);
 }
 
+// Puntos del título más los del año. Una coincidencia aproximada solo vale con el mismo año o sin año
+// en la ficha: "5-toubun no Hanayome" (2023) no es "5-toubun no Hanayome Movie" (2022).
+int withYear(int titlePoints, const Json& result, const Catalog::Item& item, bool series) {
+    const int year = yearPoints(result, item, series);
+    if (titlePoints == kApproximate && year != 0 && year != 30) {
+        return 0;
+    }
+    return titlePoints + year;
+}
+
 // Puntuación de un resultado de búsqueda: su título en castellano u original (titlePoints) más el año.
 // Se acepta desde kMinScore: título exacto, o título contenido con el mismo año. Mejor sin datos que
 // con los de otra obra.
 int score(const Json& result, const std::vector<ItemTitle>& titles, const Catalog::Item& item, bool series) {
-    const int points = std::max(titlePoints(titles, text(result, series ? "name" : "title"), true),
-                                titlePoints(titles, text(result, series ? "original_name" : "original_title"), true));
-    return points + yearPoints(result, item, series);
+    const std::string local = text(result, series ? "name" : "title");
+    const std::string original = text(result, series ? "original_name" : "original_title");
+    const std::vector<std::string> known = {media::titleKey(local), media::titleKey(original)};
+    const int points = std::max(titlePoints(titles, local, true, known), titlePoints(titles, original, true, known));
+    return withYear(points, result, item, series);
 }
 
 // ¿Un título alternativo de TMDB es otro nombre de la obra entera? Los de una temporada, un arco o un
@@ -426,9 +524,14 @@ std::optional<MetadataService::Info> MetadataService::resolve(const Catalog::Ite
 
     // 2) Búsqueda por título y títulos alternativos, con el año si se conoce
     if (details.is_null()) {
-        std::vector<std::string> titles = {item.title};
-        titles.insert(titles.end(), item.alternateTitles.begin(), item.alternateTitles.end());
         const std::vector<ItemTitle> keys = itemTitles(item);
+        // Se busca con los títulos enteros: el de la ficha, los alternativos y, en películas, el del archivo
+        std::vector<std::string> titles;
+        for (const ItemTitle& title : keys) {
+            if (title.exact == 100) {
+                titles.push_back(title.text);
+            }
+        }
         std::int64_t bestId = 0;
         int bestScore = 0;
         const int perfectScore = 100 + (item.year ? 30 : 0);  // Título y año exactos
@@ -468,7 +571,8 @@ std::optional<MetadataService::Info> MetadataService::resolve(const Catalog::Ite
         }
         // Ningún nombre encaja: los otros títulos de los primeros resultados ("Boku no Hero Academia"
         // es el romaji de "My Hero Academia"; TMDB lo encuentra, pero no lo dice en el resultado).
-        // Solo cuentan los títulos iguales, no los contenidos.
+        // Solo cuentan los títulos iguales, no los contenidos. Con todos sus títulos a mano, también
+        // vale su nombre sin la saga de delante, si alguno lleva la saga (D-050).
         for (std::size_t i = 0; bestScore < kMinScore && i < candidates.size() && i < kAlternativeCandidates; ++i) {
             const std::int64_t id = number(candidates[i], "id");
             const auto response = tmdb_.get("/" + type + "/" + std::to_string(id) + "/alternative_titles", {},
@@ -478,10 +582,22 @@ std::optional<MetadataService::Info> MetadataService::resolve(const Catalog::Ite
             }
             // Películas: "titles"; series: "results"
             const Json list = response->body.value(series ? "results" : "titles", Json::array());
+            std::vector<std::string> names = {text(candidates[i], series ? "name" : "title"),
+                                              text(candidates[i], series ? "original_name" : "original_title")};
+            std::vector<std::string> known;
             for (const Json& alternative : list) {
-                if (wholeWorkTitle(alternative, candidates[i], item, series) &&
-                    titlePoints(keys, text(alternative, "title"), false) == 100) {
-                    const int points = 100 + yearPoints(candidates[i], item, series);
+                known.push_back(media::titleKey(text(alternative, "title")));
+                if (wholeWorkTitle(alternative, candidates[i], item, series)) {
+                    names.push_back(text(alternative, "title"));
+                }
+            }
+            for (const std::string& name : names) {
+                known.push_back(media::titleKey(name));
+            }
+            for (const std::string& name : names) {
+                const int matched = titlePoints(keys, name, false, known);
+                if (matched >= kApproximate) {
+                    const int points = withYear(matched, candidates[i], item, series);
                     if (points > bestScore) {
                         bestScore = points;
                         bestId = id;

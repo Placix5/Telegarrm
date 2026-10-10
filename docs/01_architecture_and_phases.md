@@ -1,6 +1,6 @@
 # Arquitectura de Telegarrm
 
-*Actualizada el 10/10/2026: canales de anime (D-047), obras agrupadas por TMDB (D-048) y temporadas con ficha propia (D-049).*
+*Actualizada el 10/10/2026: canales de anime (D-047), obras agrupadas por TMDB (D-048), temporadas con ficha propia (D-049) y películas con otro nombre en TMDB (D-050).*
 
 El plan inicial (de Gemini) preveía una tabla `media` con las series y películas. No llegó a existir: el catálogo se calcula en memoria a partir de los mensajes guardados (D-020), así que una mejora del parser se aplica sin migraciones. Los motivos de cada decisión están en [DECISIONS.md](DECISIONS.md) y el plan, en [ROADMAP.md](ROADMAP.md).
 
@@ -34,6 +34,7 @@ El catálogo distingue dos tipos de canal, que detecta solo por los nombres de s
 
 **La misma obra en varios canales** (D-048): el catálogo calcula las obras de cada canal por separado y TMDB dice cuáles son la misma (*Boku no Hero Academia* en CrunchyShur y *My Hero Academia* en *Las Cositas*). La web las muestra como una sola, y en su ficha se elige de qué canal ver los archivos. Cada una conserva su numeración, sus archivos y su seguimiento; lo que se descarga de cualquiera va a la misma carpeta de la biblioteca, porque la carpeta lleva el identificador de TMDB.
 - Para reconocer una obra, `MetadataService` compara sus títulos con el nombre del resultado de TMDB (también con las mismas palabras en otro orden) y, si ninguno encaja, con los títulos alternativos de los tres primeros resultados (el romaji, por ejemplo).
+- En películas, además: sin «Movie»/«Película», sin la saga de delante (si algún título del resultado la lleva) y con el título del archivo (D-050). Las coincidencias aproximadas necesitan el mismo año.
 - No valen los de una temporada, un arco o un especial. En los canales de anime, tampoco los de una secuela (*Full Metal Panic! The Second Raid*) ni los que no dicen que son el nombre de la obra entera: un arco publicado como serie aparte acabaría en la temporada 1 de la serie.
 
 ## Hilos
@@ -106,7 +107,7 @@ El catálogo distingue dos tipos de canal, que detecta solo por los nombres de s
 | `db_manager.cpp` | SQLite |
 | `signal_watcher.cpp` | Parada ordenada |
 
-Las reglas de decisión (parser, catálogo, seguimiento, episodios que faltan, nombres, borrado seguro, novedades) son funciones puras o casi. Se prueban en `tests/parser_tests.cpp` con ejemplos reales de los canales (505 comprobaciones; D-022). `tools/catalog_dump.cpp` calcula el catálogo de una copia de la BD para comparar un cambio del parser obra por obra (D-047) y, con `--tmdb`, la coincidencia de TMDB guardada y la del criterio actual (D-048).
+Las reglas de decisión (parser, catálogo, seguimiento, episodios que faltan, nombres, borrado seguro, novedades) son funciones puras o casi. Se prueban en `tests/parser_tests.cpp` con ejemplos reales de los canales (523 comprobaciones; D-022). `tools/catalog_dump.cpp` calcula el catálogo de una copia de la BD para comparar un cambio del parser obra por obra (D-047) y, con `--tmdb`, la coincidencia de TMDB guardada y la del criterio actual (D-048).
 
 ## Web
 
