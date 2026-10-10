@@ -136,7 +136,8 @@ async function api(path, options = {}) {
 const normalize = (text) => (text || "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
 
 // ---------------------------------------------------------------------------
-// Navegación: #/catalogo, #/catalogo/<chat>/<ficha>, #/descargas, #/actividad, #/canales, #/ajustes, #/estado
+// Navegación: #/catalogo, #/catalogo/<chat>/<ficha>, #/descargas, #/biblioteca, #/actividad, #/canales,
+// #/ajustes, #/estado
 // ---------------------------------------------------------------------------
 
 let telegramReady = false;
@@ -146,6 +147,7 @@ function currentRoute() {
   const parts = location.hash.replace(/^#\/?/, "").split("/").filter(Boolean);
   if (parts[0] === "canales") return { view: "channels" };
   if (parts[0] === "descargas") return { view: "downloads" };
+  if (parts[0] === "biblioteca") return { view: "library" };
   if (parts[0] === "actividad") return { view: "activity" };
   if (parts[0] === "ajustes") return { view: "settings" };
   if (parts[0] === "estado") return { view: "status" };
@@ -159,7 +161,7 @@ function showRoute() {
   // Sin sesión de Telegram solo tiene sentido la pantalla de estado (inicio de sesión)
   if (!telegramReady && route.view !== "status") route = { view: "status" };
 
-  for (const view of ["catalog", "detail", "downloads", "activity", "channels", "settings", "status"]) {
+  for (const view of ["catalog", "detail", "downloads", "library", "activity", "channels", "settings", "status"]) {
     $(`view-${view}`).hidden = view !== route.view;
   }
   const navView = route.view === "detail" ? "catalog" : route.view;
@@ -172,6 +174,7 @@ function showRoute() {
   if (route.view === "catalog") loadCatalog();
   if (route.view === "detail") loadDetail(route.chatId, route.anchorId);
   if (route.view === "downloads") renderDownloads();
+  if (route.view === "library") loadLibrary();
   if (route.view === "activity") loadActivity();
   if (route.view === "settings") loadSettings();
   if (route.view === "channels") {
@@ -1328,6 +1331,198 @@ function renderSettings(data) {
   $("restart-notice").hidden = !data.restart_required;
 }
 
+// ---------------------------------------------------------------------------
+// Biblioteca (D-052): lo que hay en disco, con borrado controlado
+// ---------------------------------------------------------------------------
+
+let libraryData = null;
+const libraryOpen = new Map();  // "tipo/carpeta" desplegada -> sus archivos (null mientras cargan)
+
+const libraryKey = (kind, work) => `${kind}/${work.folder}`;
+const episodeCode = (file) => `${file.season}x${String(file.episode).padStart(2, "0")}` +
+  (file.episode_end ? `-${String(file.episode_end).padStart(2, "0")}` : "");
+
+async function loadLibrary() {
+  try {
+    libraryData = await api("/api/library");
+  } catch (e) {
+    $("library-summary").textContent = `No se pudo leer la biblioteca: ${e.message}`;
+    return;
+  }
+  renderLibrary();
+}
+
+function libraryWorkMeta(kind, work) {
+  const parts = [];
+  if (work.year) parts.push(work.year);
+  if (kind === "series") {
+    const episodes = work.seasons.reduce((sum, season) => sum + season.episodes, 0);
+    parts.push(plural(work.seasons.length, "temporada", "temporadas"), plural(episodes, "episodio", "episodios"));
+  } else {
+    parts.push(plural(work.videos, "vídeo", "vídeos"));
+  }
+  parts.push(formatSize(work.size));
+  return parts.join(" · ");
+}
+
+function renderLibrary() {
+  if (!libraryData) return;
+  const query = normalize($("library-search").value.trim());
+  const matches = (work) => !query || normalize(`${work.folder} ${work.item ? work.item.title : ""}`).includes(query);
+  let total = 0;
+  for (const [kind, listId, works, root] of [["series", "library-series", libraryData.series, libraryData.series_dir],
+    ["movie", "library-movies", libraryData.movies, libraryData.movies_dir]]) {
+    total += works.reduce((sum, work) => sum + work.size, 0);
+    const list = $(listId);
+    const visible = works.filter(matches);
+    if (!root) {
+      list.replaceChildren(el("li", "hint", "Sin carpeta: defínela en Ajustes."));
+      continue;
+    }
+    if (!visible.length) {
+      list.replaceChildren(el("li", "hint", works.length ? "Nada coincide con la búsqueda." : `Vacía (${root}).`));
+      continue;
+    }
+    list.replaceChildren(...visible.map((work) => libraryWorkElement(kind, work)));
+  }
+  $("library-summary").textContent = `${plural(libraryData.series.length, "serie", "series")} y ` +
+    `${plural(libraryData.movies.length, "película", "películas")} · ${formatSize(total)}`;
+}
+
+function libraryWorkElement(kind, work) {
+  const li = el("li", "library-work");
+  const head = el("div", "library-head");
+  const info = el("div", "library-info");
+  info.append(el("div", "library-title", work.folder), el("div", "hint", libraryWorkMeta(kind, work)));
+  const actions = el("div", "library-actions");
+  if (work.item) {
+    const link = el("a", "", "Ficha");
+    link.href = `#/catalogo/${work.item.chat_id}/${work.item.anchor_id}`;
+    actions.append(link);
+  }
+  const key = libraryKey(kind, work);
+  const toggle = el("button", "secondary small", libraryOpen.has(key) ? "Ocultar archivos" : "Archivos");
+  toggle.setAttribute("aria-expanded", libraryOpen.has(key) ? "true" : "false");
+  toggle.addEventListener("click", async () => {
+    if (libraryOpen.has(key)) {
+      libraryOpen.delete(key);
+      renderLibrary();
+      return;
+    }
+    libraryOpen.set(key, null);
+    renderLibrary();
+    try {
+      const data = await api(`/api/library/files?kind=${kind}&folder=${encodeURIComponent(work.folder)}`);
+      libraryOpen.set(key, data.files);
+    } catch (e) {
+      libraryOpen.delete(key);
+      toastError(e.message);
+    }
+    renderLibrary();
+  });
+  const remove = el("button", "danger small", kind === "series" ? "Borrar serie" : "Borrar película");
+  remove.addEventListener("click", () => deleteFromLibrary(kind, work, [""], {
+    title: `Borrar «${work.folder}»`,
+    text: `Se borra la carpeta entera de la biblioteca${kind === "series" ? ", con todas sus temporadas" : ""}.`,
+    facts: [["Archivos", formatNumber(work.files)], ["Tamaño", formatSize(work.size)]],
+  }));
+  actions.append(toggle, remove);
+  head.append(info, actions);
+  li.append(head);
+  if (libraryOpen.has(key)) li.append(libraryFilesElement(kind, work, libraryOpen.get(key)));
+  return li;
+}
+
+// Archivos de una obra, por temporadas (series) o en una lista (películas)
+function libraryFilesElement(kind, work, files) {
+  const box = el("div", "library-files");
+  if (files === null) {
+    box.append(el("p", "hint", "Cargando…"));
+    return box;
+  }
+  const groups = new Map();  // Temporada (o "otros") -> archivos
+  for (const file of files) {
+    const group = kind === "series" && file.season !== null ? file.season : "otros";
+    groups.set(group, [...(groups.get(group) || []), file]);
+  }
+  const ordered = [...groups.keys()].sort((a, b) => (a === "otros") - (b === "otros") || a - b);
+  for (const group of ordered) {
+    const groupFiles = groups.get(group);
+    const size = groupFiles.reduce((sum, file) => sum + file.size, 0);
+    if (kind === "series") {
+      const header = el("div", "library-season");
+      const name = group === "otros" ? "Otros archivos" : `Temporada ${group}`;
+      const episodes = new Set(groupFiles.filter((file) => file.video && file.episode).map(episodeCode)).size;
+      header.append(el("strong", "", name), el("span", "hint",
+        (group === "otros" ? plural(groupFiles.length, "archivo", "archivos") : plural(episodes, "episodio", "episodios")) +
+        ` · ${formatSize(size)}`));
+      const removeGroup = el("button", "danger small", group === "otros" ? "Borrar estos" : "Borrar temporada");
+      removeGroup.addEventListener("click", () => deleteFromLibrary(kind, work, groupFiles.map((file) => file.path), {
+        title: `Borrar ${group === "otros" ? "otros archivos" : `la temporada ${group}`} de «${work.folder}»`,
+        text: "Se borran sus archivos de la biblioteca (vídeos y subtítulos).",
+        facts: [["Archivos", formatNumber(groupFiles.length)], ["Tamaño", formatSize(size)]],
+      }));
+      header.append(removeGroup);
+      box.append(header);
+    }
+    const list = el("ul", "library-file-list");
+    for (const file of groupFiles) {
+      const row = el("li", "library-file");
+      const name = file.path.split("/").pop();
+      const label = [file.episode ? episodeCode(file) : null, file.quality ? qualityLabel(file.quality) : null,
+        formatSize(file.size)].filter(Boolean).join(" · ");
+      const text = el("div", "library-file-text");
+      text.append(el("span", file.video ? "" : "hint", name), el("span", "hint", label));
+      const removeFile = el("button", "secondary small", "Borrar");
+      removeFile.setAttribute("aria-label", `Borrar ${name}`);
+      removeFile.addEventListener("click", () => deleteFromLibrary(kind, work, [file.path], {
+        title: `Borrar ${file.video ? "este vídeo" : "este archivo"}`,
+        text: name,
+        facts: [["Tamaño", formatSize(file.size)]],
+      }));
+      row.append(text, removeFile);
+      list.append(row);
+    }
+    box.append(list);
+  }
+  return box;
+}
+
+// Confirma y borra (D-052). Lo que la aplicación descargó y ya no está pasa a «Borrada».
+async function deleteFromLibrary(kind, work, paths, { title, text, facts }) {
+  const notes = ["No se puede deshacer: no va a ninguna papelera."];
+  if (work.item && work.item.followed) {
+    notes.push("La sigues: lo que se publique a partir de ahora se seguirá descargando. Puedes dejar de seguirla en su ficha.");
+  }
+  const ok = await confirmDialog({
+    title, text: `${text} ${notes.join(" ")}`, facts, confirmText: "Borrar", danger: true,
+  });
+  if (!ok) return;
+  try {
+    const result = await api("/api/library/delete", {
+      method: "POST", body: JSON.stringify({ kind, folder: work.folder, paths }),
+    });
+    const extra = result.downloads ? ` ${plural(result.downloads, "descarga pasa", "descargas pasan")} a «Borrada».` : "";
+    showToast("Borrado de la biblioteca",
+      `${plural(result.files, "archivo", "archivos")}, ${formatSize(result.bytes)} liberados.${extra}`);
+  } catch (e) {
+    toastError(e.message);
+  }
+  if (paths.length === 1 && paths[0] === "") libraryOpen.delete(libraryKey(kind, work));
+  else if (libraryOpen.has(libraryKey(kind, work))) {
+    try {
+      const data = await api(`/api/library/files?kind=${kind}&folder=${encodeURIComponent(work.folder)}`);
+      libraryOpen.set(libraryKey(kind, work), data.files);
+    } catch (e) {
+      libraryOpen.delete(libraryKey(kind, work));  // Ya no queda nada en la carpeta
+    }
+  }
+  await loadLibrary();
+  refreshDownloads();
+}
+
+$("library-search").addEventListener("input", renderLibrary);
+
 // Revisar la biblioteca (D-051): lo borrado o movido a mano
 $("library-scan").addEventListener("click", async () => {
   const button = $("library-scan");
@@ -1351,6 +1546,7 @@ $("library-scan").addEventListener("click", async () => {
       status.append(list);
     }
     await refreshDownloads();
+    loadLibrary();
   } catch (e) {
     status.className = "field-status err";
     status.replaceChildren(el("span", "", `No se pudo revisar: ${e.message}`));

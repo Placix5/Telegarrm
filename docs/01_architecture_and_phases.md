@@ -1,6 +1,6 @@
 # Arquitectura de Telegarrm
 
-*Actualizada el 10/10/2026: canales de anime (D-047), obras agrupadas por TMDB (D-048), temporadas con ficha propia (D-049) películas con otro nombre en TMDB (D-050) y revisión de la biblioteca (D-051).*
+*Actualizada el 10/10/2026: canales de anime (D-047), obras agrupadas por TMDB (D-048), temporadas con ficha propia (D-049) películas con otro nombre en TMDB (D-050), revisión de la biblioteca (D-051) y pestaña «Biblioteca» (D-052).*
 
 El plan inicial (de Gemini) preveía una tabla `media` con las series y películas. No llegó a existir: el catálogo se calcula en memoria a partir de los mensajes guardados (D-020), así que una mejora del parser se aplica sin migraciones. Los motivos de cada decisión están en [DECISIONS.md](DECISIONS.md) y el plan, en [ROADMAP.md](ROADMAP.md).
 
@@ -98,8 +98,8 @@ El catálogo distingue dos tipos de canal, que detecta solo por los nombres de s
 | `media_parser.cpp` | Nombres de fichero y fichas: episodios, título, año, calidad, etiquetas, partes e idiomas |
 | `catalog.cpp` | Obras (`Item`) y archivos lógicos (`Release`) a partir de los mensajes; detecta los canales de anime (D-047) |
 | `tmdb_client.cpp`, `metadata.cpp` | Cliente de TMDB con caché y límite de peticiones; coincidencia de cada obra y obras que son la misma (`works::group`, D-048) |
-| `download_manager.cpp` | Cola de descargas, importación, sustitución de versiones, historial de descargas y revisión de la biblioteca (D-051) |
-| `library.cpp` | Descompresión, ffprobe, nombres para Jellyfin, vídeos de la biblioteca y borrado seguro |
+| `download_manager.cpp` | Cola de descargas, importación, sustitución de versiones, historial de descargas, revisión de la biblioteca (D-051) y borrado desde la web (D-052) |
+| `library.cpp` | Descompresión, ffprobe, nombres para Jellyfin, vídeos y contenido de la biblioteca (pestaña «Biblioteca», D-052) y borrado seguro |
 | `release_prober.cpp` | Calidad real de un archivo sin descargarlo entero |
 | `tracker.cpp` | Seguimiento: reglas puras (`tracking::`) y su hilo (`Tracker`) |
 | `settings.cpp` | Ajustes y comprobación de rutas |
@@ -107,16 +107,16 @@ El catálogo distingue dos tipos de canal, que detecta solo por los nombres de s
 | `db_manager.cpp` | SQLite |
 | `signal_watcher.cpp` | Parada ordenada |
 
-Las reglas de decisión (parser, catálogo, seguimiento, episodios que faltan, nombres, borrado seguro, novedades) son funciones puras o casi. Se prueban en `tests/parser_tests.cpp` con ejemplos reales de los canales (544 comprobaciones; D-022). `tools/catalog_dump.cpp` calcula el catálogo de una copia de la BD para comparar un cambio del parser obra por obra (D-047) y, con `--tmdb`, la coincidencia de TMDB guardada y la del criterio actual (D-048).
+Las reglas de decisión (parser, catálogo, seguimiento, episodios que faltan, nombres, borrado seguro, novedades) son funciones puras o casi. Se prueban en `tests/parser_tests.cpp` con ejemplos reales de los canales (569 comprobaciones; D-022). `tools/catalog_dump.cpp` calcula el catálogo de una copia de la BD para comparar un cambio del parser obra por obra (D-047) y, con `--tmdb`, la coincidencia de TMDB guardada y la del criterio actual (D-048).
 
 ## Web
 
-HTML, CSS y JavaScript sin dependencias ni compilación (D-016), servidos desde `web/`: un cambio se ve al recargar la página, sin reiniciar el servicio. Rutas con `#/…` (catálogo, ficha, descargas, actividad, canales, ajustes y estado) y sondeo periódico de la API.
+HTML, CSS y JavaScript sin dependencias ni compilación (D-016), servidos desde `web/`: un cambio se ve al recargar la página, sin reiniciar el servicio. Rutas con `#/…` (catálogo, ficha, descargas, biblioteca, actividad, canales, ajustes y estado) y sondeo periódico de la API.
 
 El catálogo muestra una tarjeta por obra, con las de varios canales juntas («En 2 canales»), y se puede filtrar por canal. La ficha de una de esas obras empieza con los canales donde está: cada uno lleva a su ficha (D-048).
 
 Pensada también para el móvil (D-046):
-- Hasta 640 px de ancho, las pestañas forman una rejilla de 3×2 y las tablas de episodios y versiones se convierten en bloques.
+- Hasta 640 px de ancho, las pestañas se reparten en filas (4 + 3 en un teléfono; D-052) y las tablas de episodios y versiones se convierten en bloques.
 - En pantallas táctiles, botones y selectores miden al menos 44 px.
 - Las confirmaciones son un `<dialog>` propio y los errores, avisos en la esquina (D-044).
 
@@ -132,5 +132,5 @@ Las novedades llegan a la web sin conexiones permanentes (D-043):
 - Sesión de TDLib con permisos `0700` (D-008).
 - Servicio aislado: solo escribe en `db/` y `/srv/media` (D-013).
 - Procesos externos sin shell (D-018).
-- Solo se borran ficheros de la biblioteca que la propia aplicación colocó o que son versiones anteriores de lo importado, nunca fuera de sus carpetas (D-037, D-041).
+- Solo se borran ficheros de la biblioteca que la propia aplicación colocó, versiones anteriores de lo importado o lo que se pide borrar desde la pestaña «Biblioteca», con confirmación; nunca fuera de sus carpetas, ni a través de enlaces (D-037, D-041, D-052).
 - La web aún no tiene autenticación ni HTTPS: solo para la red local (ver ROADMAP).

@@ -57,6 +57,7 @@ Formato: **Contexto** (qué problema había), **Decisión**, **Alternativas desc
 | [D-049](#d-049-temporadas-y-arcos-con-ficha-propia) | Temporadas y arcos con ficha propia | Vigente |
 | [D-050](#d-050-películas-con-otro-nombre-en-tmdb) | Películas con otro nombre en TMDB | Vigente |
 | [D-051](#d-051-revisar-la-biblioteca-y-archivos-repetidos) | Revisar la biblioteca y archivos repetidos | Vigente |
+| [D-052](#d-052-pestaña-biblioteca-y-borrado-desde-la-web) | Pestaña «Biblioteca» y borrado desde la web | Vigente |
 
 ---
 
@@ -788,7 +789,7 @@ Formato: **Contexto** (qué problema había), **Decisión**, **Alternativas desc
     - El canal vuelve a subir los mismos archivos: el 3x01 estaba tres veces, con el mismo nombre y el mismo tamaño en bytes.
     - Junto a cada episodio de las temporadas 1 y 2 hay un corto de dos minutos («[Otsalia] Maomao no Hitorigoto - 01», 23 MB). Su ficha («Especial de 24 episodios de 2 minutos») se unía a la serie del tema por la regla de arcos de D-047, y cada corto pasaba por otra versión del episodio.
 - **Decisión**:
-  - **«Revisar la biblioteca»** en *Ajustes* (`POST /api/library/scan`). Revisa cada descarga «En la biblioteca» cuyos archivos ya no están donde los dejó:
+  - **«Revisar la biblioteca»** en *Ajustes* (`POST /api/library/scan`; desde D-052, en la pestaña «Biblioteca»). Revisa cada descarga «En la biblioteca» cuyos archivos ya no están donde los dejó:
     - Busca el mismo nombre de archivo en la biblioteca (carpeta renombrada).
     - Si no, busca en la carpeta de su obra (por su identificador de TMDB) un vídeo del mismo episodio que no sea de otra descarga (archivo renombrado). En las películas, con su calidad si hay varios.
     - Si lo encuentra, apunta dónde está. Si no, la descarga pasa al estado nuevo `deleted`, «Borrada». Deja de contar como que se tiene, se puede volver a descargar, y queda en el historial. El seguimiento no la vuelve a pedir solo.
@@ -806,4 +807,34 @@ Formato: **Contexto** (qué problema había), **Decisión**, **Alternativas desc
   - *Los diarios de la boticaria* (CrunchyShur): un archivo por episodio en las temporadas 1 y 2, y los cortos en «Otros archivos».
   - Tests: 544 comprobaciones, con una biblioteca de prueba (una carpeta renombrada, una película renombrada y un archivo borrado).
 - **Consecuencias**: una descarga hecha desde una copia repetida, que ya no está en el catálogo, no se reconoce como de su obra (sí lo que hay en su carpeta, D-041). Hoy no hay ninguna.
+
+## D-052: Pestaña «Biblioteca» y borrado desde la web
+*10/10/2026*
+
+- **Contexto**: Plácido borra series desde el terminal (D-051) y pidió poder hacerlo desde la aplicación, «de forma controlada», en una pestaña nueva «Biblioteca». No espera borrar mucho.
+- **Decisión**:
+  - **Pestaña «Biblioteca»** (`#/biblioteca`). Lista lo que hay de verdad en las carpetas de series y películas (`GET /api/library`):
+    - Cada carpeta es una obra, con su tamaño, sus temporadas y episodios (según los nombres) y un enlace a su ficha del catálogo si su `[tmdbid-N]` coincide.
+    - Sus archivos se ven al desplegarla (`GET /api/library/files`), por temporada.
+    - Tiene un buscador. «Revisar la biblioteca» (D-051) pasa de *Ajustes* a esta pestaña.
+  - **Borrado** (`POST /api/library/delete`, con rutas relativas a la carpeta de la obra): una obra entera, una temporada o un archivo.
+    - Siempre con confirmación: qué se borra, cuántos archivos, cuánto ocupa y que no se puede deshacer. Si se sigue la obra, avisa de que lo nuevo se seguirá descargando.
+    - Después, las descargas que se han quedado sin archivos pasan a «Borrada» (D-051), y queda una entrada en el historial con lo borrado y el espacio liberado.
+  - **Seguridad**: la web solo da el nombre de la carpeta y rutas relativas, nunca rutas del disco.
+    - La carpeta debe estar directamente dentro de la biblioteca y no ser un enlace.
+    - Las rutas no pueden ser absolutas, llevar «..» ni salir de la obra por un enlace.
+    - Solo se borran archivos normales, con `removeFiles` (D-037), que vuelve a comprobar que cada uno está dentro de la biblioteca y quita las carpetas que se quedan vacías.
+    - El borrado usa el mismo cerrojo que las importaciones. No se hace mientras el catálogo se calcula al arrancar, porque después hay que revisar las descargas.
+  - **Pestañas en el móvil**: con siete, ya no caben en la rejilla de 3×2 de D-046. Pasan a filas que se reparten el ancho (4 + 3 en un teléfono).
+- **Alternativas descartadas**:
+  - **Borrar desde la ficha de cada obra del catálogo**: la ficha es la de un canal (D-048), y la biblioteca puede tener cosas que ya no están en ningún canal.
+  - **Mover a una papelera en lugar de borrar**: ocuparía el mismo espacio hasta vaciarla, y el motivo de borrar suele ser el espacio. Plácido no espera borrar mucho, y la confirmación avisa de que no se puede deshacer.
+- **Verificación**:
+  - Tests (569 comprobaciones) con una biblioteca de prueba:
+    - No se borra nada fuera de la biblioteca, ni con «..», ni con rutas absolutas, ni con enlaces.
+    - Se borra una temporada (con sus subtítulos y su carpeta) y la descarga pasa a «Borrada».
+    - Se borra una obra entera y una película.
+  - En la Pi, el endpoint rechaza las rutas peligrosas (404 o 400) sin tocar nada.
+  - La web, ejecutada en Node con la API real, lista las 5 series y las 2 películas con sus fichas, despliega los archivos y pide confirmación; al cancelar, no llama a la API.
+  - No se ha podido ver en Chrome (la extensión no estaba conectada): falta mirar el aspecto, sobre todo en el móvil.
 

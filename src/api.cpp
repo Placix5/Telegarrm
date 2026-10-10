@@ -11,6 +11,7 @@
 #include <optional>
 #include <set>
 #include <string>
+#include <tuple>
 
 #include <nlohmann/json.hpp>
 
@@ -19,6 +20,7 @@
 #include "db_manager.hpp"
 #include "download_manager.hpp"
 #include "httplib.h"
+#include "library.hpp"
 #include "media_parser.hpp"
 #include "metadata.hpp"
 #include "release_prober.hpp"
@@ -836,23 +838,6 @@ void registerDownloadRoutes(httplib::Server& server, DbManager& db, Catalog& cat
         db.deleteDownload(*id);
         sendJson(res, 200, {{"ok", true}});
     });
-
-    // Revisa la biblioteca (D-051): lo borrado o movido a mano desde fuera de Telegarrm
-    server.Post("/api/library/scan", [&db, &catalog, &downloads](const httplib::Request&, httplib::Response& res) {
-        // Lo renombrado se busca en la carpeta de su obra, que sale del catálogo: sin él se daría por borrado
-        for (const DbManager::Channel& channel : db.listChannels()) {
-            if (!catalog.hasChannel(channel.id)) {
-                sendError(res, 503, "El catálogo aún se está calculando. Prueba dentro de unos segundos.");
-                return;
-            }
-        }
-        const DownloadManager::LibraryScan scan = downloads.scanLibrary();
-        Json missing = Json::array();
-        for (const DbManager::Download& download : scan.missing) {
-            missing.push_back({{"id", download.id}, {"description", describeDownload(download)}});
-        }
-        sendJson(res, 200, {{"checked", scan.checked}, {"moved", scan.moved}, {"missing", missing}});
-    });
 }
 
 void registerChannelRoutes(httplib::Server& server, DbManager& db, TelegramClient& telegram, ChannelSync& sync,
@@ -1335,6 +1320,152 @@ void registerSettingsRoutes(httplib::Server& server, DbManager& db, const ApiSer
     });
 }
 
+// Biblioteca (D-051, D-052): lo que hay en disco, revisarla tras cambios a mano y borrar desde la web
+bool requireCatalogReady(DbManager& db, Catalog& catalog, httplib::Response& res) {
+    // Lo renombrado se busca en la carpeta de su obra, que sale del catálogo: sin él se daría por borrado
+    for (const DbManager::Channel& channel : db.listChannels()) {
+        if (!catalog.hasChannel(channel.id)) {
+            sendError(res, 503, "El catálogo aún se está calculando. Prueba dentro de unos segundos.");
+            return false;
+        }
+    }
+    return true;
+}
+
+Json libraryFileJson(const library::LibraryFile& file) {
+    return {{"path", file.path},
+            {"size", file.size},
+            {"video", file.video},
+            {"season", file.episode > 0 ? Json(file.season) : Json(nullptr)},
+            {"episode", file.episode > 0 ? Json(file.episode) : Json(nullptr)},
+            {"episode_end", file.episodeEnd > file.episode ? Json(file.episodeEnd) : Json(nullptr)},
+            {"quality", nullable(file.quality)}};
+}
+
+void registerLibraryRoutes(httplib::Server& server, DbManager& db, Catalog& catalog, MetadataService& metadata,
+                           DownloadManager& downloads) {
+    // Obras de las dos bibliotecas, con su ficha del catálogo si la tienen (por su identificador de TMDB)
+    server.Get("/api/library", [&db, &catalog, &metadata](const httplib::Request&, httplib::Response& res) {
+        const AppSettings settings = loadSettings(db);
+        const std::vector<Catalog::ItemPtr> items = catalog.items();
+        const FollowIndex follows = followIndex(db, items, metadata);
+        std::map<std::pair<std::string, std::int64_t>, Json> byTmdb;
+        for (const std::vector<Catalog::ItemPtr>& group : workGroups(db, items, metadata)) {
+            const InfoPtr info = metadata.lookup(*group.front());
+            if (!info || info->providerId <= 0) {
+                continue;
+            }
+            const bool followed = std::any_of(group.begin(), group.end(), [&follows](const Catalog::ItemPtr& item) {
+                return findFollow(follows, *item) != nullptr;
+            });
+            byTmdb.emplace(std::make_pair(info->mediaType, info->providerId),
+                           Json{{"chat_id", group.front()->chatId},
+                                {"anchor_id", group.front()->anchorMessageId},
+                                {"title", info->title.empty() ? group.front()->title : info->title},
+                                {"followed", followed}});
+        }
+        Json result = {{"series_dir", settings.seriesDir}, {"movies_dir", settings.moviesDir}};
+        for (const auto& [kind, root, type] : {std::make_tuple("series", settings.seriesDir, "tv"),
+                                               std::make_tuple("movie", settings.moviesDir, "movie")}) {
+            Json works = Json::array();
+            for (const library::LibraryWork& work : library::listLibrary(root)) {
+                std::map<int, std::set<int>> seasons;
+                std::map<int, std::int64_t> seasonSizes;
+                int videos = 0;
+                for (const library::LibraryFile& file : work.files) {
+                    videos += file.video ? 1 : 0;
+                    if (file.video && file.episode > 0) {
+                        for (int episode = file.episode; episode <= std::max(file.episode, file.episodeEnd); ++episode) {
+                            seasons[file.season].insert(episode);
+                        }
+                    }
+                    if (file.episode > 0) {
+                        seasonSizes[file.season] += file.size;
+                    }
+                }
+                Json seasonList = Json::array();
+                for (const auto& [season, episodes] : seasons) {
+                    seasonList.push_back({{"season", season}, {"episodes", episodes.size()}, {"size", seasonSizes[season]}});
+                }
+                const auto item = work.tmdbId > 0 ? byTmdb.find({type, work.tmdbId}) : byTmdb.end();
+                works.push_back({{"folder", work.folder},
+                                 {"title", work.title},
+                                 {"year", work.year ? Json(*work.year) : Json(nullptr)},
+                                 {"tmdb_id", work.tmdbId > 0 ? Json(work.tmdbId) : Json(nullptr)},
+                                 {"size", work.size},
+                                 {"files", work.files.size()},
+                                 {"videos", videos},
+                                 {"seasons", seasonList},
+                                 {"item", item != byTmdb.end() ? item->second : Json(nullptr)}});
+            }
+            result[std::string(kind) == "series" ? "series" : "movies"] = works;
+        }
+        sendJson(res, 200, result);
+    });
+
+    // Archivos de una obra: ?kind=series|movie&folder=...
+    server.Get("/api/library/files", [&db](const httplib::Request& req, httplib::Response& res) {
+        const AppSettings settings = loadSettings(db);
+        const std::string kind = req.get_param_value("kind");
+        const std::string root = kind == "series" ? settings.seriesDir : kind == "movie" ? settings.moviesDir : "";
+        const auto work = root.empty() ? std::nullopt : library::libraryWork(root, req.get_param_value("folder"));
+        if (!work) {
+            sendError(res, 404, "Esa carpeta no está en la biblioteca");
+            return;
+        }
+        Json files = Json::array();
+        for (const library::LibraryFile& file : work->files) {
+            files.push_back(libraryFileJson(file));
+        }
+        sendJson(res, 200, {{"folder", work->folder}, {"size", work->size}, {"files", files}});
+    });
+
+    // Borrar (D-052): {"kind": "series", "folder": "Serie (2020)", "paths": ["Season 01"]}; [""] = la obra entera
+    server.Post("/api/library/delete", [&db, &catalog, &downloads](const httplib::Request& req, httplib::Response& res) {
+        const Json body = Json::parse(req.body, nullptr, false);
+        if (!body.is_object() || !body.contains("paths") || !body["paths"].is_array() || body["paths"].empty()) {
+            sendError(res, 400, "Falta qué borrar");
+            return;
+        }
+        const std::string kind = body.value("kind", "");
+        if (kind != "series" && kind != "movie") {
+            sendError(res, 400, "Tipo de biblioteca no válido");
+            return;
+        }
+        std::vector<std::string> paths;
+        for (const Json& path : body["paths"]) {
+            if (!path.is_string()) {
+                sendError(res, 400, "Ruta no válida");
+                return;
+            }
+            paths.push_back(path.get<std::string>());
+        }
+        if (!requireCatalogReady(db, catalog, res)) {
+            return;
+        }
+        const DownloadManager::LibraryDeletion deletion =
+            downloads.deleteFromLibrary(kind, body.value("folder", ""), paths);
+        if (!deletion.ok) {
+            sendError(res, deletion.error.rfind("No está", 0) == 0 ? 404 : 409, deletion.error);
+            return;
+        }
+        sendJson(res, 200, {{"files", deletion.files}, {"bytes", deletion.bytes}, {"downloads", deletion.downloads}});
+    });
+
+    // Revisa la biblioteca (D-051): lo borrado o movido a mano desde fuera de Telegarrm
+    server.Post("/api/library/scan", [&db, &catalog, &downloads](const httplib::Request&, httplib::Response& res) {
+        if (!requireCatalogReady(db, catalog, res)) {
+            return;
+        }
+        const DownloadManager::LibraryScan scan = downloads.scanLibrary();
+        Json missing = Json::array();
+        for (const DbManager::Download& download : scan.missing) {
+            missing.push_back({{"id", download.id}, {"description", describeDownload(download)}});
+        }
+        sendJson(res, 200, {{"checked", scan.checked}, {"moved", scan.moved}, {"missing", missing}});
+    });
+}
+
 void registerApiRoutes(httplib::Server& server, const ApiServices& services) {
     registerStatusRoutes(server, services.db, services.telegram, services.metadata, services.catalog);
     registerAuthRoutes(server, services.telegram);
@@ -1344,4 +1475,5 @@ void registerApiRoutes(httplib::Server& server, const ApiServices& services) {
     registerProbeRoutes(server, services.catalog, services.prober);
     registerFollowRoutes(server, services.db, services.catalog, services.metadata, services.tracker, services.downloads);
     registerSettingsRoutes(server, services.db, services);
+    registerLibraryRoutes(server, services.db, services.catalog, services.metadata, services.downloads);
 }

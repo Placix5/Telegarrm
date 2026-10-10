@@ -87,6 +87,41 @@ ImportResult importRelease(const ImportRequest& request, const std::function<voi
 std::size_t removeFiles(const std::vector<std::string>& files, const std::vector<std::string>& roots,
                         const std::vector<std::string>& keep);
 
+// --- Contenido de la biblioteca (pestaña «Biblioteca», D-052) ---
+
+// Archivo de la carpeta de una obra
+struct LibraryFile {
+    std::string path;      // Relativa a la carpeta de la obra: "Season 01/Serie S01E01 - 1080p.mkv"
+    std::int64_t size = 0;
+    bool video = false;
+    int season = 0;        // Episodio según el nombre (0 = no lo dice)
+    int episode = 0;
+    int episodeEnd = 0;
+    std::string quality;   // Solo la del nombre: la lista no abre los vídeos
+};
+
+// Obra de la biblioteca: una carpeta directamente dentro de la raíz
+struct LibraryWork {
+    std::string folder;    // Nombre de la carpeta
+    std::string title;     // Sin el año ni "[tmdbid-N]"
+    std::optional<int> year;
+    long tmdbId = 0;
+    std::int64_t size = 0;
+    std::vector<LibraryFile> files;  // Por ruta
+};
+
+// Obras de una biblioteca: sus carpetas (sin las ocultas ni los enlaces), por título
+std::vector<LibraryWork> listLibrary(const std::string& root);
+// Una sola obra, por el nombre de su carpeta; std::nullopt si no es una carpeta de la biblioteca
+std::optional<LibraryWork> libraryWork(const std::string& root, const std::string& folder);
+
+// Archivos que hay que borrar para quitar de la biblioteca una obra entera (relative vacío), una carpeta
+// suya ("Season 01") o un archivo. Rutas reales y absolutas. Vacío si folder no es una carpeta de la
+// biblioteca o relative sale de ella (con "..", con una ruta absoluta o por un enlace). Se borran
+// después con removeFiles, que vuelve a comprobar que estén dentro de la biblioteca.
+std::vector<std::string> libraryFilesToDelete(const std::string& root, const std::string& folder,
+                                              const std::string& relative);
+
 // --- Nombres (funciones puras, con tests) ---
 
 // Quita lo que no vale en un nombre de fichero (/ \ : * ? " < > | y controles) y los puntos o

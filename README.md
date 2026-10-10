@@ -13,8 +13,9 @@ Desde la web (`http://<ip-de-la-pi>:8080/`):
   - Marca lo que ya tienes en la biblioteca.
 - **Descargas**: «Almacenar en disco» por versión, por temporada o la serie completa (solo los episodios que te faltan). Cada descarga se descomprime si hace falta, se renombra para Jellyfin y se lleva a la biblioteca.
 - **Seguimiento**: «Seguir» en una serie descarga sola cada episodio nuevo en cuanto se publica. En una película, la primera versión que se publique. Si llega una versión mejor, sustituye a la anterior. Se puede fijar una calidad máxima.
+- **Biblioteca**: lo que hay en disco, con su ficha del catálogo. Se puede borrar una serie, una temporada, una película o un archivo, siempre con confirmación. También revisa la biblioteca tras borrar o mover archivos a mano.
 - **Actividad**: lo que sigues y el historial de lo que el sistema ha hecho solo.
-- **Canales**, **Ajustes** (búfer, bibliotecas, espacio libre, conservar versiones y revisar la biblioteca tras borrar o mover archivos a mano) y **Estado** (incluido el inicio de sesión en Telegram).
+- **Canales**, **Ajustes** (búfer, bibliotecas, espacio libre y conservar versiones) y **Estado** (incluido el inicio de sesión en Telegram).
 
 Funciona igual en el móvil: las pestañas se reorganizan, las tablas se convierten en bloques y los botones tienen tamaño de dedo.
 
@@ -134,6 +135,9 @@ Desplegar una versión nueva del programa no necesita `sudo`: `cmake --build bui
 | `POST /api/downloads/{id}/cancel` | Cancelar (borra lo descargado a medias) |
 | `POST /api/downloads/{id}/retry` | Reintentar una descarga fallida o cancelada |
 | `DELETE /api/downloads/{id}` | Quitar de la lista una descarga terminada, sustituida, borrada, fallida o cancelada (los archivos de la biblioteca no se tocan) |
+| `GET /api/library` | Lo que hay en las bibliotecas (D-052): por cada carpeta, título, año, `tmdb_id`, tamaño, archivos, temporadas con sus episodios y su ficha del catálogo (`item`) si la tiene |
+| `GET /api/library/files?kind=series\|movie&folder=...` | Archivos de una carpeta de la biblioteca, con su ruta relativa, tamaño, episodio y calidad según el nombre |
+| `POST /api/library/delete` | `{"kind": "series", "folder": "...", "paths": ["Season 01"]}` (`[""]` = la carpeta entera): borra de la biblioteca, solo archivos normales dentro de ella (D-052). Devuelve `{"files", "bytes", "downloads"}` |
 | `POST /api/library/scan` | Revisar la biblioteca (D-051): `{"checked", "moved", "missing": [{"id", "description"}]}`. Lo movido se apunta; lo que ya no está pasa a `deleted`. 503 mientras el catálogo se calcula al arrancar |
 | `GET /api/follows` | Obras seguidas: calidad máxima (`max_quality`), desde cuándo (`created_at`) y su ficha actual en el catálogo (`found` = sigue en él) |
 | `POST /api/follows` | `{"chat_id": -100..., "anchor_id": ..., "max_quality": ""}` (`""` = la mejor, `"1080p"` o `"720p"`): seguir una obra; 409 si ya se sigue |
@@ -155,8 +159,13 @@ Ejemplo de `/api/status`:
 Los pasos del inicio de sesión responden `{"ok": true}`, o `{"error": "..."}` con HTTP 400 (dato incorrecto, ej. `PHONE_CODE_INVALID`), 409 (Telegram no espera ese dato ahora) o 504 (Telegram no responde).
 
 ## Historial de cambios
+### Pestaña «Biblioteca»
+- Lo que hay en disco, con su ficha del catálogo, y borrado de series, temporadas, películas o archivos con confirmación (D-052). Solo puede borrar archivos dentro de la biblioteca. Las descargas afectadas pasan a «Borrada».
+- «Revisar la biblioteca» pasa aquí desde *Ajustes*. Con siete pestañas, en el móvil se reparten en filas (4 + 3).
+- Tests: 569 comprobaciones.
+
 ### Revisar la biblioteca
-- «Revisar la biblioteca» en *Ajustes* (D-051): si se borran o mueven archivos a mano, encuentra lo movido y apunta dónde está; lo borrado pasa a «Borrada» y deja de contar como que se tiene.
+- «Revisar la biblioteca» (D-051; hoy en la pestaña «Biblioteca»): si se borran o mueven archivos a mano, encuentra lo movido y apunta dónde está; lo borrado pasa a «Borrada» y deja de contar como que se tiene.
 - El mismo archivo subido otra vez cuenta una sola vez. En los canales de anime, los cortos que acompañan a cada episodio (*Maomao no Hitorigoto*) pasan a «Otros archivos».
 - Tests: 544 comprobaciones.
 

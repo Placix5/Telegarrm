@@ -1885,6 +1885,93 @@ void testLibraryScan() {
     fs::remove_all(base);
 }
 
+// D-052: la pestaña «Biblioteca» lista lo que hay en disco y borra sin salir de la biblioteca
+void testLibraryBrowseAndDelete() {
+    namespace fs = std::filesystem;
+    const fs::path base = fs::temp_directory_path() / ("telegarrm_browse_" + std::to_string(::getpid()));
+    fs::remove_all(base);
+    const fs::path series = base / "series";
+    const fs::path movies = base / "peliculas";
+    const fs::path outside = base / "fuera";
+    const fs::path work = series / "Serie (2020) [tmdbid-123]";
+    writeFile(work / "Season 01" / "Serie S01E01 - 1080p.mkv", 100, 'a');
+    writeFile(work / "Season 01" / "Serie S01E01 - 1080p.Spanish.srt", 5, 'b');
+    writeFile(work / "Season 02" / "Serie S02E01 - 720p.mkv", 50, 'c');
+    writeFile(work / ".telegarrm-import-7" / "temporal.mkv", 9, 'd');  // Importación en curso: no se lista
+    writeFile(movies / "Peli (2021)" / "Peli (2021) - 4K HDR.mkv", 200, 'e');
+    writeFile(outside / "ajeno.mkv", 10, 'f');
+    std::error_code ec;
+    fs::create_directory_symlink(outside, series / "Enlace (2000)", ec);  // Una carpeta que lleva fuera
+    fs::create_symlink(outside / "ajeno.mkv", work / "Season 02" / "enlace.mkv", ec);
+
+    const auto list = library::listLibrary(series.string());
+    CHECK_EQ(static_cast<int>(list.size()), 1);
+    if (list.size() == 1) {
+        CHECK_EQ(list[0].title, "Serie");
+        CHECK(list[0].year == std::optional<int>(2020) && list[0].tmdbId == 123);
+        CHECK_EQ(static_cast<int>(list[0].files.size()), 3);
+        CHECK_EQ(list[0].size, static_cast<std::int64_t>(155));
+        // Por ruta: el subtítulo ("...1080p.Spanish.srt") va antes que el vídeo
+        CHECK(!list[0].files[0].video && list[0].files[1].video && list[0].files[1].season == 1 &&
+              list[0].files[1].episode == 1);
+    }
+
+    // Lo que se borraría: la obra, una temporada, un archivo... y nada fuera de la biblioteca
+    const std::string root = series.string();
+    CHECK_EQ(static_cast<int>(library::libraryFilesToDelete(root, work.filename().string(), "").size()), 4);
+    CHECK_EQ(static_cast<int>(library::libraryFilesToDelete(root, work.filename().string(), "Season 01").size()), 2);
+    CHECK_EQ(static_cast<int>(library::libraryFilesToDelete(root, work.filename().string(), "Season 02/Serie S02E01 - 720p.mkv").size()), 1);
+    CHECK(library::libraryFilesToDelete(root, work.filename().string(), "../../fuera/ajeno.mkv").empty());
+    CHECK(library::libraryFilesToDelete(root, work.filename().string(), (outside / "ajeno.mkv").string()).empty());
+    CHECK(library::libraryFilesToDelete(root, work.filename().string(), "Season 02/enlace.mkv").empty());
+    CHECK(library::libraryFilesToDelete(root, "Enlace (2000)", "").empty());
+    CHECK(library::libraryFilesToDelete(root, "..", "").empty());
+    CHECK(library::libraryFilesToDelete(root, "Serie (2020) [tmdbid-123]/Season 01", "").empty());
+    CHECK(library::libraryFilesToDelete(root, "No existe", "").empty());
+
+    {
+        DbManager db((base / "test.db").string());
+        CHECK(db.open());
+        AppSettings settings;
+        settings.seriesDir = series.string();
+        settings.moviesDir = movies.string();
+        CHECK(saveSettings(db, settings));
+        DbManager::Download download;
+        download.chatId = -500;
+        download.messageId = 1;
+        download.title = "Serie";
+        download.kind = "series";
+        download.season = 1;
+        download.episode = 1;
+        download.name = "Serie 1x01";
+        const auto added = db.addDownload(download);
+        db.setDownloadStatus(added.id, "completed");
+        db.setDownloadLibrary(added.id, work.string(), {(work / "Season 01" / "Serie S01E01 - 1080p.mkv").string()});
+
+        TelegramClient telegram(TelegramClient::Config{});
+        DownloadManager downloads(db, telegram, base.string(), [](const DbManager::Download& d) {
+            return library::WorkInfo{d.title, 2020, 123};
+        });
+        // Fuera de la biblioteca: no se borra nada
+        auto deletion = downloads.deleteFromLibrary("series", work.filename().string(), {"../../fuera/ajeno.mkv"});
+        CHECK(!deletion.ok && fs::exists(outside / "ajeno.mkv"));
+        // Una temporada: sus archivos y su carpeta; la descarga pasa a «Borrada»
+        deletion = downloads.deleteFromLibrary("series", work.filename().string(), {"Season 01"});
+        CHECK(deletion.ok && deletion.files == 2 && deletion.bytes == 105 && deletion.downloads == 1);
+        CHECK(!fs::exists(work / "Season 01") && fs::exists(work / "Season 02" / "Serie S02E01 - 720p.mkv"));
+        CHECK_EQ(db.getDownload(added.id)->status, "deleted");
+        // La obra entera (también el temporal de una importación que se quedó a medias: con el cerrojo no
+        // puede haber ninguna en curso). El enlace, y lo que apunta fuera, se quedan.
+        deletion = downloads.deleteFromLibrary("series", work.filename().string(), {""});
+        CHECK(deletion.ok && deletion.files == 2);
+        CHECK(fs::exists(outside / "ajeno.mkv"));
+        // Una película
+        deletion = downloads.deleteFromLibrary("movie", "Peli (2021)", {""});
+        CHECK(deletion.ok && deletion.files == 1 && !fs::exists(movies / "Peli (2021)"));
+    }
+    fs::remove_all(base);
+}
+
 // D-048: criterio de TMDB con respuestas guardadas en la caché (sin red)
 void testTmdbMatching() {
     namespace fs = std::filesystem;
@@ -2092,6 +2179,7 @@ int main() {
     testCatalogContinuations();
     testCatalogRepeatedFiles();
     testLibraryScan();
+    testLibraryBrowseAndDelete();
 
     std::cout << (checks - failures) << "/" << checks << " comprobaciones correctas" << std::endl;
     return failures == 0 ? 0 : 1;

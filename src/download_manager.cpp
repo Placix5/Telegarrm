@@ -472,8 +472,66 @@ std::string workFolderOf(const std::string& file) {
 }  // namespace
 
 DownloadManager::LibraryScan DownloadManager::scanLibrary() {
+    std::lock_guard<std::mutex> lock(libraryMutex_);
+    return scanLocked(true);
+}
+
+DownloadManager::LibraryDeletion DownloadManager::deleteFromLibrary(const std::string& kind, const std::string& folder,
+                                                                    const std::vector<std::string>& paths) {
     namespace fs = std::filesystem;
     std::lock_guard<std::mutex> lock(libraryMutex_);
+    LibraryDeletion result;
+    const AppSettings settings = loadSettings(db_);
+    const std::string root = kind == "series" ? settings.seriesDir : kind == "movie" ? settings.moviesDir : "";
+    if (root.empty()) {
+        result.error = "Biblioteca desconocida";
+        return result;
+    }
+    std::vector<std::string> files;
+    for (const std::string& path : paths) {
+        const std::vector<std::string> found = library::libraryFilesToDelete(root, folder, path);
+        if (found.empty()) {
+            result.error = "No está en la biblioteca: " + (path.empty() ? folder : folder + "/" + path);
+            return result;
+        }
+        files.insert(files.end(), found.begin(), found.end());
+    }
+    std::sort(files.begin(), files.end());
+    files.erase(std::unique(files.begin(), files.end()), files.end());
+
+    std::error_code ec;
+    std::map<std::string, std::int64_t> sizes;
+    for (const std::string& file : files) {
+        sizes[file] = static_cast<std::int64_t>(fs::file_size(file, ec));
+    }
+    result.files = library::removeFiles(files, {settings.seriesDir, settings.moviesDir}, {});
+    for (const auto& [file, size] : sizes) {
+        if (!fs::exists(file, ec)) {
+            result.bytes += size;
+        }
+    }
+    result.ok = result.files > 0;
+    if (!result.ok) {
+        result.error = "No se pudo borrar nada";
+        return result;
+    }
+
+    DbManager::Activity activity;
+    activity.type = "deleted";
+    const std::string what = paths.size() == 1 && paths.front().empty() ? "«" + folder + "»"
+                                                                         : "«" + folder + "» (" + std::to_string(paths.size()) +
+                                                                               (paths.size() == 1 ? " elemento)" : " elementos)");
+    activity.message = "Borrado desde la biblioteca: " + what + ", " + std::to_string(result.files) +
+                       (result.files == 1 ? " archivo" : " archivos") + " y " + formatSize(result.bytes) + ".";
+    db_.addActivity(activity);
+    std::cout << "[Biblioteca] Borrado " << root << "/" << folder << ": " << result.files << " archivos ("
+              << formatSize(result.bytes) << ")" << std::endl;
+    result.downloads = static_cast<int>(scanLocked(false).missing.size());
+    return result;
+}
+
+DownloadManager::LibraryScan DownloadManager::scanLocked(bool logEach) {
+    namespace fs = std::filesystem;
     LibraryScan scan;
     const AppSettings settings = loadSettings(db_);
     const std::vector<DbManager::Download> downloads = db_.listDownloads();
@@ -574,14 +632,16 @@ DownloadManager::LibraryScan DownloadManager::scanLibrary() {
         }
 
         db_.setDownloadStatus(download.id, "deleted");
-        DbManager::Activity activity;
-        activity.type = "deleted";
-        activity.message = describeDownload(download) + " ya no está en la biblioteca.";
-        activity.chatId = download.chatId;
-        activity.messageId = download.messageId;
-        activity.followId = download.followId;
-        activity.downloadId = download.id;
-        db_.addActivity(activity);
+        if (logEach) {
+            DbManager::Activity activity;
+            activity.type = "deleted";
+            activity.message = describeDownload(download) + " ya no está en la biblioteca.";
+            activity.chatId = download.chatId;
+            activity.messageId = download.messageId;
+            activity.followId = download.followId;
+            activity.downloadId = download.id;
+            db_.addActivity(activity);
+        }
         scan.missing.push_back(download);
         std::cout << "[Biblioteca] #" << download.id << " (" << download.name << ") ya no está" << std::endl;
     }

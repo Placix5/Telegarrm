@@ -66,6 +66,20 @@ public:
     };
     LibraryScan scanLibrary();
 
+    // Borra de la biblioteca (pestaña «Biblioteca», D-052) una obra entera (ruta vacía), carpetas suyas o
+    // archivos: paths son rutas relativas a la carpeta folder de la biblioteca de kind ("series" o
+    // "movie"). Solo archivos normales dentro de la biblioteca (removeFiles). Después revisa la
+    // biblioteca: las descargas que se han quedado sin archivos pasan a "deleted".
+    struct LibraryDeletion {
+        bool ok = false;
+        std::string error;
+        std::size_t files = 0;     // Archivos borrados
+        std::int64_t bytes = 0;    // Espacio liberado
+        int downloads = 0;         // Descargas que pasan a "deleted"
+    };
+    LibraryDeletion deleteFromLibrary(const std::string& kind, const std::string& folder,
+                                      const std::vector<std::string>& paths);
+
 private:
     enum class Outcome { Completed, Failed, Cancelled, Stopped };
 
@@ -78,6 +92,8 @@ private:
     // que la importación encontró en la carpeta (superseded, D-041). Devuelve el texto para el
     // historial; vacío si no había nada que sustituir.
     std::string replaceOlder(const DbManager::Download& download, const std::vector<std::string>& superseded);
+    // scanLibrary con libraryMutex_ tomado; logEach: una entrada del historial por cada descarga borrada
+    LibraryScan scanLocked(bool logEach);
     // Corrige con ffprobe la calidad de las descargas importadas antes de D-039 (una sola vez)
     void probeCompletedDownloads();
     // Historial de las descargas automáticas y de las sustituciones

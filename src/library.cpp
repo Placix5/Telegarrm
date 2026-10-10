@@ -630,6 +630,146 @@ std::vector<DiskVideo> videosOnDisk(const std::string& root, const WorkInfo& wor
     return videos;
 }
 
+namespace {
+
+// ¿path está dentro de base (y no es base)? Las dos, rutas reales
+bool strictlyInside(const fs::path& base, const fs::path& path) {
+    const auto mismatch = std::mismatch(base.begin(), base.end(), path.begin(), path.end());
+    return mismatch.first == base.end() && mismatch.second != path.end();
+}
+
+// Carpeta de una obra de la biblioteca (real): directamente dentro de la raíz, sin enlaces
+std::optional<fs::path> workFolderIn(const std::string& root, const std::string& folder) {
+    std::error_code ec;
+    if (root.empty() || folder.empty() || folder == "." || folder == ".." ||
+        folder.find('/') != std::string::npos || folder.find('\0') != std::string::npos) {
+        return std::nullopt;
+    }
+    const fs::path realRoot = fs::canonical(root, ec);
+    if (ec) {
+        return std::nullopt;
+    }
+    const fs::path work = realRoot / folder;
+    if (fs::symlink_status(work, ec).type() != fs::file_type::directory) {
+        return std::nullopt;
+    }
+    const fs::path realWork = fs::canonical(work, ec);
+    if (ec || realWork.parent_path() != realRoot) {
+        return std::nullopt;
+    }
+    return realWork;
+}
+
+LibraryWork readWork(const fs::path& dir) {
+    LibraryWork work;
+    work.folder = dir.filename().string();
+    // "Título (Año) [tmdbid-N]"
+    static const std::regex kFolder(R"(^(.*?)(?:\s*\((\d{4})\))?(?:\s*\[tmdbid[-=](\d+)\])?\s*$)", std::regex::icase);
+    std::smatch match;
+    if (std::regex_match(work.folder, match, kFolder)) {
+        work.title = match[1].str();
+        if (match[2].matched) {
+            work.year = std::stoi(match[2].str());
+        }
+        if (match[3].matched) {
+            work.tmdbId = std::stol(match[3].str());
+        }
+    }
+    if (work.title.empty()) {
+        work.title = work.folder;
+    }
+
+    std::error_code ec;
+    for (auto it = fs::recursive_directory_iterator(dir, ec); !ec && it != fs::recursive_directory_iterator();
+         it.increment(ec)) {
+        const std::string name = it->path().filename().string();
+        const fs::file_type type = it->symlink_status(ec).type();
+        if (!name.empty() && name.front() == '.') {
+            if (type == fs::file_type::directory) {
+                it.disable_recursion_pending();  // Temporales de una importación en curso
+            }
+            continue;
+        }
+        if (type != fs::file_type::regular) {
+            continue;  // Carpetas (se recorren), enlaces y lo demás
+        }
+        LibraryFile file;
+        file.path = it->path().lexically_relative(dir).string();
+        file.size = static_cast<std::int64_t>(it->file_size(ec));
+        file.video = kVideoExtensions.count(lowerExtension(it->path())) > 0;
+        if (const auto episode = media::parseEpisode(name)) {
+            file.season = episode->season;
+            file.episode = episode->episode;
+            file.episodeEnd = episode->episodeEnd;
+        }
+        file.quality = media::detectQuality(name);
+        work.size += file.size;
+        work.files.push_back(std::move(file));
+    }
+    std::sort(work.files.begin(), work.files.end(),
+              [](const LibraryFile& a, const LibraryFile& b) { return a.path < b.path; });
+    return work;
+}
+
+}  // namespace
+
+std::vector<LibraryWork> listLibrary(const std::string& root) {
+    std::vector<LibraryWork> works;
+    std::error_code ec;
+    if (root.empty() || !fs::is_directory(root, ec)) {
+        return works;
+    }
+    for (auto it = fs::directory_iterator(root, ec); !ec && it != fs::directory_iterator(); it.increment(ec)) {
+        const std::string name = it->path().filename().string();
+        if (!name.empty() && name.front() != '.' && it->symlink_status(ec).type() == fs::file_type::directory) {
+            works.push_back(readWork(it->path()));
+        }
+    }
+    std::sort(works.begin(), works.end(), [](const LibraryWork& a, const LibraryWork& b) {
+        return std::make_pair(lower(a.title), a.folder) < std::make_pair(lower(b.title), b.folder);
+    });
+    return works;
+}
+
+std::optional<LibraryWork> libraryWork(const std::string& root, const std::string& folder) {
+    const auto dir = workFolderIn(root, folder);
+    if (!dir) {
+        return std::nullopt;
+    }
+    return readWork(*dir);
+}
+
+std::vector<std::string> libraryFilesToDelete(const std::string& root, const std::string& folder,
+                                              const std::string& relative) {
+    std::vector<std::string> files;
+    const auto work = workFolderIn(root, folder);
+    const fs::path rel = fs::path(relative).lexically_normal();
+    if (!work || rel.is_absolute() || std::any_of(rel.begin(), rel.end(), [](const fs::path& part) {
+            return part == "..";
+        })) {
+        return files;
+    }
+    std::error_code ec;
+    const fs::path target = relative.empty() || rel == "." ? *work : *work / rel;
+    const fs::path realTarget = fs::canonical(target, ec);
+    if (ec || (realTarget != *work && !strictlyInside(*work, realTarget))) {
+        return files;
+    }
+    const fs::file_type type = fs::symlink_status(target, ec).type();
+    if (type == fs::file_type::regular) {
+        files.push_back(realTarget.string());
+    } else if (type == fs::file_type::directory) {
+        for (auto it = fs::recursive_directory_iterator(realTarget, ec); !ec && it != fs::recursive_directory_iterator();
+             it.increment(ec)) {
+            if (it->symlink_status(ec).type() == fs::file_type::regular) {
+                files.push_back(it->path().string());
+            }
+        }
+    }
+    std::sort(files.begin(), files.end());
+    return files;
+}
+
 std::string findSevenZip() {
     for (const char* candidate : {"/usr/bin/7z", "/usr/bin/7zz", "/usr/local/bin/7z", "/usr/local/bin/7zz", "/usr/bin/7za"}) {
         if (::access(candidate, X_OK) == 0) {

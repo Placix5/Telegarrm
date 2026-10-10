@@ -13,6 +13,7 @@
     <nav aria-label="Secciones">
       <a href="#/catalogo" data-view="catalog">Catálogo</a>
       <a href="#/descargas" data-view="downloads">Descargas <span class="count" id="downloads-count" hidden></span></a>
+      <a href="#/biblioteca" data-view="library">Biblioteca</a>
       <a href="#/actividad" data-view="activity">Actividad</a>
       <a href="#/canales" data-view="channels">Canales</a>
       <a href="#/ajustes" data-view="settings">Ajustes</a>
@@ -62,6 +63,27 @@
       <p class="hint" id="downloads-empty">No hay descargas. Elige una versión en la ficha de una serie o película y pulsa «Almacenar en disco».</p>
       <p class="hint" id="downloads-note" hidden>Al terminar, cada descarga se descomprime si hace falta y se lleva a la biblioteca con nombres para Jellyfin (carpetas en Ajustes).</p>
       <ul class="download-list" id="download-list"></ul>
+    </section>
+  </div>
+
+  <!-- Biblioteca: lo que hay en disco (D-052) -->
+  <div class="view" id="view-library" hidden>
+    <section aria-labelledby="biblioteca">
+      <h2 id="biblioteca">Biblioteca</h2>
+      <p class="hint" id="library-summary">Cargando…</p>
+      <div class="toolbar">
+        <input type="search" id="library-search" placeholder="Buscar en la biblioteca…" aria-label="Buscar en la biblioteca">
+      </div>
+      <h3>Series</h3>
+      <ul class="library-list" id="library-series"></ul>
+      <h3>Películas</h3>
+      <ul class="library-list" id="library-movies"></ul>
+    </section>
+    <section aria-labelledby="revisar">
+      <h2 id="revisar">Cambios hechos a mano</h2>
+      <p class="hint">Si borras o mueves archivos de la biblioteca fuera de Telegarrm, sigue creyendo que están donde los dejó. «Revisar la biblioteca» comprueba cada descarga: lo que se ha movido se vuelve a encontrar, y lo borrado deja de contar como que lo tienes (podrás volver a descargarlo).</p>
+      <button type="button" class="secondary" id="library-scan">Revisar la biblioteca</button>
+      <div class="field-status" id="library-scan-status" role="status"></div>
     </section>
   </div>
 
@@ -145,13 +167,6 @@
         <button type="submit" id="settings-save">Guardar</button>
         <p id="settings-message" class="error-box" role="status" hidden></p>
       </form>
-
-      <h3>Biblioteca</h3>
-      <div class="field">
-        <button type="button" class="secondary" id="library-scan">Revisar la biblioteca</button>
-        <p class="hint">Si borras o mueves archivos de la biblioteca a mano, Telegarrm sigue creyendo que están donde los dejó. Esto revisa cada descarga: lo que se ha movido se vuelve a encontrar, y lo borrado deja de contar como que lo tienes (podrás volver a descargarlo).</p>
-        <div class="field-status" id="library-scan-status" role="status"></div>
-      </div>
     </section>
   </div>
 
