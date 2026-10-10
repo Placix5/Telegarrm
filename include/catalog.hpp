@@ -6,6 +6,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <set>
 #include <string>
 #include <unordered_map>
 #include <utility>
@@ -117,6 +118,8 @@ public:
 
     std::vector<ItemPtr> items() const;
     ItemPtr find(std::int64_t chatId, std::int64_t anchorMessageId) const;
+    // ¿Ya se ha calculado ese canal? Al arrancar, los canales se calculan de uno en uno
+    bool hasChannel(std::int64_t chatId) const;
 
     // Archivo lógico que contiene ese mensaje (cualquiera de sus partes) y su obra
     struct ReleaseRef {
@@ -146,10 +149,11 @@ private:
     std::map<std::int64_t, std::vector<Block>> blocks_;
     std::unordered_map<std::int64_t, std::unique_ptr<ParseCache>> caches_;
 
-    mutable std::mutex mutex_;  // Protege items_, releaseIndex_, events_ y nextEventId_
+    mutable std::mutex mutex_;  // Protege items_, releaseIndex_, events_, nextEventId_ y builtChannels_
     std::vector<ItemPtr> items_;
     // (chat, mensaje de cualquier parte) -> (obra, índice del Release)
     std::map<std::pair<std::int64_t, std::int64_t>, std::pair<ItemPtr, std::size_t>> releaseIndex_;
     std::deque<Event> events_;  // Las últimas novedades, solo en memoria
+    std::set<std::int64_t> builtChannels_;  // Canales ya calculados
     std::int64_t nextEventId_ = 1;
 };

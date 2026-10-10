@@ -119,7 +119,8 @@ public:
         std::int64_t totalSize = 0;
         std::int64_t downloadedSize = 0;
         // queued / downloading / importing (descomprimiendo y moviendo) / completed (en la
-        // biblioteca) / failed / cancelled / replaced (sustituida por una versión mejor)
+        // biblioteca) / failed / cancelled / replaced (sustituida por una versión mejor) / deleted
+        // (borrada a mano de la biblioteca, D-051)
         std::string status;
         std::string error;
         std::int64_t createdAt = 0;
@@ -153,7 +154,7 @@ public:
         std::int64_t id = 0;
         std::int64_t at = 0;         // Unix, segundos (0 = ahora)
         std::string type;            // follow, unfollow, queued_episode, queued_movie, queued_upgrade,
-                                     // completed, upgraded, replaced, failed
+                                     // completed, upgraded, replaced, failed, deleted
         std::string message;         // En castellano, listo para mostrar
         std::int64_t chatId = 0;     // Mensaje de la obra (ficha o archivo) para enlazarla
         std::int64_t messageId = 0;

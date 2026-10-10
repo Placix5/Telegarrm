@@ -884,9 +884,9 @@ function externalLink(url, text) {
 
 const DOWNLOAD_STATUS = {
   queued: "En cola", downloading: "Descargando", importing: "Importando", completed: "En la biblioteca",
-  failed: "Falló", cancelled: "Cancelada", replaced: "Sustituida",
+  failed: "Falló", cancelled: "Cancelada", replaced: "Sustituida", deleted: "Borrada",
 };
-const FINISHED = ["completed", "replaced"];
+const FINISHED = ["completed", "replaced", "deleted"];
 const ACTIVE_STATUSES = ["queued", "downloading", "importing", "completed"];
 const IN_PROGRESS = ["queued", "downloading", "importing"];
 
@@ -1015,6 +1015,7 @@ function renderDownloads() {
     meta.push(`añadida el ${formatDate(d.created_at)}${d.origin === "auto" ? " por el seguimiento" : ""}`);
     item.append(el("div", "download-meta", meta.join(" · ")));
     if (d.status === "replaced") item.append(el("div", "download-meta", "Sustituida por una versión mejor"));
+    if (d.status === "deleted") item.append(el("div", "download-meta", "Ya no está en la biblioteca (se borró fuera de Telegarrm)"));
     else if (d.library_path) item.append(el("div", "download-meta", `📁 ${d.library_path}`));
     if (d.error) item.append(el("div", "err", d.error));
 
@@ -1038,7 +1039,7 @@ function renderDownloads() {
       });
     }
     if (d.status === "failed" || d.status === "cancelled") action("Reintentar", "secondary", () => downloadAction(d.id, "retry", "POST"));
-    if (["completed", "replaced", "failed", "cancelled"].includes(d.status)) action("Quitar de la lista", "secondary", () => downloadAction(d.id, "", "DELETE"));
+    if (["completed", "replaced", "deleted", "failed", "cancelled"].includes(d.status)) action("Quitar de la lista", "secondary", () => downloadAction(d.id, "", "DELETE"));
     if (actions.children.length) item.append(actions);
     list.append(item);
   }
@@ -1076,7 +1077,7 @@ async function refreshDownloads() {
 const ACTIVITY_STYLE = {
   queued_episode: ["+", "queued"], queued_movie: ["+", "queued"], queued_upgrade: ["↑", "queued"],
   completed: ["✓", "done"], upgraded: ["↑", "done"], replaced: ["↻", "done"], failed: ["!", "failed"],
-  follow: ["●", "user"], unfollow: ["○", "user"],
+  follow: ["●", "user"], unfollow: ["○", "user"], deleted: ["×", "user"],
 };
 
 let activityEntries = [];
@@ -1326,6 +1327,37 @@ function renderSettings(data) {
   $("settings-warning").hidden = !data.warning;
   $("restart-notice").hidden = !data.restart_required;
 }
+
+// Revisar la biblioteca (D-051): lo borrado o movido a mano
+$("library-scan").addEventListener("click", async () => {
+  const button = $("library-scan");
+  const status = $("library-scan-status");
+  button.disabled = true;
+  status.className = "field-status";
+  status.replaceChildren(el("span", "", "Revisando…"));
+  try {
+    const result = await api("/api/library/scan", { method: "POST" });
+    const parts = [`${plural(result.checked, "descarga revisada", "descargas revisadas")}.`];
+    if (result.moved) parts.push(`${plural(result.moved, "estaba", "estaban")} en otra carpeta y ya ${result.moved === 1 ? "está apuntada" : "están apuntadas"}.`);
+    parts.push(result.missing.length
+      ? `${plural(result.missing.length, "ya no está", "ya no están")} en la biblioteca:`
+      : "No falta nada.");
+    status.className = "field-status ok";
+    status.replaceChildren(el("p", "", parts.join(" ")));
+    if (result.missing.length) {
+      const list = el("ul", "scan-missing");
+      for (const missing of result.missing.slice(0, 20)) list.append(el("li", "", missing.description));
+      if (result.missing.length > 20) list.append(el("li", "", `y ${formatNumber(result.missing.length - 20)} más`));
+      status.append(list);
+    }
+    await refreshDownloads();
+  } catch (e) {
+    status.className = "field-status err";
+    status.replaceChildren(el("span", "", `No se pudo revisar: ${e.message}`));
+  } finally {
+    button.disabled = false;
+  }
+});
 
 async function loadSettings() {
   try {

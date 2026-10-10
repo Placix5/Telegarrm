@@ -836,6 +836,23 @@ void registerDownloadRoutes(httplib::Server& server, DbManager& db, Catalog& cat
         db.deleteDownload(*id);
         sendJson(res, 200, {{"ok", true}});
     });
+
+    // Revisa la biblioteca (D-051): lo borrado o movido a mano desde fuera de Telegarrm
+    server.Post("/api/library/scan", [&db, &catalog, &downloads](const httplib::Request&, httplib::Response& res) {
+        // Lo renombrado se busca en la carpeta de su obra, que sale del catálogo: sin él se daría por borrado
+        for (const DbManager::Channel& channel : db.listChannels()) {
+            if (!catalog.hasChannel(channel.id)) {
+                sendError(res, 503, "El catálogo aún se está calculando. Prueba dentro de unos segundos.");
+                return;
+            }
+        }
+        const DownloadManager::LibraryScan scan = downloads.scanLibrary();
+        Json missing = Json::array();
+        for (const DbManager::Download& download : scan.missing) {
+            missing.push_back({{"id", download.id}, {"description", describeDownload(download)}});
+        }
+        sendJson(res, 200, {{"checked", scan.checked}, {"moved", scan.moved}, {"missing", missing}});
+    });
 }
 
 void registerChannelRoutes(httplib::Server& server, DbManager& db, TelegramClient& telegram, ChannelSync& sync,

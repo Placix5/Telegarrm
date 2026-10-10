@@ -20,9 +20,12 @@
 #include <unistd.h>
 
 #include "catalog.hpp"
+#include "download_manager.hpp"
 #include "library.hpp"
 #include "metadata.hpp"
 #include "process.hpp"
+#include "settings.hpp"
+#include "telegram_client.hpp"
 #include "media_parser.hpp"
 #include "tmdb_client.hpp"
 #include "tracker.hpp"
@@ -1761,6 +1764,127 @@ void testCatalogContinuations() {
     }
 }
 
+// D-051: el mismo archivo subido otra vez es una sola versión; en los canales de anime, un corto junto a
+// cada episodio es un extra
+void testCatalogRepeatedFiles() {
+    {
+        const std::vector<Message> messages = {
+            inTopic(photo(1, "Serie - Temporada 1 (1080p)"), 4),
+            inTopic(video(2, "Serie 1x01.mkv", 100), 4),
+            inTopic(video(3, "Serie 1x01.mkv", 100), 4),  // Subido otra vez
+            inTopic(video(4, "Serie 1x01.mkv", 120), 4),  // Otra versión
+        };
+        const auto items = build(-500, "Las Cositas", messages, kTopics);
+        CHECK(items.size() == 1 && items[0].releases.size() == 2 && items[0].releases[0].parts.front().messageId == 2);
+    }
+    {
+        const std::vector<DbManager::Topic> topics = {{4815, "Los Diarios de la Boticaria", 0}};
+        std::vector<Message> messages;
+        std::int64_t id = 1;
+        const auto two = [](int n) { return (n < 10 ? "0" : "") + std::to_string(n); };
+        messages.push_back(inTopic(photo(id++, "Los Diarios de la Boticaria\nThe Apothecary Diaries"), 4815));
+        for (int n = 1; n <= 24; ++n) {
+            messages.push_back(inTopic(video(id++, "The Apothecary Diaries S1 - " + two(n) + " [1080p].mkv", 3000), 4815));
+        }
+        // La ficha de los cortos, en el tema de la serie (CrunchyShur, 10/2026)
+        messages.push_back(inTopic(photo(id++, "Maomao no Hitorigoto\n\nEspecial de 24 episodios de 2 minutos de duración "
+                                               "cada uno de la Temporada 1"), 4815));
+        for (int n = 1; n <= 24; ++n) {
+            messages.push_back(inTopic(video(id++, "[Otsalia] Maomao no Hitorigoto - " + two(n) + " [1080p].mkv", 22), 4815));
+        }
+        const auto items = build(-700, "CrunchyShur", messages, topics);
+        CHECK_EQ(static_cast<int>(items.size()), 1);
+        if (items.size() == 1) {
+            CHECK_EQ(items[0].episodeCount, 24);
+            const auto extras = std::count_if(items[0].releases.begin(), items[0].releases.end(),
+                                              [](const Catalog::Release& release) { return release.episode == 0; });
+            CHECK_EQ(static_cast<int>(extras), 24);
+        }
+    }
+}
+
+// D-051: revisar la biblioteca tras borrar o mover archivos a mano
+void testLibraryScan() {
+    namespace fs = std::filesystem;
+    const fs::path base = fs::temp_directory_path() / ("telegarrm_scan_" + std::to_string(::getpid()));
+    fs::remove_all(base);
+    const fs::path series = base / "series";
+    const fs::path movies = base / "peliculas";
+    {
+        DbManager db((base / "test.db").string());
+        CHECK(db.open());
+        AppSettings settings;
+        settings.seriesDir = series.string();
+        settings.moviesDir = movies.string();
+        CHECK(saveSettings(db, settings));
+
+        // Sigue en su sitio
+        const fs::path kept = series / "Serie (2020)" / "Season 01" / "Serie S01E01 - 1080p.mkv";
+        writeFile(kept, 10, 'a');
+        // Carpeta renombrada a mano (mismo nombre de archivo)
+        const fs::path movedFrom = series / "Boku no Hero Academia (2025)" / "Season 04" / "Boku no Hero Academia S04E01 - 720p.mkv";
+        const fs::path movedTo =
+            series / "My Hero Academia (2016) [tmdbid-65930]" / "Season 04" / "Boku no Hero Academia S04E01 - 720p.mkv";
+        writeFile(movedTo, 10, 'b');
+        // Película movida y renombrada a la carpeta de su obra
+        const fs::path renamedFrom = movies / "AV-1 (2022) [tmdbid-912268]" / "AV-1 (2022) - 1080p.mkv";
+        const fs::path renamedTo =
+            movies / "Guardianes de la noche (2025) [tmdbid-1311031]" / "Guardianes de la noche (2025) - 1080p.mkv";
+        writeFile(renamedTo, 10, 'c');
+        // Borrada
+        const fs::path gone = series / "Westworld (2016) [tmdbid-63247]" / "Season 04" / "Westworld S04E04 - 1080p.mkv";
+
+        std::int64_t message = 100;
+        const auto add = [&](const std::string& kind, const std::string& title, int season, int episode,
+                             const fs::path& file) {
+            DbManager::Download download;
+            download.chatId = -500;
+            download.messageId = ++message;
+            download.title = title;
+            download.kind = kind;
+            download.season = season;
+            download.episode = episode;
+            download.name = title;
+            download.quality = "1080p";
+            download.totalSize = 10;
+            const auto added = db.addDownload(download);
+            CHECK(added.ok);
+            db.setDownloadStatus(added.id, "completed");
+            db.setDownloadLibrary(added.id, file.parent_path().parent_path().string(), {file.string()});
+            return added.id;
+        };
+        const std::int64_t keptId = add("series", "Serie", 1, 1, kept);
+        const std::int64_t movedId = add("series", "Boku no Hero Academia", 4, 1, movedFrom);
+        const std::int64_t renamedId = add("movie", "Kimetsu no Yaiba - La fortaleza infinita", 0, 0, renamedFrom);
+        const std::int64_t goneId = add("series", "Westworld", 4, 4, gone);
+
+        TelegramClient telegram(TelegramClient::Config{});  // Sin arrancar: la revisión no usa Telegram
+        DownloadManager downloads(db, telegram, base.string(), [](const DbManager::Download& download) {
+            return download.kind == "movie" ? library::WorkInfo{"Guardianes de la noche", 2025, 1311031}
+                                            : library::WorkInfo{download.title, std::nullopt, 0};
+        });
+        const DownloadManager::LibraryScan scan = downloads.scanLibrary();
+        CHECK_EQ(scan.checked, 4);
+        CHECK_EQ(scan.moved, 2);
+        CHECK(scan.missing.size() == 1 && scan.missing[0].id == goneId);
+        CHECK(db.getDownload(keptId)->status == "completed");
+        CHECK(db.getDownload(movedId)->libraryFiles == Strings{movedTo.string()});
+        CHECK_EQ(db.getDownload(movedId)->libraryPath, (series / "My Hero Academia (2016) [tmdbid-65930]").string());
+        CHECK(db.getDownload(renamedId)->libraryFiles == Strings{renamedTo.string()});
+        CHECK_EQ(db.getDownload(goneId)->status, "deleted");
+        const auto activity = db.listActivity(10, 0);
+        CHECK(!activity.empty() && activity[0].type == "deleted" && activity[0].downloadId == goneId);
+        // La borrada se puede volver a pedir
+        DbManager::Download again = *db.getDownload(goneId);
+        CHECK(db.addDownload(again).ok);
+
+        // Otra revisión: ya no hay nada que cambiar
+        const DownloadManager::LibraryScan second = downloads.scanLibrary();
+        CHECK(second.checked == 3 && second.moved == 0 && second.missing.empty());
+    }
+    fs::remove_all(base);
+}
+
 // D-048: criterio de TMDB con respuestas guardadas en la caché (sin red)
 void testTmdbMatching() {
     namespace fs = std::filesystem;
@@ -1966,6 +2090,8 @@ int main() {
     testWorkGroups();
     testTmdbMatching();
     testCatalogContinuations();
+    testCatalogRepeatedFiles();
+    testLibraryScan();
 
     std::cout << (checks - failures) << "/" << checks << " comprobaciones correctas" << std::endl;
     return failures == 0 ? 0 : 1;

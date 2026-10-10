@@ -1,6 +1,6 @@
 # Arquitectura de Telegarrm
 
-*Actualizada el 10/10/2026: canales de anime (D-047), obras agrupadas por TMDB (D-048), temporadas con ficha propia (D-049) y películas con otro nombre en TMDB (D-050).*
+*Actualizada el 10/10/2026: canales de anime (D-047), obras agrupadas por TMDB (D-048), temporadas con ficha propia (D-049) películas con otro nombre en TMDB (D-050) y revisión de la biblioteca (D-051).*
 
 El plan inicial (de Gemini) preveía una tabla `media` con las series y películas. No llegó a existir: el catálogo se calcula en memoria a partir de los mensajes guardados (D-020), así que una mejora del parser se aplica sin migraciones. Los motivos de cada decisión están en [DECISIONS.md](DECISIONS.md) y el plan, en [ROADMAP.md](ROADMAP.md).
 
@@ -76,7 +76,7 @@ El catálogo distingue dos tipos de canal, que detecta solo por los nombres de s
 | `settings` | Ajustes de la web, versión y marcas internas (`tmdb_matcher_version`, `quality_probe_version`) |
 | `channels`, `messages`, `topics` | Canales vigilados con su cursor de sincronización, sus mensajes (texto o archivo) y los temas de los foros |
 | `tmdb_cache`, `metadata`, `metadata_episodes` | Respuestas de TMDB y la coincidencia de cada obra, con sus episodios |
-| `downloads`, `download_parts` | Cola de descargas: estado, progreso, origen (manual o del seguimiento), archivos colocados y descargas a las que sustituye |
+| `downloads`, `download_parts` | Cola de descargas: estado (también `deleted` si se borró a mano, D-051), progreso, origen (manual o del seguimiento), archivos colocados y descargas a las que sustituye |
 | `follows`, `auto_releases` | Obras seguidas y archivos que el seguimiento ya puso en cola |
 | `activity` | Historial de lo que hace el sistema solo (las 5000 entradas más recientes) |
 | `release_probes` | Calidad real de cada archivo, comprobada antes de descargarlo o al importarlo |
@@ -98,7 +98,7 @@ El catálogo distingue dos tipos de canal, que detecta solo por los nombres de s
 | `media_parser.cpp` | Nombres de fichero y fichas: episodios, título, año, calidad, etiquetas, partes e idiomas |
 | `catalog.cpp` | Obras (`Item`) y archivos lógicos (`Release`) a partir de los mensajes; detecta los canales de anime (D-047) |
 | `tmdb_client.cpp`, `metadata.cpp` | Cliente de TMDB con caché y límite de peticiones; coincidencia de cada obra y obras que son la misma (`works::group`, D-048) |
-| `download_manager.cpp` | Cola de descargas, importación, sustitución de versiones e historial de descargas |
+| `download_manager.cpp` | Cola de descargas, importación, sustitución de versiones, historial de descargas y revisión de la biblioteca (D-051) |
 | `library.cpp` | Descompresión, ffprobe, nombres para Jellyfin, vídeos de la biblioteca y borrado seguro |
 | `release_prober.cpp` | Calidad real de un archivo sin descargarlo entero |
 | `tracker.cpp` | Seguimiento: reglas puras (`tracking::`) y su hilo (`Tracker`) |
@@ -107,7 +107,7 @@ El catálogo distingue dos tipos de canal, que detecta solo por los nombres de s
 | `db_manager.cpp` | SQLite |
 | `signal_watcher.cpp` | Parada ordenada |
 
-Las reglas de decisión (parser, catálogo, seguimiento, episodios que faltan, nombres, borrado seguro, novedades) son funciones puras o casi. Se prueban en `tests/parser_tests.cpp` con ejemplos reales de los canales (523 comprobaciones; D-022). `tools/catalog_dump.cpp` calcula el catálogo de una copia de la BD para comparar un cambio del parser obra por obra (D-047) y, con `--tmdb`, la coincidencia de TMDB guardada y la del criterio actual (D-048).
+Las reglas de decisión (parser, catálogo, seguimiento, episodios que faltan, nombres, borrado seguro, novedades) son funciones puras o casi. Se prueban en `tests/parser_tests.cpp` con ejemplos reales de los canales (544 comprobaciones; D-022). `tools/catalog_dump.cpp` calcula el catálogo de una copia de la BD para comparar un cambio del parser obra por obra (D-047) y, con `--tmdb`, la coincidencia de TMDB guardada y la del criterio actual (D-048).
 
 ## Web
 

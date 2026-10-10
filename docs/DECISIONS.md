@@ -56,6 +56,7 @@ Formato: **Contexto** (qué problema había), **Decisión**, **Alternativas desc
 | [D-048](#d-048-la-misma-obra-en-varios-canales) | La misma obra en varios canales | Vigente |
 | [D-049](#d-049-temporadas-y-arcos-con-ficha-propia) | Temporadas y arcos con ficha propia | Vigente |
 | [D-050](#d-050-películas-con-otro-nombre-en-tmdb) | Películas con otro nombre en TMDB | Vigente |
+| [D-051](#d-051-revisar-la-biblioteca-y-archivos-repetidos) | Revisar la biblioteca y archivos repetidos | Vigente |
 
 ---
 
@@ -777,4 +778,32 @@ Formato: **Contexto** (qué problema había), **Decisión**, **Alternativas desc
   - CrunchyShur: 3 nuevas (*Mugen Ressha-hen*, *Spy x Family Code: White*, *Fate/stay night: Heaven's Feel I*).
   - Tests: 523 comprobaciones, con búsquedas de TMDB sacadas de la caché: *Mugen Ressha-hen*, *Tren infinito*, *Vértigo*, las *Quintillizas* y *Millenium*.
 - **Consecuencias**: dos fichas de *Las Cositas* sin año siguen siendo ambiguas, porque TMDB tiene otra obra con el mismo título original: *Bottle Rock* cae en el corto de 1994 y no en la película de 1996, y *El elefante* puede no ser el que es. Pasaba igual con cualquier título sin año.
+
+## D-051: Revisar la biblioteca y archivos repetidos
+*10/10/2026*
+
+- **Contexto**: dos cosas que vio Plácido.
+  - **Biblioteca**: borró series desde el terminal, pero la BD seguía con sus descargas «En la biblioteca». Esos episodios contaban como que se tenían, y «Descargar los que faltan» no los ofrecía. Además, había movido a mano *La fortaleza infinita* y la temporada 4 de *Boku no Hero Academia* a su carpeta correcta (D-048). De 64 descargas en la biblioteca, 34 no estaban donde las dejó Telegarrm, pero solo 8 se habían borrado.
+  - **Archivos por episodio**: en *Los diarios de la boticaria* de CrunchyShur había un archivo por episodio en la temporada 1, dos en la 2 y tres en la 3. No era por los zip:
+    - El canal vuelve a subir los mismos archivos: el 3x01 estaba tres veces, con el mismo nombre y el mismo tamaño en bytes.
+    - Junto a cada episodio de las temporadas 1 y 2 hay un corto de dos minutos («[Otsalia] Maomao no Hitorigoto - 01», 23 MB). Su ficha («Especial de 24 episodios de 2 minutos») se unía a la serie del tema por la regla de arcos de D-047, y cada corto pasaba por otra versión del episodio.
+- **Decisión**:
+  - **«Revisar la biblioteca»** en *Ajustes* (`POST /api/library/scan`). Revisa cada descarga «En la biblioteca» cuyos archivos ya no están donde los dejó:
+    - Busca el mismo nombre de archivo en la biblioteca (carpeta renombrada).
+    - Si no, busca en la carpeta de su obra (por su identificador de TMDB) un vídeo del mismo episodio que no sea de otra descarga (archivo renombrado). En las películas, con su calidad si hay varios.
+    - Si lo encuentra, apunta dónde está. Si no, la descarga pasa al estado nuevo `deleted`, «Borrada». Deja de contar como que se tiene, se puede volver a descargar, y queda en el historial. El seguimiento no la vuelve a pedir solo.
+    - Si faltan solo algunos de sus archivos (los subtítulos), se apuntan los que quedan.
+    - No se hace a la vez que una importación (un cerrojo las separa). Tampoco mientras el catálogo se calcula al arrancar: sin él no se sabe la carpeta de cada obra, y lo renombrado se daría por borrado.
+  - **Archivos repetidos**: el mismo archivo subido otra vez (mismo nombre, mismo tamaño y mismas partes) es una sola versión: la primera.
+  - **Canales de anime**: junto a un episodio, un archivo con otro nombre de serie y menos de una décima parte del tamaño de la versión más grande es un extra, no otra versión. Pasa a «Otros archivos».
+- **Alternativas descartadas**:
+  - **Comprobar los archivos cada vez que se mira una obra**: Plácido pidió un botón, y la revisión también encuentra lo movido, cosa que no puede hacer una comprobación al vuelo.
+  - **Hacer la revisión sola al arrancar**: mientras se mueven carpetas a mano, daría por borrado lo que solo está a medio mover.
+  - **Unir los cortos por la palabra «Especial» de la ficha**: el tamaño también sirve para los canales que no lo dicen.
+- **Verificación**:
+  - En la Pi, la primera revisión encontró las 26 descargas movidas (25 episodios de *Boku no Hero* y *La fortaleza infinita*) y dio por borradas las 8 que lo estaban: *Ultimate Spiderman*, *Westworld*, *Muppets* y *Toy Story Toons*. La segunda ya no cambió nada.
+  - *Las Cositas*: cambian 11 obras, solo en el número de archivos (copias repetidas; por ejemplo, *El Espectacular Spider-Man* pasa de 52 a 26). Ninguna cambia de temporadas ni de episodios.
+  - *Los diarios de la boticaria* (CrunchyShur): un archivo por episodio en las temporadas 1 y 2, y los cortos en «Otros archivos».
+  - Tests: 544 comprobaciones, con una biblioteca de prueba (una carpeta renombrada, una película renombrada y un archivo borrado).
+- **Consecuencias**: una descarga hecha desde una copia repetida, que ya no está en el catálogo, no se reconoce como de su obra (sí lo que hay en su carpeta, D-041). Hoy no hay ninguna.
 

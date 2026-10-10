@@ -55,6 +55,17 @@ public:
     // Progreso en vivo de la descarga en curso (std::nullopt si no es la activa)
     std::optional<Progress> liveProgress(std::int64_t id) const;
 
+    // Revisión de la biblioteca (D-051): las descargas terminadas cuyos archivos ya no están donde se
+    // dejaron (borrados o movidos a mano). Lo movido se busca por su nombre en la biblioteca y, si no,
+    // en la carpeta de su obra (el mismo episodio); se apunta dónde está. Lo que no aparece pasa a
+    // "deleted": deja de contar como que se tiene, y se puede volver a descargar.
+    struct LibraryScan {
+        int checked = 0;  // Descargas en la biblioteca revisadas
+        int moved = 0;    // Encontradas en otro sitio
+        std::vector<DbManager::Download> missing;  // Ya no están
+    };
+    LibraryScan scanLibrary();
+
 private:
     enum class Outcome { Completed, Failed, Cancelled, Stopped };
 
@@ -85,6 +96,9 @@ private:
     std::condition_variable cv_;
     bool stopRequested_ = false;
     bool wakeRequested_ = false;
+
+    // Que una revisión de la biblioteca no coincida con una importación (ni con sus sustituciones)
+    std::mutex libraryMutex_;
 
     std::atomic<std::int64_t> activeId_{0};
     std::atomic<std::int64_t> cancelId_{0};

@@ -4,6 +4,8 @@
 #include <cstdio>
 #include <filesystem>
 #include <iostream>
+#include <map>
+#include <mutex>
 #include <set>
 #include <system_error>
 #include <utility>
@@ -193,8 +195,11 @@ void DownloadManager::run() {
 
         std::string error;
         Outcome outcome = process(download, error);
+        // Importación y sustituciones, sin que las cruce una revisión de la biblioteca (D-051)
+        std::unique_lock<std::mutex> libraryLock(libraryMutex_, std::defer_lock);
         if (outcome == Outcome::Completed) {
             std::cout << "[Descargas] Descargada #" << download.id << ": " << download.name << std::endl;
+            libraryLock.lock();
             outcome = importToLibrary(download, error);
         }
         activeId_ = 0;
@@ -454,6 +459,135 @@ DownloadManager::Outcome DownloadManager::importToLibrary(DbManager::Download& d
         db_.setDownloadQuality(download.id, download.quality, download.hdr);
     }
     return Outcome::Completed;
+}
+
+namespace {
+
+// Carpeta de la obra de un archivo de la biblioteca: la de encima de "Season 04" en las series
+std::string workFolderOf(const std::string& file) {
+    const std::filesystem::path parent = std::filesystem::path(file).parent_path();
+    return parent.filename().string().rfind("Season ", 0) == 0 ? parent.parent_path().string() : parent.string();
+}
+
+}  // namespace
+
+DownloadManager::LibraryScan DownloadManager::scanLibrary() {
+    namespace fs = std::filesystem;
+    std::lock_guard<std::mutex> lock(libraryMutex_);
+    LibraryScan scan;
+    const AppSettings settings = loadSettings(db_);
+    const std::vector<DbManager::Download> downloads = db_.listDownloads();
+    std::error_code ec;
+    const auto exists = [&ec](const std::string& path) { return !path.empty() && fs::exists(path, ec); };
+
+    // Archivos que siguen donde los dejó alguna descarga: no se le asignan a otra
+    std::set<std::string> claimed;
+    for (const DbManager::Download& download : downloads) {
+        if (download.status == "completed" || download.status == "replaced") {
+            for (const std::string& file : download.libraryFiles) {
+                if (exists(file)) {
+                    claimed.insert(file);
+                }
+            }
+        }
+    }
+
+    // Archivos de la biblioteca por nombre, para encontrar lo movido de carpeta (se recorre una vez,
+    // y solo si hace falta)
+    std::map<std::string, std::vector<std::string>> byName;
+    bool indexed = false;
+    const auto index = [&]() {
+        indexed = true;
+        for (const std::string& root : {settings.seriesDir, settings.moviesDir}) {
+            if (root.empty() || !fs::is_directory(root, ec)) {
+                continue;
+            }
+            for (auto it = fs::recursive_directory_iterator(root, fs::directory_options::skip_permission_denied, ec);
+                 !ec && it != fs::recursive_directory_iterator(); it.increment(ec)) {
+                if (it->is_regular_file(ec)) {
+                    byName[it->path().filename().string()].push_back(it->path().string());
+                }
+            }
+            ec.clear();
+        }
+    };
+
+    for (const DbManager::Download& download : downloads) {
+        if (download.status != "completed") {
+            continue;
+        }
+        ++scan.checked;
+        std::vector<std::string> present;
+        for (const std::string& file : download.libraryFiles) {
+            if (exists(file)) {
+                present.push_back(file);
+            }
+        }
+        if (!present.empty()) {
+            if (present.size() < download.libraryFiles.size()) {
+                db_.setDownloadLibrary(download.id, download.libraryPath, present);  // Quedan algunos (el vídeo)
+            }
+            continue;
+        }
+        if (download.libraryFiles.empty() && fs::is_directory(download.libraryPath, ec)) {
+            continue;  // Importada antes de D-037: solo se sabe su carpeta, y sigue ahí
+        }
+
+        // ¿Movida? 1) El mismo nombre en otra carpeta de la biblioteca
+        std::vector<std::string> found;
+        if (!indexed) {
+            index();
+        }
+        for (const std::string& file : download.libraryFiles) {
+            const auto it = byName.find(fs::path(file).filename().string());
+            if (it != byName.end() && it->second.size() == 1 && !claimed.count(it->second.front())) {
+                found.push_back(it->second.front());
+            }
+        }
+        // 2) Renombrada: en la carpeta de su obra, un vídeo del mismo episodio (en películas, con su
+        //    calidad si hay varios) que no sea de otra descarga
+        if (found.empty()) {
+            const std::string root = download.kind == "series" ? settings.seriesDir : settings.moviesDir;
+            const library::WorkInfo work = workInfo_(download);
+            std::string best;
+            for (const library::DiskVideo& video : library::videosOnDisk(root, work)) {
+                const bool sameEpisode = download.kind != "series" ||
+                                         (video.season == download.season && video.episode == download.episode);
+                if (!sameEpisode || claimed.count(video.path)) {
+                    continue;
+                }
+                if (best.empty() || video.quality == download.quality) {
+                    best = video.path;
+                }
+            }
+            if (!best.empty()) {
+                found.push_back(best);
+            }
+        }
+        if (!found.empty()) {
+            db_.setDownloadLibrary(download.id, workFolderOf(found.front()), found);
+            claimed.insert(found.begin(), found.end());
+            ++scan.moved;
+            std::cout << "[Biblioteca] #" << download.id << " (" << download.name << ") está ahora en "
+                      << found.front() << std::endl;
+            continue;
+        }
+
+        db_.setDownloadStatus(download.id, "deleted");
+        DbManager::Activity activity;
+        activity.type = "deleted";
+        activity.message = describeDownload(download) + " ya no está en la biblioteca.";
+        activity.chatId = download.chatId;
+        activity.messageId = download.messageId;
+        activity.followId = download.followId;
+        activity.downloadId = download.id;
+        db_.addActivity(activity);
+        scan.missing.push_back(download);
+        std::cout << "[Biblioteca] #" << download.id << " (" << download.name << ") ya no está" << std::endl;
+    }
+    std::cout << "[Biblioteca] Revisadas " << scan.checked << " descargas: " << scan.moved << " movidas, "
+              << scan.missing.size() << " ya no están" << std::endl;
+    return scan;
 }
 
 void DownloadManager::probeCompletedDownloads() {

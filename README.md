@@ -14,7 +14,7 @@ Desde la web (`http://<ip-de-la-pi>:8080/`):
 - **Descargas**: «Almacenar en disco» por versión, por temporada o la serie completa (solo los episodios que te faltan). Cada descarga se descomprime si hace falta, se renombra para Jellyfin y se lleva a la biblioteca.
 - **Seguimiento**: «Seguir» en una serie descarga sola cada episodio nuevo en cuanto se publica. En una película, la primera versión que se publique. Si llega una versión mejor, sustituye a la anterior. Se puede fijar una calidad máxima.
 - **Actividad**: lo que sigues y el historial de lo que el sistema ha hecho solo.
-- **Canales**, **Ajustes** (búfer, bibliotecas, espacio libre, conservar versiones) y **Estado** (incluido el inicio de sesión en Telegram).
+- **Canales**, **Ajustes** (búfer, bibliotecas, espacio libre, conservar versiones y revisar la biblioteca tras borrar o mover archivos a mano) y **Estado** (incluido el inicio de sesión en Telegram).
 
 Funciona igual en el móvil: las pestañas se reorganizan, las tablas se convierten en bloques y los botones tienen tamaño de dedo.
 
@@ -133,7 +133,8 @@ Desplegar una versión nueva del programa no necesita `sudo`: `cmake --build bui
 | `POST /api/downloads` | `{"chat_id": -100..., "message_id": ...}` (cualquier parte de un archivo del catálogo): 201, o 409 si ya está en la cola o descargado |
 | `POST /api/downloads/{id}/cancel` | Cancelar (borra lo descargado a medias) |
 | `POST /api/downloads/{id}/retry` | Reintentar una descarga fallida o cancelada |
-| `DELETE /api/downloads/{id}` | Quitar de la lista una descarga terminada, sustituida, fallida o cancelada (los archivos de la biblioteca no se tocan) |
+| `DELETE /api/downloads/{id}` | Quitar de la lista una descarga terminada, sustituida, borrada, fallida o cancelada (los archivos de la biblioteca no se tocan) |
+| `POST /api/library/scan` | Revisar la biblioteca (D-051): `{"checked", "moved", "missing": [{"id", "description"}]}`. Lo movido se apunta; lo que ya no está pasa a `deleted`. 503 mientras el catálogo se calcula al arrancar |
 | `GET /api/follows` | Obras seguidas: calidad máxima (`max_quality`), desde cuándo (`created_at`) y su ficha actual en el catálogo (`found` = sigue en él) |
 | `POST /api/follows` | `{"chat_id": -100..., "anchor_id": ..., "max_quality": ""}` (`""` = la mejor, `"1080p"` o `"720p"`): seguir una obra; 409 si ya se sigue |
 | `PUT /api/follows/{id}` | `{"max_quality": "1080p"}`: cambiar la calidad máxima |
@@ -154,6 +155,11 @@ Ejemplo de `/api/status`:
 Los pasos del inicio de sesión responden `{"ok": true}`, o `{"error": "..."}` con HTTP 400 (dato incorrecto, ej. `PHONE_CODE_INVALID`), 409 (Telegram no espera ese dato ahora) o 504 (Telegram no responde).
 
 ## Historial de cambios
+### Revisar la biblioteca
+- «Revisar la biblioteca» en *Ajustes* (D-051): si se borran o mueven archivos a mano, encuentra lo movido y apunta dónde está; lo borrado pasa a «Borrada» y deja de contar como que se tiene.
+- El mismo archivo subido otra vez cuenta una sola vez. En los canales de anime, los cortos que acompañan a cada episodio (*Maomao no Hitorigoto*) pasan a «Otros archivos».
+- Tests: 544 comprobaciones.
+
 ### Películas con otro nombre en TMDB
 - TMDB reconoce una película aunque la ficha lleve la saga delante («Kimetsu no Yaiba: Guardianes de la Noche - Tren Infinito»), diga «Movie» o «Película», o tenga una errata que el nombre del archivo no tiene (D-050). *Tren infinito* sale una sola vez, con las fichas de los dos canales.
 - *Las Cositas*: 21 películas más reconocidas en TMDB, sin cambiar ni perder ninguna. Tests: 523 comprobaciones.

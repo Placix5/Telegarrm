@@ -779,6 +779,22 @@ Item buildItem(std::vector<const Block*> group) {
         appendUnique(item.languages, {language});
     }
 
+    // El mismo archivo subido otra vez (mismo nombre y mismo tamaño): una sola versión, la primera
+    // (D-051). CrunchyShur repite así episodios enteros ("Los Diarios de la Boticaria S3 - 01.mp4").
+    {
+        std::set<std::tuple<std::string, std::int64_t, std::size_t>> seen;
+        std::vector<Release> unique;
+        for (Release& release : item.releases) {
+            std::string name = release.parts.front().fileName;
+            std::transform(name.begin(), name.end(), name.begin(),
+                           [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+            if (seen.emplace(std::move(name), release.size, release.parts.size()).second) {
+                unique.push_back(std::move(release));
+            }
+        }
+        item.releases = std::move(unique);
+    }
+
     // "Final Season": la siguiente a la última temporada numerada de la obra
     int lastSeason = 0;
     for (const Release& release : item.releases) {
@@ -789,6 +805,41 @@ Item buildItem(std::vector<const Block*> group) {
     for (Release& release : item.releases) {
         if (release.season == kFinalSeason) {
             release.season = lastSeason + 1;
+        }
+    }
+
+    // Canales de anime (D-051): junto a un episodio, un archivo diminuto con otro nombre de serie es un
+    // extra y no otra versión ("[Otsalia] Maomao no Hitorigoto - 01", un corto de 23 MB, junto a "The
+    // Apothecary Diaries S1 - 01", de 2,9 GB). Pasa a "Otros archivos".
+    if (first->anime && item.kind == "series") {
+        const auto seriesKey = [](const Release& release) {
+            const auto parsed = media::parseEpisode(release.name, true);
+            return parsed ? media::titleKey(parsed->seriesName) : std::string();
+        };
+        std::map<std::pair<int, int>, std::size_t> largest;  // Episodio -> su versión más grande
+        for (std::size_t i = 0; i < item.releases.size(); ++i) {
+            const Release& release = item.releases[i];
+            if (release.episode > 0) {
+                const auto [it, inserted] = largest.emplace(std::make_pair(release.season, release.episode), i);
+                if (!inserted && release.size > item.releases[it->second].size) {
+                    it->second = i;
+                }
+            }
+        }
+        std::vector<std::size_t> extras;
+        for (std::size_t i = 0; i < item.releases.size(); ++i) {
+            const Release& release = item.releases[i];
+            if (release.episode == 0) {
+                continue;
+            }
+            const Release& main = item.releases[largest.at({release.season, release.episode})];
+            if (&main != &release && release.size * 10 < main.size && seriesKey(release) != seriesKey(main)) {
+                extras.push_back(i);
+            }
+        }
+        for (const std::size_t i : extras) {
+            item.releases[i].episode = 0;
+            item.releases[i].episodeEnd = 0;
         }
     }
 
@@ -1052,6 +1103,10 @@ void Catalog::publish() {
     std::lock_guard<std::mutex> lock(mutex_);
     items_ = std::move(items);
     releaseIndex_ = std::move(index);
+    builtChannels_.clear();
+    for (const auto& entry : blocks_) {
+        builtChannels_.insert(entry.first);
+    }
     for (Event& event : fresh) {
         event.id = nextEventId_++;
         std::cout << "[Catálogo] Novedad en «" << event.title << "»: " << event.releases.size() << " archivo(s)"
@@ -1104,4 +1159,9 @@ Catalog::ItemPtr Catalog::find(std::int64_t chatId, std::int64_t anchorMessageId
         }
     }
     return nullptr;
+}
+
+bool Catalog::hasChannel(std::int64_t chatId) const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return builtChannels_.count(chatId) > 0;
 }
