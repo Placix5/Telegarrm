@@ -38,7 +38,8 @@ constexpr std::size_t kProgressEvery = 100;
 // Versión del criterio de coincidencia: al cambiarla, todas las obras se vuelven a buscar (con la
 // caché de TMDB casi no cuesta) y, mientras, se siguen mostrando los datos anteriores. 2: penalización
 // leve del año en series. 3: mismas palabras en otro orden y títulos alternativos de TMDB (D-048).
-constexpr int kMatcherVersion = 3;
+// 4: series unidas con sus continuaciones (D-049), para traer los episodios de sus temporadas nuevas.
+constexpr int kMatcherVersion = 4;
 constexpr const char* kMatcherVersionSetting = "tmdb_matcher_version";
 constexpr const char* kMatcherChangedSetting = "tmdb_matcher_changed_at";
 

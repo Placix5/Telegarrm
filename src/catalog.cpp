@@ -5,6 +5,7 @@
 #include <chrono>
 #include <ctime>
 #include <iostream>
+#include <limits>
 #include <map>
 #include <regex>
 #include <set>
@@ -210,6 +211,7 @@ struct Catalog::Block {
     bool hasFicha = false;
     bool anime = false;       // Del canal de anime: solo se une con bloques de su canal (D-047)
     bool attachToSeries = false;  // Extra (OVA, especial, película numerada) de la serie del tema
+    bool continuation = false;    // Continúa otra serie del canal (D-049): no da título, año ni identificador
     std::int64_t poster = 0;
     std::string caption;
     media::Ficha ficha;
@@ -378,6 +380,183 @@ bool belongsToBlock(const Block& block, const ParsedFile& parsed) {
                        [&parsed](const std::string& key) { return keysCompatible(key, parsed.titleKey); });
 }
 
+// Palabras de un título en su orden, normalizadas: "Kimetsu no Yaiba: Mugen Ressha-hen" -> "kimetsu",
+// "no", "yaiba", "mugen", "ressha", "hen"
+std::vector<std::string> titleWords(const std::string& title) {
+    std::vector<std::string> words;
+    std::string word;
+    const auto flush = [&words, &word] {
+        std::string key = media::titleKey(word);
+        if (!key.empty()) {
+            words.push_back(std::move(key));
+        }
+        word.clear();
+    };
+    for (const char c : title) {
+        const auto byte = static_cast<unsigned char>(c);
+        if (byte < 0x80 && std::isalnum(byte) == 0) {
+            flush();
+        } else {
+            word.push_back(c);
+        }
+    }
+    flush();
+    return words;
+}
+
+// D-049: una ficha de serie que continúa otra serie del mismo canal es esa serie. Su título amplía el
+// de la serie y su numeración sigue donde acaba la de la serie:
+// - "Kimetsu no Yaiba: Guardianes de la Noche - Arco de la aldea de los herreros" (3x01 a 3x11) tras
+//   "Kimetsu no Yaiba: Guardianes de la Noche" (1x01 a 2x18).
+// - En los canales de anime, un arco puede volver a empezar en el 01 dentro de la temporada ("Kimetsu no
+//   Yaiba S2 - Yuukaku-hen - 01" tras "Kimetsu no Yaiba S2 - 07"): sus episodios se numeran a
+//   continuación (2x08), como en TMDB. Solo si la temporada va en el nombre y no es la 1, para no unir
+//   así una numeración absoluta.
+// Los spin-offs, que vuelven a empezar en la temporada 1 ("Hora de Aventuras: Misiones Legendarias"),
+// siguen siendo obras aparte.
+void joinContinuations(std::vector<Block>& blocks, bool anime) {
+    // Obras del canal: bloques unidos por sus claves, como en mergeBlocks
+    std::vector<std::size_t> parent(blocks.size());
+    for (std::size_t i = 0; i < parent.size(); ++i) {
+        parent[i] = i;
+    }
+    const auto root = [&parent](std::size_t i) {
+        while (parent[i] != i) {
+            parent[i] = parent[parent[i]];
+            i = parent[i];
+        }
+        return i;
+    };
+    std::map<std::string, std::size_t> firstByKey;
+    for (std::size_t i = 0; i < blocks.size(); ++i) {
+        for (const std::string& key : blocks[i].keys) {
+            if (!key.empty()) {
+                const auto [it, inserted] = firstByKey.emplace(blocks[i].kind + "|" + key, i);
+                if (!inserted) {
+                    parent[root(i)] = root(it->second);
+                }
+            }
+        }
+    }
+
+    using Position = std::pair<int, int>;  // (temporada, episodio)
+    struct Work {
+        std::vector<std::size_t> blocks;
+        std::string title;  // El de su ficha más antigua, como en buildItem
+        std::vector<std::string> words;
+        std::int64_t anchor = std::numeric_limits<std::int64_t>::max();
+        Position first{std::numeric_limits<int>::max(), 0};
+        Position last{0, 0};
+        std::size_t joinedTo = 0;  // Índice + 1 de la obra a la que se ha unido (0 = ninguna)
+    };
+    std::map<std::size_t, std::size_t> workOfRoot;
+    std::vector<Work> works;
+    for (std::size_t i = 0; i < blocks.size(); ++i) {
+        if (blocks[i].kind != "series") {
+            continue;
+        }
+        const auto [it, inserted] = workOfRoot.emplace(root(i), works.size());
+        if (inserted) {
+            works.emplace_back();
+        }
+        works[it->second].blocks.push_back(i);
+    }
+    for (Work& work : works) {
+        std::int64_t fichaAnchor = std::numeric_limits<std::int64_t>::max();
+        for (const std::size_t i : work.blocks) {
+            const Block& block = blocks[i];
+            work.anchor = std::min(work.anchor, block.anchor);
+            if (block.hasFicha && block.anchor < fichaAnchor) {
+                fichaAnchor = block.anchor;
+                work.title = block.title;
+            }
+            for (const Release& release : block.releases) {
+                if (release.episode > 0) {
+                    work.first = std::min(work.first, Position{release.season, release.episode});
+                    work.last = std::max(work.last, Position{release.season, std::max(release.episode, release.episodeEnd)});
+                }
+            }
+        }
+        if (work.title.empty() && !work.blocks.empty()) {
+            work.title = blocks[work.blocks.front()].title;
+        }
+        work.words = titleWords(work.title);
+    }
+
+    // De la primera en publicarse a la última: así cada arco se une tras el anterior
+    std::vector<std::size_t> order;
+    for (std::size_t w = 0; w < works.size(); ++w) {
+        if (works[w].last.first > 0) {
+            order.push_back(w);
+        }
+    }
+    std::sort(order.begin(), order.end(), [&works](std::size_t a, std::size_t b) {
+        return std::make_pair(works[a].first, works[a].anchor) < std::make_pair(works[b].first, works[b].anchor);
+    });
+    const auto current = [&works](std::size_t w) {
+        while (works[w].joinedTo != 0) {
+            w = works[w].joinedTo - 1;
+        }
+        return w;
+    };
+    for (const std::size_t b : order) {
+        Work& later = works[b];
+        // La serie que continúa: la de título más largo que empieza igual que el suyo
+        std::size_t best = works.size();
+        for (std::size_t a = 0; a < works.size(); ++a) {
+            const Work& candidate = works[a];
+            if (a == b || candidate.last.first == 0 || candidate.words.empty() ||
+                candidate.words.size() >= later.words.size() ||
+                !std::equal(candidate.words.begin(), candidate.words.end(), later.words.begin())) {
+                continue;
+            }
+            if (best == works.size() || candidate.words.size() > works[best].words.size() ||
+                (candidate.words.size() == works[best].words.size() && candidate.anchor < works[best].anchor)) {
+                best = a;
+            }
+        }
+        if (best == works.size() || current(best) == b) {
+            continue;
+        }
+        Work& series = works[current(best)];
+
+        int offsetSeason = 0;
+        int offset = 0;
+        if (later.first <= series.last) {
+            const int season = later.first.first;
+            const bool explicitSeason = std::all_of(later.blocks.begin(), later.blocks.end(), [&](std::size_t i) {
+                return std::none_of(blocks[i].releases.begin(), blocks[i].releases.end(), [season](const Release& r) {
+                    return r.episode > 0 && r.season == season && r.absoluteEpisode;
+                });
+            });
+            if (!anime || season < 2 || season != series.last.first || later.first.second != 1 || !explicitSeason) {
+                continue;
+            }
+            offsetSeason = season;
+            offset = series.last.second;
+        }
+
+        const std::string seriesKey = media::titleKey(series.title);
+        for (const std::size_t i : later.blocks) {
+            for (Release& release : blocks[i].releases) {
+                if (offset > 0 && release.episode > 0 && release.season == offsetSeason) {
+                    release.episode += offset;
+                    release.episodeEnd = release.episodeEnd > 0 ? release.episodeEnd + offset : 0;
+                }
+            }
+            appendUnique(blocks[i].keys, {seriesKey});  // mergeBlocks las une por esta clave
+            blocks[i].continuation = true;
+        }
+        Position last = later.last;
+        if (offset > 0 && last.first == offsetSeason) {
+            last.second += offset;
+        }
+        series.last = std::max(series.last, last);
+        series.blocks.insert(series.blocks.end(), later.blocks.begin(), later.blocks.end());
+        later.joinedTo = current(best) + 1;
+    }
+}
+
 std::vector<Block> buildBlocks(std::int64_t chatId, const std::string& channelTitle,
                                const std::vector<Message>& messages, const std::vector<DbManager::Topic>& topics,
                                Catalog::ParseCache& cache) {
@@ -525,13 +704,18 @@ std::vector<Block> buildBlocks(std::int64_t chatId, const std::string& channelTi
             blocks.push_back(std::move(block));
         }
     }
+    joinContinuations(blocks, anime);
     return blocks;
 }
 
 std::optional<int> mostCommonYear(const std::vector<const Block*>& group) {
+    // El de la serie, no el de sus continuaciones (D-049), si alguna ficha suya lo dice
+    const bool fromSeries = std::any_of(group.begin(), group.end(), [](const Block* block) {
+        return !block->continuation && block->ficha.year;
+    });
     std::map<int, int> counts;
     for (const Block* block : group) {
-        if (block->ficha.year) {
+        if (block->ficha.year && (!fromSeries || !block->continuation)) {
             ++counts[*block->ficha.year];
         }
     }
@@ -547,9 +731,11 @@ std::optional<int> mostCommonYear(const std::vector<const Block*>& group) {
 }
 
 Item buildItem(std::vector<const Block*> group) {
-    // El bloque más antiguo identifica la obra y aporta los datos principales
+    // El bloque más antiguo identifica la obra y aporta los datos principales; los que continúan
+    // otra serie (D-049), solo si no hay otros
     std::sort(group.begin(), group.end(), [](const Block* a, const Block* b) {
-        return std::make_pair(a->chatId, a->anchor) < std::make_pair(b->chatId, b->anchor);
+        return std::make_tuple(a->continuation, a->chatId, a->anchor) <
+               std::make_tuple(b->continuation, b->chatId, b->anchor);
     });
     const Block* first = group.front();
     const auto withFicha = std::find_if(group.begin(), group.end(), [](const Block* b) { return b->hasFicha; });

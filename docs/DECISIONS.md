@@ -54,6 +54,7 @@ Formato: **Contexto** (qué problema había), **Decisión**, **Alternativas desc
 | [D-046](#d-046-la-web-en-el-móvil) | La web en el móvil | Vigente |
 | [D-047](#d-047-canales-de-anime-crunchyshur) | Canales de anime (CrunchyShur) | Vigente |
 | [D-048](#d-048-la-misma-obra-en-varios-canales) | La misma obra en varios canales | Vigente |
+| [D-049](#d-049-temporadas-y-arcos-con-ficha-propia) | Temporadas y arcos con ficha propia | Vigente |
 
 ---
 
@@ -712,7 +713,7 @@ Formato: **Contexto** (qué problema había), **Decisión**, **Alternativas desc
     - Se separan *La fortaleza infinita*, *Obsession* y *Mortal Kombat II*; las tres de *Evangelion*, y las cuatro de *Rebel Moon*.
     - *Desencanto* y *500 días juntos* recuperan el título completo.
     - Desaparecen los alternativos sin sentido («Ultimate», «UNCUT», «16:9 y 4:3», «sin Granulado», «TVRip»…).
-    - Efecto secundario: *Ataque a los Titanes: La temporada final* y sus «capítulos finales» (4x29 y 4x30) eran una obra solo porque las dos fichas decían «Versión del Blu-ray». Ahora salen separadas.
+    - Efecto secundario: *Ataque a los Titanes: La temporada final* y sus «capítulos finales» (4x29 y 4x30) eran una obra solo porque las dos fichas decían «Versión del Blu-ray». Salían separadas hasta D-049, que las vuelve a unir.
   - **TMDB** en la Pi, tras volver a buscar todas las obras: 2 570 de 3 481 encontradas (antes, 2 400).
     - *Las Cositas*: 58 nuevas y ninguna perdida. Se corrigen 2: *La fortaleza infinita* (era *AV-1*) y *Ranma ½*, que pasa a la serie de 1989 (la de sus 161 episodios) en lugar de la de 2024.
     - CrunchyShur: 117 nuevas (*Boku no Hero Academia*, *Shingeki no Kyojin*, *Kono Subarashii Sekai ni Shukufuku wo!*…). Ningún arco ni secuela cae en la serie de TMDB que lo tiene como temporada.
@@ -727,4 +728,35 @@ Formato: **Contexto** (qué problema había), **Decisión**, **Alternativas desc
     - Unir los arcos de los canales de anime a su serie, con la temporada que les corresponde en TMDB.
     - TMDB tiene mal el título en castellano de *Battle for the Planet of the Apes* («La conquista del planeta de los simios»). Por eso las dos películas de *Las Cositas* (*La conquista…* y *Batalla…*) salen juntas.
     - *Ranma ½* de CrunchyShur (la de 2024) comparte clave con la de *Las Cositas*: tiene los datos de la de 1989, y lo que se descargue de ella iría a esa carpeta.
+
+## D-049: Temporadas y arcos con ficha propia
+*10/10/2026*
+
+- **Contexto**: Plácido vio que *Kimetsu no Yaiba* llegaba hasta la temporada 2 y el resto salía aparte. Pasaba en los dos canales:
+  - **Las Cositas**: las temporadas 3 y 4 tienen ficha propia con el nombre del arco («Kimetsu no Yaiba: Guardianes de la Noche - Arco de la aldea de los herreros»). Sus archivos sí van numerados como la serie (`3x01`, `4x01`), pero un título distinto era otra obra. Igual con *Miracle Workers*, *Los diarios de la boticaria*, *Star Trek* y otras.
+  - **CrunchyShur**: un arco por ficha y por tema («Kimetsu no Yaiba: Mugen Ressha-hen»). Además, `Kimetsu no Yaiba S3 - Katanakaji no Sato Hen - 01` no se entendía: la temporada iba antes del nombre del arco y se tomaba como temporada 1.
+  - D-048 no los juntaba: agrupa por TMDB, y las fichas de arco no se reconocen en TMDB a propósito, porque su numeración no es la de TMDB.
+- **Decisión**: una ficha de serie que **continúa** otra serie del mismo canal es esa serie.
+  - **Condiciones**: su título empieza por el de la serie (palabra a palabra) y su numeración sigue donde acaba la de la serie (su primer episodio va después del último de la serie). Si hay varias series candidatas, la de título más largo. Se unen de la primera en publicarse a la última, así que cada arco sigue al anterior.
+  - **Canales de anime**: un arco puede volver a empezar en el 01 dentro de la misma temporada. CrunchyShur pone «S2» a *Mugen Ressha-hen* (7 episodios) y a *Yuukaku-hen* (11). Entonces sus episodios se numeran a continuación (2x08 a 2x18), como en TMDB. Solo si la temporada va en el nombre del archivo y no es la 1, para no unir así una numeración absoluta.
+  - **Lo que manda es la serie**: la obra conserva el título, el año y el identificador de la serie. Los de los arcos quedan como títulos alternativos.
+  - **Nombres de archivo**: en los canales de anime se lee `Serie S3 - Arco - 01` (temporada 3, episodio 1), salvo si el «arco» es un especial («S2 - OVA - 01»).
+  - **TMDB**: el criterio pasa a la versión 4, para volver a buscar las obras y traer los episodios de sus temporadas nuevas.
+- **Alternativas descartadas**:
+  - **Unir por TMDB las fichas de arco**: TMDB guarda los arcos como temporadas, pero no dice cuál es cada uno de forma fiable; los tipos de sus títulos alternativos («Season 3 Romaji») no siguen su propia numeración.
+  - **Unir por el título sin mirar la numeración**: uniría los spin-offs, que vuelven a empezar en la temporada 1 (*Hora de Aventuras: Misiones Legendarias*).
+- **Verificación** con `tools/catalog_dump.cpp`:
+  - *Las Cositas*: 7 series unidas, todas la misma serie partida en fichas:
+    - *Kimetsu no Yaiba: Guardianes de la Noche*: 4 temporadas y 63 episodios.
+    - *Ataque a los Titanes: La temporada final*: vuelve a tener sus «capítulos finales», 4x29 y 4x30 (ver D-048).
+    - *Miracle Workers*: 4 temporadas.
+    - *Los diarios de la boticaria*: 2.
+    - *Huevos verdes con jamón*: 2.
+    - *Star Trek - The Original Series*: 3.
+    - *Ed, Edd y Eddy*: 5.
+    - Ninguna otra obra cambia, y todas conservan su identificador (seguimientos y descargas).
+  - CrunchyShur: unas 35 series unidas: *Kimetsu no Yaiba* (4 temporadas, 63 episodios, como en TMDB), *Shingeki no Kyojin*, *Haikyuu!!*, *Tokyo Revengers*, *Gintama*, *Ao no Exorcist*…
+  - Con *Kimetsu no Yaiba* reconocida en TMDB en los dos canales, D-048 las muestra como una sola obra.
+  - Tests: 505 comprobaciones.
+- **Consecuencias**: un arco que vuelva a empezar en la temporada 1 sin decir la temporada sigue siendo obra aparte, igual que un spin-off.
 

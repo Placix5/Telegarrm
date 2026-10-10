@@ -389,10 +389,15 @@ std::optional<EpisodeInfo> parseAnimeEpisode(const std::string& clean) {
     struct Pattern {
         std::regex regex;
         bool withSeason;  // El grupo 1 es la temporada y el 2 el episodio; si no, el 1 es el episodio
+        bool withArc = false;  // Con temporada: el grupo 2 es el nombre del arco y el 3 el episodio
     };
     static const Pattern kPatterns[] = {
         {std::regex(R"((?:^|\s)[TS](\d{1,2})\s*-\s*(\d{1,4})(?:v\d)?(?![0-9]|p\b))", kIcase), true},
         {std::regex(R"((?:^|\s)S(\d{1,2})\s*EP?\s*(\d{1,4})(?![0-9]))", kIcase), true},
+        // "Kimetsu no Yaiba S3 - Katanakaji no Sato Hen - 01 [1080p]": temporada, arco y episodio (D-049)
+        {std::regex(R"((?:^|\s)[TS](\d{1,2})\s+-\s+([^\d\s\[\(][^\[\(]*?)\s+-\s*(\d{1,4})(?:v\d)?(?=\s|\.|\[|\(|$))",
+                    kIcase),
+         true, true},
         // "Serie - 01", "Serie - 001 [h264]", "Serie - 01 - Título", "Serie - 25 END"
         {std::regex(R"(\s-\s*(\d{1,4})(?:v\d)?(?=\s|\.|\[|\(|$))", kIcase), false},
         // "Serie 003 [7E936FD9]", "Kochikame 165 - Título" (sin guion, solo con 3 o 4 cifras)
@@ -408,9 +413,10 @@ std::optional<EpisodeInfo> parseAnimeEpisode(const std::string& clean) {
             continue;
         }
         const std::string before = text.substr(0, static_cast<std::size_t>(match.position(0)));
-        const int episode = std::stoi(match[pattern.withSeason ? 2 : 1].str());
-        if (precededBySpecial(before) || (!pattern.withSeason && isYear(episode))) {
-            continue;  // "Serie 5 ONA - 01", "Batman - 1989"
+        const int episode = std::stoi(match[pattern.withArc ? 3 : pattern.withSeason ? 2 : 1].str());
+        if (precededBySpecial(before) || (!pattern.withSeason && isYear(episode)) ||
+            (pattern.withArc && precededBySpecial(match[2].str()))) {
+            continue;  // "Serie 5 ONA - 01", "Batman - 1989", "Serie S2 - OVA - 01"
         }
         EpisodeInfo info;
         info.season = pattern.withSeason ? std::stoi(match[1].str()) : 1;

@@ -154,6 +154,11 @@ Ejemplo de `/api/status`:
 Los pasos del inicio de sesión responden `{"ok": true}`, o `{"error": "..."}` con HTTP 400 (dato incorrecto, ej. `PHONE_CODE_INVALID`), 409 (Telegram no espera ese dato ahora) o 504 (Telegram no responde).
 
 ## Historial de cambios
+### Temporadas con ficha propia
+- Una ficha de temporada o de arco con su propio título («Kimetsu no Yaiba: Guardianes de la Noche - Arco de la aldea de los herreros») se une a su serie si continúa su numeración (D-049). *Kimetsu no Yaiba* sale con sus 4 temporadas en *Las Cositas* y en CrunchyShur, y como una sola obra.
+- En los canales de anime, los arcos que vuelven a empezar en el 01 dentro de una temporada se numeran a continuación, como en TMDB, y se lee `Serie S3 - Arco - 01`.
+- Tests: 505 comprobaciones.
+
 ### La misma obra en varios canales
 - El catálogo junta las obras que son la misma según TMDB, aunque estén en varios canales o con otro nombre (D-048). *Boku no Hero Academia* (CrunchyShur) y *My Hero Academia* (*Las Cositas*) salen como una sola obra; en su ficha se elige de qué canal ver los archivos. 91 obras están en más de un sitio.
 - Filtro por canal en el catálogo.

@@ -1561,6 +1561,16 @@ void testCatalogEvents() {
 
 // --- Canales de anime (D-047), con nombres reales de CrunchyShur (08/10/2026) ---
 
+void testAnimeArcEpisodes() {
+    // D-049: "Serie S3 - Arco - 01" en los canales de anime
+    auto e = media::parseEpisode("Kimetsu no Yaiba S3 - Katanakaji no Sato Hen - 01 [1080p].mkv", true);
+    CHECK(e && e->season == 3 && e->episode == 1 && !e->absolute && e->seriesName == "Kimetsu no Yaiba");
+    e = media::parseEpisode("Kimetsu no Yaiba S2 - Yuukaku-hen - 11 [1080p].mkv", true);
+    CHECK(e && e->season == 2 && e->episode == 11);
+    // Fuera de los canales de anime no cambia nada
+    CHECK(!media::parseEpisode("Kimetsu no Yaiba S3 - Katanakaji no Sato Hen - 01 [1080p].mkv", false));
+}
+
 void testAnimeEpisodes() {
     const auto anime = [](const std::string& name) { return media::parseEpisode(name, true); };
     auto e = anime("[Ñ] Boku no Hero Academia - 01 [BD 720p] [142592D6].mkv");
@@ -1675,6 +1685,79 @@ void testCatalogAnimeChannel() {
     }
     if (naruto) {
         CHECK(naruto->kind == "series" && naruto->seasonCount == 1 && naruto->episodeCount == 11);
+    }
+}
+
+// D-049: una ficha de serie que continúa la numeración de otra serie del canal es esa serie
+void testCatalogContinuations() {
+    // Las Cositas: las temporadas 3 y 4 de Kimetsu no Yaiba tienen ficha propia (10/2026)
+    {
+        std::vector<Message> messages;
+        std::int64_t id = 1;
+        const auto add = [&](Message message) { messages.push_back(inTopic(message, 4)); };
+        add(photo(id++, "Kimetsu no Yaiba: Guardianes de la Noche - Temporada 1 (1080p)"));
+        add(video(id++, "Kimetsu no Yaiba: Guardianes de la Noche - 1x01.mkv", 100));
+        add(video(id++, "Kimetsu no Yaiba: Guardianes de la Noche - 1x02.mkv", 100));
+        add(photo(id++, "Kimetsu no Yaiba: Guardianes de la Noche - Temporada 2 (1080p)"));
+        add(video(id++, "Kimetsu no Yaiba: Guardianes de la Noche - 2x01.mkv", 100));
+        add(photo(id++, "Hora de Aventuras - Temporada 1 (1080p)"));
+        add(video(id++, "Hora de Aventuras 1x01.mkv", 100));
+        add(video(id++, "Hora de Aventuras 1x02.mkv", 100));
+        add(photo(id++, "Kimetsu no Yaiba: Guardianes de la Noche - Arco de la aldea de los herreros (1080p)"));
+        add(video(id++, "GdlN: KnY - 3x01.mkv", 100));
+        add(video(id++, "GdlN: KnY - 3x02.mkv", 100));
+        add(photo(id++, "Kimetsu no Yaiba: Guardianes de la Noche - Arco del entrenamiento de los pilares (1080p)"));
+        add(video(id++, "Kimetsu no Yaiba: Guardianes de la Noche - 4x01.mkv", 100));
+        // Un spin-off vuelve a empezar en la temporada 1: es otra obra
+        add(photo(id++, "Hora de Aventuras: Misiones Legendarias - Temporada 1 (1080p)"));
+        add(video(id++, "Hora de Aventuras Misiones Legendarias 1x01.mkv", 100));
+        const auto items = build(-500, "Las Cositas", messages, kTopics);
+        CHECK_EQ(static_cast<int>(items.size()), 3);
+        const auto kimetsu = std::find_if(items.begin(), items.end(), [](const Catalog::Item& item) {
+            return item.title == "Kimetsu no Yaiba: Guardianes de la Noche";
+        });
+        CHECK(kimetsu != items.end() && kimetsu->seasonCount == 4 && kimetsu->episodeCount == 6 &&
+              kimetsu->anchorMessageId == 1);
+    }
+
+    // CrunchyShur: un arco por ficha; "S2 - Yuukaku-hen - 01" vuelve a empezar dentro de la temporada 2
+    {
+        const std::vector<DbManager::Topic> topics = {{77, "Kimetsu no Yaiba", 0}};
+        std::vector<Message> messages;
+        std::int64_t id = 1;
+        const auto add = [&](Message message) { messages.push_back(inTopic(message, 77)); };
+        const auto two = [](int n) { return (n < 10 ? "0" : "") + std::to_string(n); };
+        add(photo(id++, "Kimetsu no Yaiba\nDemon Slayer: Kimetsu no Yaiba"));
+        for (int n = 1; n <= 26; ++n) {
+            add(video(id++, "Kimetsu no Yaiba - " + two(n) + " [1080p].mkv", 100));
+        }
+        add(photo(id++, "Kimetsu no Yaiba: Mugen Ressha-hen\nDemon Slayer: Kimetsu no Yaiba Arco del Tren Infinito"));
+        for (int n = 1; n <= 7; ++n) {
+            add(video(id++, "Kimetsu no Yaiba S2 - " + two(n) + " [1080p].mkv", 100));
+        }
+        add(photo(id++, "Kimetsu no Yaiba: Yuukaku-hen\nDemon Slayer: Kimetsu no Yaiba Entertainment District Arc"));
+        for (int n = 1; n <= 11; ++n) {
+            add(video(id++, "Kimetsu no Yaiba S2 - Yuukaku-hen - " + two(n) + " [1080p].mkv", 100));
+        }
+        add(photo(id++, "Kimetsu no Yaiba: Hashira Geiko-hen\nDemon Slayer: Kimetsu no Yaiba Hashira Training Arc"));
+        for (int n = 1; n <= 8; ++n) {
+            add(video(id++, "Kimetsu no Yaiba S4 - Hashira Geiko Hen - " + two(n) + " [1080p].mkv", 100));
+        }
+        const auto items = build(-700, "CrunchyShur", messages, topics);
+        CHECK_EQ(static_cast<int>(items.size()), 1);
+        if (items.size() != 1) {
+            return;
+        }
+        CHECK_EQ(items[0].title, "Kimetsu no Yaiba");
+        CHECK_EQ(items[0].seasonCount, 3);
+        CHECK_EQ(items[0].episodeCount, 26 + 18 + 8);
+        // El arco que vuelve a empezar sigue tras el anterior: 2x08 a 2x18, como en TMDB
+        std::set<std::pair<int, int>> episodes;
+        for (const Catalog::Release& release : items[0].releases) {
+            episodes.emplace(release.season, release.episode);
+        }
+        CHECK(episodes.count({2, 7}) && episodes.count({2, 8}) && episodes.count({2, 18}) && !episodes.count({2, 19}));
+        CHECK(episodes.count({4, 1}) && episodes.count({4, 8}));
     }
 }
 
@@ -1824,9 +1907,11 @@ int main() {
     testFindVideoStart();
     testCatalogEvents();
     testAnimeEpisodes();
+    testAnimeArcEpisodes();
     testCatalogAnimeChannel();
     testWorkGroups();
     testTmdbMatching();
+    testCatalogContinuations();
 
     std::cout << (checks - failures) << "/" << checks << " comprobaciones correctas" << std::endl;
     return failures == 0 ? 0 : 1;

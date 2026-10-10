@@ -1,6 +1,6 @@
 # Hoja de ruta de Telegarrm
 
-*Estado al 10/10/2026: Fases 1 a 4.1 completadas; canales de anime (D-047) y obras agrupadas por TMDB (D-048).*
+*Estado al 10/10/2026: Fases 1 a 4.1 completadas; canales de anime (D-047), obras agrupadas por TMDB (D-048) y temporadas con ficha propia (D-049).*
 
 Documento vivo con el plan de implementación; los motivos de cada decisión están en [DECISIONS.md](DECISIONS.md) y cómo está construido, en [01_architecture_and_phases.md](01_architecture_and_phases.md). Lo mantiene Claude Code (desarrollo y plan técnico); Gemini revisa el código y la documentación; Plácido decide prioridades y valida en uso real.
 
@@ -83,9 +83,9 @@ Formato real visto: canales de una serie con una ficha (foto + pie con título, 
 - [x] Fichas que unían películas distintas por un paréntesis: «(1080p AV1)» juntaba *La fortaleza infinita*, *Obsession* y *Mortal Kombat II*; «You Are (Not) Alone», las tres de *Evangelion* (D-048).
 - [x] TMDB: mismas palabras en otro orden y títulos alternativos (romaji, inglés…), sin arcos ni secuelas en los canales de anime.
 - [x] Catálogo con una tarjeta por obra (las de la misma ficha de TMDB, juntas), filtro por canal y, en la ficha, los canales donde está.
-- [ ] Los arcos y secuelas de los canales de anime siguen siendo obras aparte (*Gintama. Porori-hen*, *Full Metal Panic! The Second Raid*). Para unirlos haría falta saber qué temporada de TMDB es cada uno; TMDB lo apunta a veces en el tipo de sus títulos alternativos («Season 3 Romaji»).
+- [x] Temporadas y arcos con ficha propia que continúan la numeración de su serie, unidos a ella (D-049): *Kimetsu no Yaiba* con sus 4 temporadas en los dos canales, *Miracle Workers*, *Shingeki no Kyojin*…
+- [ ] Los arcos que vuelven a empezar en la temporada 1 sin decir la temporada siguen siendo obras aparte (*Full Metal Panic! The Second Raid*).
 - [ ] Si cambia la ficha de TMDB de una obra ya descargada, su carpeta de la biblioteca no se mueve sola.
-- [ ] *Ataque a los Titanes: La temporada final* y sus «capítulos finales» (4x29 y 4x30) eran una obra solo porque las dos fichas decían «Versión del Blu-ray»; ahora salen separadas.
 - [ ] Datos de TMDB mal puestos que juntan obras distintas: *La conquista del planeta de los simios* y *Batalla por el planeta de los simios* salen juntas, y *Ranma ½* de 2024 (CrunchyShur) comparte datos con la de 1989 (*Las Cositas*).
 
 ## Siguientes pasos
@@ -112,4 +112,4 @@ Por decidir con Plácido; ninguno está empezado.
 - Renombrar los archivos de la biblioteca cuya etiqueta de calidad no coincide con el vídeo (importados antes de D-039).
 
 ### Hecho de lo transversal
-- [x] Tests (`ctest`) del parser, el catálogo, la BD, la biblioteca, el seguimiento y TMDB: 494 comprobaciones, algunas con vídeos y comprimidos reales generados con ffmpeg y 7-Zip.
+- [x] Tests (`ctest`) del parser, el catálogo, la BD, la biblioteca, el seguimiento y TMDB: 505 comprobaciones, algunas con vídeos y comprimidos reales generados con ffmpeg y 7-Zip.
