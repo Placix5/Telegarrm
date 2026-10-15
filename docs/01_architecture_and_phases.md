@@ -25,14 +25,14 @@ Telegram ⇄ TDLib ⇄ TelegramClient (hilo receptor: respuestas y actualizacion
 ## Canales
 
 El catálogo distingue dos tipos de canal, que detecta solo por los nombres de sus archivos (D-047):
-- **Normales**, como *Las Cositas*: fichas (foto con pie) seguidas de sus archivos, episodios `1x01` o `S01E01` y temas por categoría («Películas», «Series en emisión»…).
-- **De anime**, como CrunchyShur: un tema por obra y numeración del anime (`Serie - 01`, `Serie S2 - 08`, `Serie T2 - 01`). Lo son si al menos una cuarta parte de sus archivos usa esa numeración.
+- **Normales**, como *Canal Principal*: fichas (foto con pie) seguidas de sus archivos, episodios `1x01` o `S01E01` y temas por categoría («Películas», «Series en emisión»…).
+- **De anime**, como Canal Anime: un tema por obra y numeración del anime (`Serie - 01`, `Serie S2 - 08`, `Serie T2 - 01`). Lo son si al menos una cuarta parte de sus archivos usa esa numeración.
   - Solo en ellos se aplican sus reglas: temporadas de la ficha, «Final Season», y extras y arcos unidos a la serie del tema.
   - Sus obras no se mezclan con las de otros canales, así que añadir un canal de anime no cambia el resto del catálogo.
 
 **Temporadas con ficha propia** (D-049): una ficha de serie cuyo título amplía el de otra serie del canal y cuya numeración la continúa es esa serie (las temporadas 3 y 4 de *Kimetsu no Yaiba*, cada una con su ficha). Los spin-offs, que vuelven a la temporada 1, siguen aparte.
 
-**La misma obra en varios canales** (D-048): el catálogo calcula las obras de cada canal por separado y TMDB dice cuáles son la misma (*Boku no Hero Academia* en CrunchyShur y *My Hero Academia* en *Las Cositas*). La web las muestra como una sola, y en su ficha se elige de qué canal ver los archivos. Cada una conserva su numeración, sus archivos y su seguimiento; lo que se descarga de cualquiera va a la misma carpeta de la biblioteca, porque la carpeta lleva el identificador de TMDB.
+**La misma obra en varios canales** (D-048): el catálogo calcula las obras de cada canal por separado y TMDB dice cuáles son la misma (*Boku no Hero Academia* en Canal Anime y *My Hero Academia* en *Canal Principal*). La web las muestra como una sola, y en su ficha se elige de qué canal ver los archivos. Cada una conserva su numeración, sus archivos y su seguimiento; lo que se descarga de cualquiera va a la misma carpeta de la biblioteca, porque la carpeta lleva el identificador de TMDB.
 - Para reconocer una obra, `MetadataService` compara sus títulos con el nombre del resultado de TMDB (también con las mismas palabras en otro orden) y, si ninguno encaja, con los títulos alternativos de los tres primeros resultados (el romaji, por ejemplo).
 - En películas, además: sin «Movie»/«Película», sin la saga de delante (si algún título del resultado la lleva) y con el título del archivo (D-050). Las coincidencias aproximadas necesitan el mismo año.
 - No valen los de una temporada, un arco o un especial. En los canales de anime, tampoco los de una secuela (*Full Metal Panic! The Second Raid*) ni los que no dicen que son el nombre de la obra entera: un arco publicado como serie aparte acabaría en la temporada 1 de la serie.

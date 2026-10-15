@@ -81,8 +81,8 @@ private:
 };
 
 // Obras del catálogo que son la misma según TMDB (D-048): la misma serie o película publicada en
-// varios canales o con otro nombre ("Boku no Hero Academia" en CrunchyShur y "My Hero Academia" en
-// Las Cositas). El catálogo de la web muestra cada grupo como una sola obra; cada una conserva sus
+// varios canales o con otro nombre ("Boku no Hero Academia" en Canal Anime y "My Hero Academia" en
+// Canal Principal). El catálogo de la web muestra cada grupo como una sola obra; cada una conserva sus
 // archivos, su numeración y su seguimiento.
 namespace works {
 

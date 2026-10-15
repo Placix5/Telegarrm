@@ -566,8 +566,8 @@ std::vector<Block> buildBlocks(std::int64_t chatId, const std::string& channelTi
     }
 
     // ¿Canal de anime? (D-047) Si al menos una cuarta parte de sus archivos (y 20 como mínimo) usa la
-    // numeración del anime ("Serie - 01", "Serie T2 - 01") y no la normal. Las Cositas: un 0,4 %;
-    // CrunchyShur: un 80 %.
+    // numeración del anime ("Serie - 01", "Serie T2 - 01") y no la normal. Canal Principal: un 0,4 %;
+    // Canal Anime: un 80 %.
     std::size_t mediaFiles = 0;
     std::size_t animeFiles = 0;
     for (const Message& message : messages) {
@@ -780,7 +780,7 @@ Item buildItem(std::vector<const Block*> group) {
     }
 
     // El mismo archivo subido otra vez (mismo nombre y mismo tamaño): una sola versión, la primera
-    // (D-051). CrunchyShur repite así episodios enteros ("Los Diarios de la Boticaria S3 - 01.mp4").
+    // (D-051). Canal Anime repite así episodios enteros ("Los Diarios de la Boticaria S3 - 01.mp4").
     {
         std::set<std::tuple<std::string, std::int64_t, std::size_t>> seen;
         std::vector<Release> unique;

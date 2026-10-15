@@ -334,12 +334,12 @@ void testCatalogLibraryChannel() {
 void testCatalogRepeatedSeriesName() {
     // Canal de prueba de Plácido (07/10/2026): sin ficha y con un nombre que no es el de la serie
     std::vector<Message> messages = {video(1, "1x01 - Ultimate Spiderman.mkv", 364'520'659)};
-    auto items = build(-5530696118, "Prueba Claude", messages);
+    auto items = build(-5000000001, "Prueba Claude", messages);
     // Con un solo episodio no se sabe si "Ultimate Spiderman" es la serie o el título del episodio
     CHECK(items.size() == 1 && items[0].title == "Prueba Claude");
     // Con dos que lo repiten, es la serie; sigue siendo la misma obra (la identifica su primer archivo)
     messages.push_back(video(2, "1x02 - Ultimate Spiderman.mkv", 364'000'000));
-    items = build(-5530696118, "Prueba Claude", messages);
+    items = build(-5000000001, "Prueba Claude", messages);
     CHECK(items.size() == 1 && items[0].title == "Ultimate Spiderman" && items[0].anchorMessageId == 1);
     CHECK(items.size() == 1 && items[0].releases[1].episodeTitle.empty());
     // Si el canal se llama como la serie, se queda su título (mejor escrito)
@@ -388,7 +388,7 @@ void testCatalogMovieVersions() {
         inTopic(video(202, "El asesino con ojos de corazón (4K HDR).zip.002", 2'150'000'000, "", ""), 16088),
         inTopic(video(203, "El asesino con ojos de corazón (4K HDR).zip.003", 900'000'000, "", ""), 16088),
     };
-    const auto items = build(-500, "Las Cositas", messages, kTopics);
+    const auto items = build(-500, "Canal Principal", messages, kTopics);
     CHECK_EQ(static_cast<int>(items.size()), 1);
     if (items.size() != 1) {
         return;
@@ -426,7 +426,7 @@ void testCatalogAiringSeries() {
         inTopic(photo(30, "Ted Lasso - Temporada 4 (1080p)\n\nEpisodio 9"), 335),
         inTopic(video(31, "Ted Lasso nuevo.mkv", 1'500'000'000), 335),
     };
-    const auto items = build(-500, "Las Cositas", messages, kTopics);
+    const auto items = build(-500, "Canal Principal", messages, kTopics);
     CHECK_EQ(static_cast<int>(items.size()), 1);
     if (items.size() != 1) {
         return;
@@ -454,7 +454,7 @@ void testCatalogInterleavedTopics() {
         inTopic(video(3, "Peli A (1080p).mkv", 100), 2),
         inTopic(video(4, "Serie B 1x01.mkv", 100), 4),
     };
-    const auto items = build(-500, "Las Cositas", messages, kTopics);
+    const auto items = build(-500, "Canal Principal", messages, kTopics);
     CHECK_EQ(static_cast<int>(items.size()), 2);
     const Catalog::Item* movie = findTitle(items, "Peli A");
     const Catalog::Item* series = findTitle(items, "Serie B");
@@ -477,7 +477,7 @@ void testCatalogAlternateTitles() {
         inTopic(photo(3, "Secuestro en el aire - Temporada 2 (1080p)"), 4),
         inTopic(video(4, "Secuestro en el aire 2x01.mkv", 100), 4),
     };
-    const auto items = build(-500, "Las Cositas", messages, kTopics);
+    const auto items = build(-500, "Canal Principal", messages, kTopics);
     CHECK_EQ(static_cast<int>(items.size()), 1);
     if (items.size() != 1) {
         return;
@@ -486,7 +486,7 @@ void testCatalogAlternateTitles() {
     CHECK_EQ(items[0].alternateTitles, Strings{"Secuestro en el aire"});
     CHECK_EQ(items[0].seasonCount, 2);
 
-    // D-048: tres películas con "(1080p AV1)" en la ficha (Las Cositas, 10/2026) son tres obras
+    // D-048: tres películas con "(1080p AV1)" en la ficha (Canal Principal, 10/2026) son tres obras
     const std::vector<Message> av1 = {
         inTopic(photo(10, "Kimetsu no Yaiba: Guardianes de la Noche - La fortaleza infinita (1080p AV1)"), 2),
         inTopic(video(11, "Kimetsu no Yaiba La fortaleza infinita (1080p).mkv", 100), 2),
@@ -495,7 +495,7 @@ void testCatalogAlternateTitles() {
         inTopic(photo(14, "Mortal Kombat II (1080p AV1)"), 2),
         inTopic(video(15, "Mortal Kombat II (1080p).mkv", 100), 2),
     };
-    CHECK_EQ(static_cast<int>(build(-500, "Las Cositas", av1, kTopics).size()), 3);
+    CHECK_EQ(static_cast<int>(build(-500, "Canal Principal", av1, kTopics).size()), 3);
 }
 
 void testCatalogRemakes() {
@@ -506,7 +506,7 @@ void testCatalogRemakes() {
         inTopic(photo(3, "La guerra de los mundos (2025) (4K HDR)"), 16088),
         inTopic(video(4, "La guerra de los mundos (2025) (4K HDR).mkv", 100), 16088),
     };
-    const auto items = build(-500, "Las Cositas", messages, kTopics);
+    const auto items = build(-500, "Canal Principal", messages, kTopics);
     CHECK_EQ(static_cast<int>(items.size()), 2);
     std::set<int> years;
     for (const Catalog::Item& item : items) {
@@ -586,7 +586,7 @@ Message inAlbum(Message message, std::int64_t albumId) {
 // Errores reales encontrados al sincronizar el canal grande (06/10/2026)
 void testRealRegressions() {
     // "..._2_0x264_..." no es la temporada 0, episodio 264: es el códec
-    CHECK(!media::parseEpisode("El_cielo_gira_2004_tmdbid_63619_480pLayer_3_2_0x264_spa_LasCositas.mkv"));
+    CHECK(!media::parseEpisode("El_cielo_gira_2004_tmdbid_63619_480pLayer_3_2_0x264_spa_CanalPrincipal.mkv"));
     CHECK(!media::parseEpisode("Pelicula 5.1x264.mkv"));
     // Corchetes al principio: parte del nombre
     CHECK_EQ(media::cleanTitle("[REC] 2 (1080p)"), "REC 2");
@@ -663,7 +663,7 @@ void testCatalogFilesWithoutFicha() {
         inTopic(photo(10, "Las ovejas detectives (1080p)"), 2),
         inTopic(inAlbum(video(11, "Las ovejas detectives (1080p).mkv", 1'500), 9), 2),
     };
-    const auto items = build(-500, "Las Cositas", messages, kTopics);
+    const auto items = build(-500, "Canal Principal", messages, kTopics);
     CHECK_EQ(static_cast<int>(items.size()), 2);
     const Catalog::Item* lateNight = findTitle(items, "El último Late Night");
     const Catalog::Item* sheep = findTitle(items, "Las ovejas detectives");
@@ -688,7 +688,7 @@ void testCatalogSharedAlbum() {
         inTopic(inAlbum(video(4, "Proyecto Salvación (4K HDR)_part02.rar", 1'000, "", ""), 5), 16088),
         inTopic(inAlbum(video(5, "Proyecto Salvación (4K HDR)_part01.rar", 1'000, "", ""), 5), 16088),
     };
-    const auto items = build(-500, "Las Cositas", messages, kTopics);
+    const auto items = build(-500, "Canal Principal", messages, kTopics);
     CHECK_EQ(static_cast<int>(items.size()), 2);
     const Catalog::Item* project = findTitle(items, "Proyecto Salvación");
     CHECK(project != nullptr);
@@ -710,7 +710,7 @@ void testCatalogDifferentFileName() {
         inTopic(photo(7, "No es país para viejos (Open Matte 1080p)"), 2),
         inTopic(inAlbum(video(8, "No es país para viejos (1080p Open Matte).mkv", 1'000), 9), 2),
     };
-    const auto items = build(-500, "Las Cositas", messages, kTopics);
+    const auto items = build(-500, "Canal Principal", messages, kTopics);
     // "Open Matte" no une a Sonic con No es país para viejos
     CHECK_EQ(static_cast<int>(items.size()), 3);
     const Catalog::Item* crow = findTitle(items, "El Cuervo");
@@ -978,7 +978,7 @@ void testTrackingSeries() {
     };
     const tracking::Rule rule{1500, ""};
     const std::vector<tracking::Owned> none;
-    auto items = build(-500, "Las Cositas", messages, kTopics);
+    auto items = build(-500, "Canal Principal", messages, kTopics);
     CHECK_EQ(static_cast<int>(items.size()), 1);
     if (items.size() != 1) {
         return;
@@ -1001,13 +1001,13 @@ void testTrackingSeries() {
     messages.push_back(at(inTopic(photo(30, "Ted Lasso - Temporada 4 (1080p)\n\nEpisodio 10"), 335), 2500));
     messages.push_back(at(inTopic(video(31, "Ted Lasso 4x10.part1.rar", 2'147'483'648, "", ""), 335), 2500));
     messages.push_back(at(inTopic(video(32, "Ted Lasso 4x10.part2.rar", 2'147'483'648, "", ""), 335), 2500));
-    items = build(-500, "Las Cositas", messages, kTopics);
+    items = build(-500, "Canal Principal", messages, kTopics);
     plan = tracking::plan(items[0], rule, none, handledIds({21}), 2600);
     CHECK_EQ(static_cast<int>(plan.actions.size()), 0);
     CHECK(plan.waiting);
     // Llega la última parte: ya se puede descargar
     messages.push_back(at(inTopic(video(33, "Ted Lasso 4x10.part3.rar", 300'000'000, "", ""), 335), 2700));
-    items = build(-500, "Las Cositas", messages, kTopics);
+    items = build(-500, "Canal Principal", messages, kTopics);
     plan = tracking::plan(items[0], rule, none, handledIds({21}), 2800);
     CHECK_EQ(static_cast<int>(plan.actions.size()), 1);
     CHECK(!plan.waiting);
@@ -1019,13 +1019,13 @@ void testTrackingSeries() {
     // 3) El canal vuelve a subir la temporada (después de seguirla): el 4x08 no es nuevo
     messages.push_back(at(inTopic(photo(40, "Ted Lasso - Temporada 4 (1080p)\n\nSINOPSIS:\n\nOtra vez."), 4), 3000));
     messages.push_back(at(inTopic(video(41, "Ted Lasso 4x08.mkv", 3'000'000'000), 4), 3000));
-    items = build(-500, "Las Cositas", messages, kTopics);
+    items = build(-500, "Canal Principal", messages, kTopics);
     plan = tracking::plan(items[0], rule, none, handledIds({21, 31}), 3100);
     CHECK_EQ(static_cast<int>(plan.actions.size()), 0);
 
     // 4) Versión mejor (4K) del 4x09, que ya está en la biblioteca en 1080p
     messages.push_back(at(inTopic(video(50, "Ted Lasso 4x09 4K HDR.mkv", 9'000'000'000), 4), 3500));
-    items = build(-500, "Las Cositas", messages, kTopics);
+    items = build(-500, "Canal Principal", messages, kTopics);
     std::vector<tracking::Owned> owned = {{7, "completed", tracking::versionRank("1080p", false, {}), "1080p", 4, 9, 0}};
     plan = tracking::plan(items[0], rule, owned, handledIds({21, 31}), 3600);
     CHECK_EQ(static_cast<int>(plan.actions.size()), 1);
@@ -1062,7 +1062,7 @@ void testTrackingMovies() {
         at(inTopic(video(11, "Dune (2021) 1080p.mkv", 4'000'000'000), 2), 1000),
     };
     const tracking::Rule rule{1500, ""};
-    auto items = build(-500, "Las Cositas", messages, kTopics);
+    auto items = build(-500, "Canal Principal", messages, kTopics);
     CHECK_EQ(static_cast<int>(items.size()), 1);
     if (items.size() != 1) {
         return;
@@ -1075,7 +1075,7 @@ void testTrackingMovies() {
     messages.push_back(at(inTopic(photo(20, "Dune (2021) (4K HDR)\n\nSINOPSIS:\n\nArena."), 16088), 3000));
     messages.push_back(at(inTopic(video(21, "Dune (2021) 4K HDR 3D.mkv", 30'000'000'000), 16088), 3000));
     messages.push_back(at(inTopic(video(22, "Dune (2021) 4K HDR.mkv", 20'000'000'000), 16088), 3000));
-    items = build(-500, "Las Cositas", messages, kTopics);
+    items = build(-500, "Canal Principal", messages, kTopics);
     CHECK_EQ(static_cast<int>(items.size()), 1);
     if (items.size() != 1) {
         return;
@@ -1190,7 +1190,7 @@ void testFollowMatching() {
             at(inTopic(video(21, "Ted Lasso 4x09.mkv", 1000), 335), 2000),
         };
         std::vector<Catalog::ItemPtr> items;
-        for (Catalog::Item& item : build(-500, "Las Cositas", messages, kTopics)) {
+        for (Catalog::Item& item : build(-500, "Canal Principal", messages, kTopics)) {
             items.push_back(std::make_shared<const Catalog::Item>(std::move(item)));
         }
         CHECK_EQ(static_cast<int>(items.size()), 1);
@@ -1424,7 +1424,7 @@ void testLibraryOnDisk() {
     const std::vector<Message> messages = {
         video(1, "1x01 - Ultimate Spiderman.mkv", 100), video(2, "1x02 - Ultimate Spiderman.mkv", 100),
         video(3, "1x03 - Ultimate Spiderman.mkv", 100), video(4, "1x04 - Ultimate Spiderman.mkv", 100)};
-    const auto items = build(-5530696118, "Prueba Claude", messages);
+    const auto items = build(-5000000001, "Prueba Claude", messages);
     CHECK_EQ(static_cast<int>(items.size()), 1);
     if (items.size() == 1) {
         const std::vector<tracking::Owned> owned = tracking::ownedVersions(items[0], {}, videos);
@@ -1563,7 +1563,7 @@ void testCatalogEvents() {
 }
 
 
-// --- Canales de anime (D-047), con nombres reales de CrunchyShur (08/10/2026) ---
+// --- Canales de anime (D-047), con nombres reales de Canal Anime (08/10/2026) ---
 
 void testAnimeArcEpisodes() {
     // D-049: "Serie S3 - Arco - 01" en los canales de anime
@@ -1604,7 +1604,7 @@ void testAnimeEpisodes() {
     CHECK(!anime("Boku no Hero Academia 5 ONA - 01 HLB.mkv"));
     CHECK(!anime("Batman - 1989.mkv"));
     CHECK(!anime("[Ñ] Boku no Hero Academia - Película 1.part1.rar"));
-    // Fuera de los canales de anime, nada cambia (Las Cositas: "Ladybug - 027.mkv" no es un episodio)
+    // Fuera de los canales de anime, nada cambia (Canal Principal: "Ladybug - 027.mkv" no es un episodio)
     CHECK(!media::parseEpisode("Ladybug - 027.mkv"));
     CHECK(!media::parseEpisode("[Ñ] Boku no Hero Academia - 01 [BD 720p].mkv"));
     CHECK(media::isAnimeNumbered("Ladybug - 027.mkv"));
@@ -1664,7 +1664,7 @@ void testCatalogAnimeChannel() {
         add(video(id++, "Naruto - 0" + std::to_string(n) + ".mkv", 300), 2187);
     }
 
-    const auto items = build(-700, "CrunchyShur", messages, topics);
+    const auto items = build(-700, "Canal Anime", messages, topics);
     const Catalog::Item* hero = nullptr;
     const Catalog::Item* movie = nullptr;
     const Catalog::Item* naruto = nullptr;
@@ -1694,7 +1694,7 @@ void testCatalogAnimeChannel() {
 
 // D-049: una ficha de serie que continúa la numeración de otra serie del canal es esa serie
 void testCatalogContinuations() {
-    // Las Cositas: las temporadas 3 y 4 de Kimetsu no Yaiba tienen ficha propia (10/2026)
+    // Canal Principal: las temporadas 3 y 4 de Kimetsu no Yaiba tienen ficha propia (10/2026)
     {
         std::vector<Message> messages;
         std::int64_t id = 1;
@@ -1715,7 +1715,7 @@ void testCatalogContinuations() {
         // Un spin-off vuelve a empezar en la temporada 1: es otra obra
         add(photo(id++, "Hora de Aventuras: Misiones Legendarias - Temporada 1 (1080p)"));
         add(video(id++, "Hora de Aventuras Misiones Legendarias 1x01.mkv", 100));
-        const auto items = build(-500, "Las Cositas", messages, kTopics);
+        const auto items = build(-500, "Canal Principal", messages, kTopics);
         CHECK_EQ(static_cast<int>(items.size()), 3);
         const auto kimetsu = std::find_if(items.begin(), items.end(), [](const Catalog::Item& item) {
             return item.title == "Kimetsu no Yaiba: Guardianes de la Noche";
@@ -1724,7 +1724,7 @@ void testCatalogContinuations() {
               kimetsu->anchorMessageId == 1);
     }
 
-    // CrunchyShur: un arco por ficha; "S2 - Yuukaku-hen - 01" vuelve a empezar dentro de la temporada 2
+    // Canal Anime: un arco por ficha; "S2 - Yuukaku-hen - 01" vuelve a empezar dentro de la temporada 2
     {
         const std::vector<DbManager::Topic> topics = {{77, "Kimetsu no Yaiba", 0}};
         std::vector<Message> messages;
@@ -1747,7 +1747,7 @@ void testCatalogContinuations() {
         for (int n = 1; n <= 8; ++n) {
             add(video(id++, "Kimetsu no Yaiba S4 - Hashira Geiko Hen - " + two(n) + " [1080p].mkv", 100));
         }
-        const auto items = build(-700, "CrunchyShur", messages, topics);
+        const auto items = build(-700, "Canal Anime", messages, topics);
         CHECK_EQ(static_cast<int>(items.size()), 1);
         if (items.size() != 1) {
             return;
@@ -1775,7 +1775,7 @@ void testCatalogRepeatedFiles() {
             inTopic(video(3, "Serie 1x01.mkv", 100), 4),  // Subido otra vez
             inTopic(video(4, "Serie 1x01.mkv", 120), 4),  // Otra versión
         };
-        const auto items = build(-500, "Las Cositas", messages, kTopics);
+        const auto items = build(-500, "Canal Principal", messages, kTopics);
         CHECK(items.size() == 1 && items[0].releases.size() == 2 && items[0].releases[0].parts.front().messageId == 2);
     }
     {
@@ -1787,13 +1787,13 @@ void testCatalogRepeatedFiles() {
         for (int n = 1; n <= 24; ++n) {
             messages.push_back(inTopic(video(id++, "The Apothecary Diaries S1 - " + two(n) + " [1080p].mkv", 3000), 4815));
         }
-        // La ficha de los cortos, en el tema de la serie (CrunchyShur, 10/2026)
+        // La ficha de los cortos, en el tema de la serie (Canal Anime, 10/2026)
         messages.push_back(inTopic(photo(id++, "Maomao no Hitorigoto\n\nEspecial de 24 episodios de 2 minutos de duración "
                                                "cada uno de la Temporada 1"), 4815));
         for (int n = 1; n <= 24; ++n) {
             messages.push_back(inTopic(video(id++, "[Otsalia] Maomao no Hitorigoto - " + two(n) + " [1080p].mkv", 22), 4815));
         }
-        const auto items = build(-700, "CrunchyShur", messages, topics);
+        const auto items = build(-700, "Canal Anime", messages, topics);
         CHECK_EQ(static_cast<int>(items.size()), 1);
         if (items.size() == 1) {
             CHECK_EQ(items[0].episodeCount, 24);
@@ -2183,13 +2183,13 @@ void testWorkGroups() {
         made->originalTitle = original;
         return std::shared_ptr<const DbManager::Metadata>(made);
     };
-    const std::int64_t cositas = -1002229558644;
-    const std::int64_t crunchy = -1002343287273;
-    const Catalog::ItemPtr boku = item(crunchy, 1, "Boku no Hero Academia", 170);
-    const Catalog::ItemPtr mha = item(cositas, 2, "My Hero Academia", 88);
-    const Catalog::ItemPtr ova = item(crunchy, 3, "Boku no Hero Academia: Memories", 4);
-    const Catalog::ItemPtr loose = item(cositas, 4, "Sin datos de TMDB", 3);
-    const Catalog::ItemPtr other = item(crunchy, 5, "Vigilante: Boku no Hero Academia Illegals", 26);
+    const std::int64_t principal = -1001000000001;
+    const std::int64_t anime = -1001000000002;
+    const Catalog::ItemPtr boku = item(anime, 1, "Boku no Hero Academia", 170);
+    const Catalog::ItemPtr mha = item(principal, 2, "My Hero Academia", 88);
+    const Catalog::ItemPtr ova = item(anime, 3, "Boku no Hero Academia: Memories", 4);
+    const Catalog::ItemPtr loose = item(principal, 4, "Sin datos de TMDB", 3);
+    const Catalog::ItemPtr other = item(anime, 5, "Vigilante: Boku no Hero Academia Illegals", 26);
     const auto heroes = info(65930, "My Hero Academia", "僕のヒーローアカデミア");
     const std::map<const Catalog::Item*, MetadataService::InfoPtr> infos = {
         {boku.get(), heroes}, {mha.get(), heroes}, {ova.get(), heroes},
@@ -2198,8 +2198,8 @@ void testWorkGroups() {
         const auto it = infos.find(&work);
         return it != infos.end() ? it->second : nullptr;
     };
-    // Las Cositas se añadió antes: su obra es la principal aunque tenga menos episodios
-    const auto groups = works::group({boku, loose, mha, other, ova}, lookup, {{cositas, 0}, {crunchy, 1}});
+    // Canal Principal se añadió antes: su obra es la principal aunque tenga menos episodios
+    const auto groups = works::group({boku, loose, mha, other, ova}, lookup, {{principal, 0}, {anime, 1}});
     CHECK_EQ(static_cast<int>(groups.size()), 3);
     if (groups.size() != 3) {
         return;
@@ -2208,7 +2208,7 @@ void testWorkGroups() {
     CHECK(groups[1] == std::vector<Catalog::ItemPtr>{loose});
     CHECK(groups[2] == std::vector<Catalog::ItemPtr>{other});
     // En un mismo canal, primero la que se llama como en TMDB y después la de más episodios
-    const Catalog::ItemPtr named = item(crunchy, 6, "My Hero Academia", 13);
+    const Catalog::ItemPtr named = item(anime, 6, "My Hero Academia", 13);
     const auto same = works::group({boku, ova, named}, [&](const Catalog::Item& work) {
         return &work == named.get() ? heroes : lookup(work);
     }, {});

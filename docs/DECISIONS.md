@@ -52,7 +52,7 @@ Formato: **Contexto** (qué problema había), **Decisión**, **Alternativas desc
 | [D-044](#d-044-confirmaciones-y-errores-con-el-estilo-de-la-página) | Confirmaciones y errores con el estilo de la página | Vigente |
 | [D-045](#d-045-la-ficha-abierta-se-actualiza-sola) | La ficha abierta se actualiza sola | Vigente |
 | [D-046](#d-046-la-web-en-el-móvil) | La web en el móvil | Vigente |
-| [D-047](#d-047-canales-de-anime-crunchyshur) | Canales de anime (CrunchyShur) | Vigente |
+| [D-047](#d-047-canales-de-anime) | Canales de anime | Vigente |
 | [D-048](#d-048-la-misma-obra-en-varios-canales) | La misma obra en varios canales | Vigente |
 | [D-049](#d-049-temporadas-y-arcos-con-ficha-propia) | Temporadas y arcos con ficha propia | Vigente |
 | [D-050](#d-050-películas-con-otro-nombre-en-tmdb) | Películas con otro nombre en TMDB | Vigente |
@@ -267,7 +267,7 @@ Formato: **Contexto** (qué problema había), **Decisión**, **Alternativas desc
 ## D-025: Temas de los foros
 *06/10/2026*
 
-- **Contexto**: el canal principal de Plácido ("Las Cositas 3", unos 33 000 mensajes) es un supergrupo con temas: *Películas*, *Películas 4K*, *Series*, *Series en emisión*, *Índices y colecciones*, *Avisos importantes* y *General*. Los mensajes de los distintos temas se publican intercalados en el tiempo.
+- **Contexto**: el canal principal de Plácido ("Canal Principal", unos 33 000 mensajes) es un supergrupo con temas: *Películas*, *Películas 4K*, *Series*, *Series en emisión*, *Índices y colecciones*, *Avisos importantes* y *General*. Los mensajes de los distintos temas se publican intercalados en el tiempo.
 - **Decisión**:
   - Cada mensaje guarda su tema (`messages.topic_id`, migración v3) y cada sincronización guarda la lista de temas con sus nombres (`getForumTopics`, tabla `topics`).
   - Las fichas se agrupan **dentro de cada tema**.
@@ -581,7 +581,7 @@ Formato: **Contexto** (qué problema había), **Decisión**, **Alternativas desc
     - «Serie completa» (D-040) y la descarga manual eligen con ella.
     - El seguimiento (D-035) comprueba antes de decidir lo que podría pedir (como mucho 10 archivos por pasada), así que las mejoras y la calidad máxima se aplican sobre la calidad real.
   - Nunca se comprueba un archivo que se está descargando: otra petición `downloadFile` cambiaría su rango. Las comprobaciones van de una en una y con menos prioridad que las descargas.
-- **Verificación** (07/10/2026), con 23 archivos variados de *Las Cositas* sin descargar:
+- **Verificación** (07/10/2026), con 23 archivos variados de *Canal Principal* sin descargar:
   - Todos se leen. Tardan de 0,5 a 1,5 s; los que necesitan el principio largo, alrededor de 1,3 s.
   - Detecta el HDR de los 4K (*The Mandalorian and Grogu*, *Muppets*).
   - Descubre fichas falsas: *Padre no hay más que uno* dice 1080p y es 4K. Y los dos «.mp4» de *Gente Hablando* son en realidad FLV.
@@ -650,15 +650,15 @@ Formato: **Contexto** (qué problema había), **Decisión**, **Alternativas desc
     - Las etiquetas «En emisión» y «Siguiendo» se pisaban en las tarjetas; «Siguiendo» va ahora abajo.
 - **Verificación**: en el marco de 390 px, ninguna de las 8 pantallas (catálogo, ficha de serie y de película, descargas, actividad, canales, ajustes y estado) es más ancha que la ventana, y ninguna tabla necesita desplazarse. El escritorio sigue igual.
 
-## D-047: Canales de anime (CrunchyShur)
+## D-047: Canales de anime
 *08/10/2026*
 
-- **Contexto**: Plácido añadió CrunchyShur, un foro con un tema por obra (451 temas) y nombres de archivo a la manera del anime. *My Hero Academia* salía incompleta y la temporada 2 de *Vigilantes* daba una obra por episodio. En realidad le pasaba a todo el canal: de sus 19 576 vídeos, 17 915 no tenían ningún marcador de episodio reconocible, y el catálogo daba 9 595 obras, casi todas «películas» de un episodio.
+- **Contexto**: Plácido añadió Canal Anime, un foro con un tema por obra (451 temas) y nombres de archivo a la manera del anime. *My Hero Academia* salía incompleta y la temporada 2 de *Vigilantes* daba una obra por episodio. En realidad le pasaba a todo el canal: de sus 19 576 vídeos, 17 915 no tenían ningún marcador de episodio reconocible, y el catálogo daba 9 595 obras, casi todas «películas» de un episodio.
   - **Formatos**: `Serie - 01` (9 389 archivos), `Serie S2 - 08` (3 733), `Serie 003` (2 680), `Serie T2 - 01` (456), `Serie S3 EP11`, `42 - Título`, `Serie - Final Season - 01`.
   - **Temporadas**: van en fotos («Temporada 1 - Boku no Hero Academia», «Serie S2», «Serie: Final Season»).
   - **Arcos**: las series largas tienen una ficha por arco («Exámenes Chūnin»).
-- **Requisito de Plácido**: *Las Cositas* es lo primero. Si no se puede arreglar CrunchyShur sin tocarlo, no se toca nada.
-- **Decisión**: las reglas del anime solo se aplican en los **canales de anime**, que se detectan solos por sus nombres de archivo: al menos 20 archivos y una cuarta parte con numeración del anime y sin marcador normal. *Las Cositas* tiene un 0,4 %; CrunchyShur, un 80 %. En esos canales:
+- **Requisito de Plácido**: *Canal Principal* es lo primero. Si no se puede arreglar Canal Anime sin tocarlo, no se toca nada.
+- **Decisión**: las reglas del anime solo se aplican en los **canales de anime**, que se detectan solos por sus nombres de archivo: al menos 20 archivos y una cuarta parte con numeración del anime y sin marcador normal. *Canal Principal* tiene un 0,4 %; Canal Anime, un 80 %. En esos canales:
   - **Episodios**: `T2 - 01`, `S2 - 08` y `S3 EP11` dicen la temporada. `Serie - 01`, `Serie 003`, `Serie 53` y `42 - Título` son **numeración absoluta**: la temporada sale de la ficha y, sin ella, es la 1. No cuentan si el número va tras OVA, ONA, Especial, Película, Opening… ni si es un año.
   - **Episodio suelto**: un número absoluto suelto no es un episodio. Hacen falta al menos dos números distintos en el bloque, o una ficha o tema de serie («Ocean's 11»).
   - **Temporadas en la ficha**: «Season 2», «2nd Season», «Serie S2», «Serie T3» y «Final Season» se quitan del título, para que todas las temporadas sean la misma obra. «Final Season» pasa a ser la siguiente a la última numerada (la 8 en *My Hero Academia*).
@@ -668,16 +668,16 @@ Formato: **Contexto** (qué problema había), **Decisión**, **Alternativas desc
     - Un arco cuyo título no se parece al del tema es la serie del tema.
     - Los archivos con el nombre de la obra del tema son suyos.
     - Las películas con título propio («Boku no Hero Academia the Movie 4: You're Next») siguen siendo obras aparte.
-  - **Aislamiento**: las obras de un canal de anime no se unen con las de otros canales. Al añadir CrunchyShur, 24 obras de *Las Cositas* se habían unido a las suyas y habían cambiado de identificador (*Vinland Saga*, *Arcane*, *Black Mirror*…). Vuelven a ser solo de *Las Cositas*.
+  - **Aislamiento**: las obras de un canal de anime no se unen con las de otros canales. Al añadir Canal Anime, 24 obras de *Canal Principal* se habían unido a las suyas y habían cambiado de identificador (*Vinland Saga*, *Arcane*, *Black Mirror*…). Vuelven a ser solo de *Canal Principal*.
 - **Verificación**: con `tools/catalog_dump.cpp` (objetivo `telegarrm_catalog_dump`, que no se instala) se calculó el catálogo de una copia de la BD.
-  - El catálogo de *Las Cositas* es **idéntico línea a línea** con el código anterior y con el nuevo, y con CrunchyShur y sin él: las mismas 2 226 obras que antes de añadir CrunchyShur.
-  - CrunchyShur pasa de 9 595 obras a 1 242:
+  - El catálogo de *Canal Principal* es **idéntico línea a línea** con el código anterior y con el nuevo, y con Canal Anime y sin él: las mismas 2 226 obras que antes de añadir Canal Anime.
+  - Canal Anime pasa de 9 595 obras a 1 242:
     - *My Hero Academia*: 8 temporadas y 170 episodios, más OVAs, especiales y películas numeradas.
     - *Vigilantes*: 2 temporadas y 26 episodios.
     - *Naruto*: 220 episodios.
     - *Bleach KAI*: 178.
   - Tests con nombres reales del canal (463 comprobaciones).
-- **Descartado**: activar los formatos del anime en todos los canales. Cambiaba 45 obras de *Las Cositas*:
+- **Descartado**: activar los formatos del anime en todos los canales. Cambiaba 45 obras de *Canal Principal*:
   - *Ataque a los Titanes: La temporada final* perdía parte del título.
   - *Insidious: Capítulo 2* pasaba a ser una serie.
   - *Ladybug* ganaba 100 episodios (`Ladybug - 027`): podría ser una mejora, pero es un cambio, y queda para que Plácido lo decida.
@@ -691,7 +691,7 @@ Formato: **Contexto** (qué problema había), **Decisión**, **Alternativas desc
 
 - **Contexto**: Plácido vio dos problemas:
   - **Una película con otras dentro**: *Kimetsu no Yaiba: Guardianes de la Noche - La fortaleza infinita* tenía en su lista *Obsession* y *Mortal Kombat II*. Las tres fichas acaban en «(1080p AV1)»: el parser tomaba «AV1» como título alternativo y unía las tres obras. TMDB la confundió además con la película *AV-1*, y la descarga de Plácido acabó en `AV-1 (2022) [tmdbid-912268]`. Pasaba lo mismo con «(Not)» en las tres de *Evangelion* y con «(Parte uno)» en *Rebel Moon*.
-  - **La misma serie, dos veces**: *Boku no Hero Academia* (CrunchyShur) y *My Hero Academia* (*Las Cositas*) salían separadas. D-047 aisló los canales de anime a propósito, y TMDB no encontraba el nombre japonés. Ya había 64 obras con la misma ficha de TMDB en dos sitios (*Spy x Family*, *Arcane*, *Rick y Morty*…).
+  - **La misma serie, dos veces**: *Boku no Hero Academia* (Canal Anime) y *My Hero Academia* (*Canal Principal*) salían separadas. D-047 aisló los canales de anime a propósito, y TMDB no encontraba el nombre japonés. Ya había 64 obras con la misma ficha de TMDB en dos sitios (*Spy x Family*, *Arcane*, *Rick y Morty*…).
 - **Propuesta de Plácido**: reconocer que son la misma obra por TMDB. Si no fuera posible, elegir primero el canal y después la obra.
 - **Decisión**:
   - **Paréntesis de las fichas**. Solo son títulos alternativos los del final del título, o seguidos de un guion: «Here (Aquí) (1080p)», «Apocalipsis en el instituto (High School of the Dead) - Temporada 1». Nunca los que llevan datos técnicos («(1080p AV1)», «(1080p - Versión del Blu-ray)», «(TVRip)»). Los paréntesis que son parte del título quedan en él sin los paréntesis: «(500) días juntos», «(Des)encanto», «You Are (Not) Alone».
@@ -702,27 +702,27 @@ Formato: **Contexto** (qué problema había), **Decisión**, **Alternativas desc
     - **Canales de anime**: publican cada arco o secuela como una serie aparte desde la temporada 1, y muchos arcos no llevan tipo en TMDB («Gintama.: Porori-hen»). Por eso en sus series no vale un alternativo si la obra se llama como la serie de TMDB y algo más («Full Metal Panic! The Second Raid», «Bakemonogatari»), y solo valen los de tipo romaji, inglés, título completo… Si no, sus episodios irían a la temporada 1 de la serie en la biblioteca y sustituirían a los de verdad (D-041).
     - **Revisión de todo**: al cambiar de versión, `MetadataService` vuelve a buscar todas las obras, mostrando mientras los datos anteriores. La fecha del cambio se guarda en `tmdb_matcher_changed_at`, para que un reinicio a mitad no deje obras con el criterio anterior.
   - **Catálogo agrupado**. `works::group` junta las obras con la misma ficha de TMDB (tipo e identificador). `/api/catalog` da una entrada por grupo:
-    - Lleva los datos de la obra principal: la del canal añadido antes (*Las Cositas*), después la que se llama como en TMDB y después la de más episodios.
+    - Lleva los datos de la obra principal: la del canal añadido antes (*Canal Principal*), después la que se llama como en TMDB y después la de más episodios.
     - El título es el de TMDB, con lo de todas sumado y la de cada canal en `sources`.
     - La ficha (`/api/catalog/{chat}/{ficha}`) trae también `sources`.
     - En la web, la tarjeta dice «En 2 canales» y la ficha empieza con los canales donde está, cada uno con su enlace. Filtro nuevo por canal.
     - Las novedades de la misma obra en otro canal también avisan.
   - **Cada obra sigue siendo suya**: archivos, numeración, seguimiento y descargas. Lo que se descarga de cualquiera va a la misma carpeta de la biblioteca, porque la carpeta lleva el identificador de TMDB, así que cuenta como «ya lo tienes» en todas.
 - **Alternativas descartadas**:
-  - **Unir los archivos de todos los canales en una sola obra**, con las versiones de cada episodio juntas: sería lo más cómodo, pero la numeración no siempre coincide. CrunchyShur publica cada arco como una serie desde la temporada 1 (*Yuukaku-hen* es la temporada 3 en TMDB), y un 1x01 de un canal no sería el 1x01 del otro. Queda como mejora si se resuelve la numeración.
+  - **Unir los archivos de todos los canales en una sola obra**, con las versiones de cada episodio juntas: sería lo más cómodo, pero la numeración no siempre coincide. Canal Anime publica cada arco como una serie desde la temporada 1 (*Yuukaku-hen* es la temporada 3 en TMDB), y un 1x01 de un canal no sería el 1x01 del otro. Queda como mejora si se resuelve la numeración.
   - **Solo elegir el canal antes que la obra** (la otra propuesta de Plácido): no junta lo que es lo mismo. Se añade como filtro.
-  - **Activar las reglas del anime en todos los canales** o quitar el aislamiento de D-047: cambiaba *Las Cositas*.
+  - **Activar las reglas del anime en todos los canales** o quitar el aislamiento de D-047: cambiaba *Canal Principal*.
 - **Verificación**: `tools/catalog_dump.cpp` admite `--tmdb`, que añade la coincidencia guardada y la del criterio nuevo de cada obra.
-  - **Parser**: en *Las Cositas* cambian 18 obras (que pasan a ser 25) y todas son las de los paréntesis.
+  - **Parser**: en *Canal Principal* cambian 18 obras (que pasan a ser 25) y todas son las de los paréntesis.
     - Se separan *La fortaleza infinita*, *Obsession* y *Mortal Kombat II*; las tres de *Evangelion*, y las cuatro de *Rebel Moon*.
     - *Desencanto* y *500 días juntos* recuperan el título completo.
     - Desaparecen los alternativos sin sentido («Ultimate», «UNCUT», «16:9 y 4:3», «sin Granulado», «TVRip»…).
     - Efecto secundario: *Ataque a los Titanes: La temporada final* y sus «capítulos finales» (4x29 y 4x30) eran una obra solo porque las dos fichas decían «Versión del Blu-ray». Salían separadas hasta D-049, que las vuelve a unir.
   - **TMDB** en la Pi, tras volver a buscar todas las obras: 2 570 de 3 481 encontradas (antes, 2 400).
-    - *Las Cositas*: 58 nuevas y ninguna perdida. Se corrigen 2: *La fortaleza infinita* (era *AV-1*) y *Ranma ½*, que pasa a la serie de 1989 (la de sus 161 episodios) en lugar de la de 2024.
-    - CrunchyShur: 117 nuevas (*Boku no Hero Academia*, *Shingeki no Kyojin*, *Kono Subarashii Sekai ni Shukufuku wo!*…). Ningún arco ni secuela cae en la serie de TMDB que lo tiene como temporada.
+    - *Canal Principal*: 58 nuevas y ninguna perdida. Se corrigen 2: *La fortaleza infinita* (era *AV-1*) y *Ranma ½*, que pasa a la serie de 1989 (la de sus 161 episodios) en lugar de la de 2024.
+    - Canal Anime: 117 nuevas (*Boku no Hero Academia*, *Shingeki no Kyojin*, *Kono Subarashii Sekai ni Shukufuku wo!*…). Ningún arco ni secuela cae en la serie de TMDB que lo tiene como temporada.
     - 91 obras están en más de un sitio (antes había 64 con la misma ficha de TMDB).
-  - **Claves compartidas**: TMDB se consulta una vez por clave de obra (tipo, título y año), y *Look Back* (2024) tiene la misma en los dos canales. CrunchyShur se calcula antes, así que su obra, sin identificador de TMDB en los archivos, se buscaba primero y caía en una película rusa con el mismo título; *Las Cositas* la habría heredado. Ahora:
+  - **Claves compartidas**: TMDB se consulta una vez por clave de obra (tipo, título y año), y *Look Back* (2024) tiene la misma en los dos canales. Canal Anime se calcula antes, así que su obra, sin identificador de TMDB en los archivos, se buscaba primero y caía en una película rusa con el mismo título; *Canal Principal* la habría heredado. Ahora:
     - Para cada clave se busca con la obra que lleve el identificador de TMDB en sus archivos.
     - Una obra con identificador cuyo dato guardado no salió de él se vuelve a buscar.
   - Tests: 494 comprobaciones, con búsquedas de TMDB sacadas de la caché, sin red: *Boku no Hero Academia*, un arco de *Gintama* y el título en otro orden.
@@ -730,19 +730,19 @@ Formato: **Contexto** (qué problema había), **Decisión**, **Alternativas desc
   - Si cambia la ficha de TMDB de una obra ya descargada, su carpeta no se mueve sola. Plácido tiene que recolocar dos descargas: *La fortaleza infinita*, que está en la carpeta de *AV-1*, y la temporada 4 de *Boku no Hero Academia*, que está en una carpeta sin identificador de TMDB.
   - **Pendiente**:
     - Unir los arcos de los canales de anime a su serie, con la temporada que les corresponde en TMDB.
-    - TMDB tiene mal el título en castellano de *Battle for the Planet of the Apes* («La conquista del planeta de los simios»). Por eso las dos películas de *Las Cositas* (*La conquista…* y *Batalla…*) salen juntas.
-    - *Ranma ½* de CrunchyShur (la de 2024) comparte clave con la de *Las Cositas*: tiene los datos de la de 1989, y lo que se descargue de ella iría a esa carpeta.
+    - TMDB tiene mal el título en castellano de *Battle for the Planet of the Apes* («La conquista del planeta de los simios»). Por eso las dos películas de *Canal Principal* (*La conquista…* y *Batalla…*) salen juntas.
+    - *Ranma ½* de Canal Anime (la de 2024) comparte clave con la de *Canal Principal*: tiene los datos de la de 1989, y lo que se descargue de ella iría a esa carpeta.
 
 ## D-049: Temporadas y arcos con ficha propia
 *10/10/2026*
 
 - **Contexto**: Plácido vio que *Kimetsu no Yaiba* llegaba hasta la temporada 2 y el resto salía aparte. Pasaba en los dos canales:
-  - **Las Cositas**: las temporadas 3 y 4 tienen ficha propia con el nombre del arco («Kimetsu no Yaiba: Guardianes de la Noche - Arco de la aldea de los herreros»). Sus archivos sí van numerados como la serie (`3x01`, `4x01`), pero un título distinto era otra obra. Igual con *Miracle Workers*, *Los diarios de la boticaria*, *Star Trek* y otras.
-  - **CrunchyShur**: un arco por ficha y por tema («Kimetsu no Yaiba: Mugen Ressha-hen»). Además, `Kimetsu no Yaiba S3 - Katanakaji no Sato Hen - 01` no se entendía: la temporada iba antes del nombre del arco y se tomaba como temporada 1.
+  - **Canal Principal**: las temporadas 3 y 4 tienen ficha propia con el nombre del arco («Kimetsu no Yaiba: Guardianes de la Noche - Arco de la aldea de los herreros»). Sus archivos sí van numerados como la serie (`3x01`, `4x01`), pero un título distinto era otra obra. Igual con *Miracle Workers*, *Los diarios de la boticaria*, *Star Trek* y otras.
+  - **Canal Anime**: un arco por ficha y por tema («Kimetsu no Yaiba: Mugen Ressha-hen»). Además, `Kimetsu no Yaiba S3 - Katanakaji no Sato Hen - 01` no se entendía: la temporada iba antes del nombre del arco y se tomaba como temporada 1.
   - D-048 no los juntaba: agrupa por TMDB, y las fichas de arco no se reconocen en TMDB a propósito, porque su numeración no es la de TMDB.
 - **Decisión**: una ficha de serie que **continúa** otra serie del mismo canal es esa serie.
   - **Condiciones**: su título empieza por el de la serie (palabra a palabra) y su numeración sigue donde acaba la de la serie (su primer episodio va después del último de la serie). Si hay varias series candidatas, la de título más largo. Se unen de la primera en publicarse a la última, así que cada arco sigue al anterior.
-  - **Canales de anime**: un arco puede volver a empezar en el 01 dentro de la misma temporada. CrunchyShur pone «S2» a *Mugen Ressha-hen* (7 episodios) y a *Yuukaku-hen* (11). Entonces sus episodios se numeran a continuación (2x08 a 2x18), como en TMDB. Solo si la temporada va en el nombre del archivo y no es la 1, para no unir así una numeración absoluta.
+  - **Canales de anime**: un arco puede volver a empezar en el 01 dentro de la misma temporada. Canal Anime pone «S2» a *Mugen Ressha-hen* (7 episodios) y a *Yuukaku-hen* (11). Entonces sus episodios se numeran a continuación (2x08 a 2x18), como en TMDB. Solo si la temporada va en el nombre del archivo y no es la 1, para no unir así una numeración absoluta.
   - **Lo que manda es la serie**: la obra conserva el título, el año y el identificador de la serie. Los de los arcos quedan como títulos alternativos.
   - **Nombres de archivo**: en los canales de anime se lee `Serie S3 - Arco - 01` (temporada 3, episodio 1), salvo si el «arco» es un especial («S2 - OVA - 01»).
   - **TMDB**: el criterio pasa a la versión 4, para volver a buscar las obras y traer los episodios de sus temporadas nuevas.
@@ -750,7 +750,7 @@ Formato: **Contexto** (qué problema había), **Decisión**, **Alternativas desc
   - **Unir por TMDB las fichas de arco**: TMDB guarda los arcos como temporadas, pero no dice cuál es cada uno de forma fiable; los tipos de sus títulos alternativos («Season 3 Romaji») no siguen su propia numeración.
   - **Unir por el título sin mirar la numeración**: uniría los spin-offs, que vuelven a empezar en la temporada 1 (*Hora de Aventuras: Misiones Legendarias*).
 - **Verificación** con `tools/catalog_dump.cpp`:
-  - *Las Cositas*: 7 series unidas, todas la misma serie partida en fichas:
+  - *Canal Principal*: 7 series unidas, todas la misma serie partida en fichas:
     - *Kimetsu no Yaiba: Guardianes de la Noche*: 4 temporadas y 63 episodios.
     - *Ataque a los Titanes: La temporada final*: vuelve a tener sus «capítulos finales», 4x29 y 4x30 (ver D-048).
     - *Miracle Workers*: 4 temporadas.
@@ -759,7 +759,7 @@ Formato: **Contexto** (qué problema había), **Decisión**, **Alternativas desc
     - *Star Trek - The Original Series*: 3.
     - *Ed, Edd y Eddy*: 5.
     - Ninguna otra obra cambia, y todas conservan su identificador (seguimientos y descargas).
-  - CrunchyShur: unas 35 series unidas: *Kimetsu no Yaiba* (4 temporadas, 63 episodios, como en TMDB), *Shingeki no Kyojin*, *Haikyuu!!*, *Tokyo Revengers*, *Gintama*, *Ao no Exorcist*…
+  - Canal Anime: unas 35 series unidas: *Kimetsu no Yaiba* (4 temporadas, 63 episodios, como en TMDB), *Shingeki no Kyojin*, *Haikyuu!!*, *Tokyo Revengers*, *Gintama*, *Ao no Exorcist*…
   - Con *Kimetsu no Yaiba* reconocida en TMDB en los dos canales, D-048 las muestra como una sola obra.
   - Tests: 505 comprobaciones.
 - **Consecuencias**: un arco que vuelva a empezar en la temporada 1 sin decir la temporada sigue siendo obra aparte, igual que un spin-off.
@@ -768,25 +768,25 @@ Formato: **Contexto** (qué problema había), **Decisión**, **Alternativas desc
 *10/10/2026*
 
 - **Contexto**: la película de *Kimetsu no Yaiba: Tren infinito* salía dos veces. TMDB no reconocía ninguna de las dos fichas, así que D-048 no podía juntarlas:
-  - *Las Cositas*: «Kimetsu no Yaiba: Guardianes de la Noche - Tren Infinito». En TMDB es «Guardianes de la Noche: Tren infinito», sin la saga delante. Un título contenido en otro vale 50 puntos y, sin año en la ficha, no llega a 80.
-  - CrunchyShur: «Kimetsu no Yaiba Movie: Mugen Ressha-hen». TMDB tiene el romaji «Kimetsu no Yaiba: Mugen Ressha-hen», sin «Movie».
+  - *Canal Principal*: «Kimetsu no Yaiba: Guardianes de la Noche - Tren Infinito». En TMDB es «Guardianes de la Noche: Tren infinito», sin la saga delante. Un título contenido en otro vale 50 puntos y, sin año en la ficha, no llega a 80.
+  - Canal Anime: «Kimetsu no Yaiba Movie: Mugen Ressha-hen». TMDB tiene el romaji «Kimetsu no Yaiba: Mugen Ressha-hen», sin «Movie».
 - **Decisión** (criterio de TMDB 5, solo en películas):
   - **Palabras de película**: «Movie», «Película», «Film» y «Gekijouban» no cuentan al comparar las palabras de dos títulos.
   - **Sin la saga de delante**: también vale el título sin lo que va antes de «:» o de « - », si quedan al menos tres palabras («Guardianes de la Noche - Tren Infinito»). Pero solo si algún título del resultado de TMDB lleva esa saga: entre los de *Tren infinito* está «Kimetsu no Yaiba: Tren infinito». Sin esa condición, «Puñales por la espalda: De entre los muertos» era *Vértigo*, que en España fue «De entre los muertos».
   - **Coincidencias aproximadas**: estas dos valen 90 puntos, no 100, para que un título entero igual gane siempre. Además, solo valen con el mismo año o si la ficha no lo dice: el especial *5-toubun no Hanayome* (2023) no es «5-toubun no Hanayome Movie» (2022).
   - **Título del archivo**: si todos los archivos de una película se llaman igual, también se busca con ese nombre. Solo vale si coincide entero, no si uno contiene al otro. Así se reconoce una ficha con una errata: «Millenium: Los hombres que no amaban a las mujeres», cuyo archivo es «Millennium_Los_hombres_que_no_amaban_a_las_mujeres», es la de 2011 y no la sueca de 2009.
 - **Verificación** (`telegarrm_catalog_dump --tmdb` sobre una copia de la BD):
-  - *Las Cositas*: 21 películas nuevas reconocidas, ninguna cambia y ninguna se pierde. Entre ellas, *Tren infinito*, las de *Star Wars* con número romano («Star Wars V: El Imperio Contraataca»), *Nimh* (con errata en la ficha), *Super Mario Bros.* (1993) y *Wolf Children*.
-  - CrunchyShur: 3 nuevas (*Mugen Ressha-hen*, *Spy x Family Code: White*, *Fate/stay night: Heaven's Feel I*).
+  - *Canal Principal*: 21 películas nuevas reconocidas, ninguna cambia y ninguna se pierde. Entre ellas, *Tren infinito*, las de *Star Wars* con número romano («Star Wars V: El Imperio Contraataca»), *Nimh* (con errata en la ficha), *Super Mario Bros.* (1993) y *Wolf Children*.
+  - Canal Anime: 3 nuevas (*Mugen Ressha-hen*, *Spy x Family Code: White*, *Fate/stay night: Heaven's Feel I*).
   - Tests: 523 comprobaciones, con búsquedas de TMDB sacadas de la caché: *Mugen Ressha-hen*, *Tren infinito*, *Vértigo*, las *Quintillizas* y *Millenium*.
-- **Consecuencias**: dos fichas de *Las Cositas* sin año siguen siendo ambiguas, porque TMDB tiene otra obra con el mismo título original: *Bottle Rock* cae en el corto de 1994 y no en la película de 1996, y *El elefante* puede no ser el que es. Pasaba igual con cualquier título sin año.
+- **Consecuencias**: dos fichas de *Canal Principal* sin año siguen siendo ambiguas, porque TMDB tiene otra obra con el mismo título original: *Bottle Rock* cae en el corto de 1994 y no en la película de 1996, y *El elefante* puede no ser el que es. Pasaba igual con cualquier título sin año.
 
 ## D-051: Revisar la biblioteca y archivos repetidos
 *10/10/2026*
 
 - **Contexto**: dos cosas que vio Plácido.
   - **Biblioteca**: borró series desde el terminal, pero la BD seguía con sus descargas «En la biblioteca». Esos episodios contaban como que se tenían, y «Descargar los que faltan» no los ofrecía. Además, había movido a mano *La fortaleza infinita* y la temporada 4 de *Boku no Hero Academia* a su carpeta correcta (D-048). De 64 descargas en la biblioteca, 34 no estaban donde las dejó Telegarrm, pero solo 8 se habían borrado.
-  - **Archivos por episodio**: en *Los diarios de la boticaria* de CrunchyShur había un archivo por episodio en la temporada 1, dos en la 2 y tres en la 3. No era por los zip:
+  - **Archivos por episodio**: en *Los diarios de la boticaria* de Canal Anime había un archivo por episodio en la temporada 1, dos en la 2 y tres en la 3. No era por los zip:
     - El canal vuelve a subir los mismos archivos: el 3x01 estaba tres veces, con el mismo nombre y el mismo tamaño en bytes.
     - Junto a cada episodio de las temporadas 1 y 2 hay un corto de dos minutos («[Otsalia] Maomao no Hitorigoto - 01», 23 MB). Su ficha («Especial de 24 episodios de 2 minutos») se unía a la serie del tema por la regla de arcos de D-047, y cada corto pasaba por otra versión del episodio.
 - **Decisión**:
@@ -804,8 +804,8 @@ Formato: **Contexto** (qué problema había), **Decisión**, **Alternativas desc
   - **Unir los cortos por la palabra «Especial» de la ficha**: el tamaño también sirve para los canales que no lo dicen.
 - **Verificación**:
   - En la Pi, la primera revisión encontró las 26 descargas movidas (25 episodios de *Boku no Hero* y *La fortaleza infinita*) y dio por borradas las 8 que lo estaban: *Ultimate Spiderman*, *Westworld*, *Muppets* y *Toy Story Toons*. La segunda ya no cambió nada.
-  - *Las Cositas*: cambian 11 obras, solo en el número de archivos (copias repetidas; por ejemplo, *El Espectacular Spider-Man* pasa de 52 a 26). Ninguna cambia de temporadas ni de episodios.
-  - *Los diarios de la boticaria* (CrunchyShur): un archivo por episodio en las temporadas 1 y 2, y los cortos en «Otros archivos».
+  - *Canal Principal*: cambian 11 obras, solo en el número de archivos (copias repetidas; por ejemplo, *El Espectacular Spider-Man* pasa de 52 a 26). Ninguna cambia de temporadas ni de episodios.
+  - *Los diarios de la boticaria* (Canal Anime): un archivo por episodio en las temporadas 1 y 2, y los cortos en «Otros archivos».
   - Tests: 544 comprobaciones, con una biblioteca de prueba (una carpeta renombrada, una película renombrada y un archivo borrado).
 - **Consecuencias**: una descarga hecha desde una copia repetida, que ya no está en el catálogo, no se reconoce como de su obra (sí lo que hay en su carpeta, D-041). Hoy no hay ninguna.
 

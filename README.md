@@ -4,7 +4,7 @@ Telegarrm es un servicio daemon (stack ARR, como Sonarr y Radarr) que utiliza Te
 
 ## Qué hace
 Desde la web (`http://<ip-de-la-pi>:8080/`), con contraseña:
-- **Catálogo**: las series y películas publicadas en los canales y grupos que elijas, con portada, sinopsis y títulos de episodio de TMDB. Entiende tanto canales como *Las Cositas* (fichas y `1x01`) como foros de anime con un tema por obra (`Serie - 01`, `Serie S2 - 08`), que detecta solos.
+- **Catálogo**: las series y películas publicadas en los canales y grupos que elijas, con portada, sinopsis y títulos de episodio de TMDB. Entiende tanto canales como *Canal Principal* (fichas y `1x01`) como foros de anime con un tema por obra (`Serie - 01`, `Serie S2 - 08`), que detecta solos.
   - Una obra publicada en varios canales, o con otro nombre (*Boku no Hero Academia* y *My Hero Academia*), sale una sola vez: se reconoce por su ficha de TMDB. Dentro se elige de qué canal ver los archivos.
   - Filtro por canal y, arriba, «Añadidas recientemente»: lo último que se ha publicado.
   - La ficha de una obra se actualiza sola. Si se publica algo nuevo de ella mientras la miras, aparece un aviso en la esquina y la fila nueva se ilumina.
@@ -259,27 +259,27 @@ Los pasos del inicio de sesión responden `{"ok": true}`, o `{"error": "..."}` c
 
 ### Películas con otro nombre en TMDB
 - TMDB reconoce una película aunque la ficha lleve la saga delante («Kimetsu no Yaiba: Guardianes de la Noche - Tren Infinito»), diga «Movie» o «Película», o tenga una errata que el nombre del archivo no tiene (D-050). *Tren infinito* sale una sola vez, con las fichas de los dos canales.
-- *Las Cositas*: 21 películas más reconocidas en TMDB, sin cambiar ni perder ninguna. Tests: 523 comprobaciones.
+- *Canal Principal*: 21 películas más reconocidas en TMDB, sin cambiar ni perder ninguna. Tests: 523 comprobaciones.
 
 ### Temporadas con ficha propia
-- Una ficha de temporada o de arco con su propio título («Kimetsu no Yaiba: Guardianes de la Noche - Arco de la aldea de los herreros») se une a su serie si continúa su numeración (D-049). *Kimetsu no Yaiba* sale con sus 4 temporadas en *Las Cositas* y en CrunchyShur, y como una sola obra.
+- Una ficha de temporada o de arco con su propio título («Kimetsu no Yaiba: Guardianes de la Noche - Arco de la aldea de los herreros») se une a su serie si continúa su numeración (D-049). *Kimetsu no Yaiba* sale con sus 4 temporadas en *Canal Principal* y en Canal Anime, y como una sola obra.
 - En los canales de anime, los arcos que vuelven a empezar en el 01 dentro de una temporada se numeran a continuación, como en TMDB, y se lee `Serie S3 - Arco - 01`.
 - Tests: 505 comprobaciones.
 
 ### La misma obra en varios canales
-- El catálogo junta las obras que son la misma según TMDB, aunque estén en varios canales o con otro nombre (D-048). *Boku no Hero Academia* (CrunchyShur) y *My Hero Academia* (*Las Cositas*) salen como una sola obra; en su ficha se elige de qué canal ver los archivos. 91 obras están en más de un sitio.
+- El catálogo junta las obras que son la misma según TMDB, aunque estén en varios canales o con otro nombre (D-048). *Boku no Hero Academia* (Canal Anime) y *My Hero Academia* (*Canal Principal*) salen como una sola obra; en su ficha se elige de qué canal ver los archivos. 91 obras están en más de un sitio.
 - Filtro por canal en el catálogo.
 - TMDB reconoce el título con las palabras en otro orden y los títulos alternativos (romaji, inglés…), sin confundir los arcos de un canal de anime con su serie: 2 570 de 3 481 obras encontradas (antes, 2 400).
 - Las fichas con «(1080p AV1)» o «You Are (Not) Alone» ya no juntan películas distintas: *La fortaleza infinita* sale sola, con su ficha de TMDB correcta.
-- *Las Cositas* se revisó obra por obra (`tools/catalog_dump.cpp`, ahora también con `--tmdb`): solo cambian las fichas con esos paréntesis. Tests: 494 comprobaciones.
+- *Canal Principal* se revisó obra por obra (`tools/catalog_dump.cpp`, ahora también con `--tmdb`): solo cambian las fichas con esos paréntesis. Tests: 494 comprobaciones.
 
 ### Canales de anime
-- Canales como CrunchyShur, con un tema por obra y nombres de anime (`Serie - 01`, `Serie S2 - 08`, `Serie T2 - 01`, `Serie 003`, `42 - Título`), se detectan solos por sus nombres de archivo y se leen con sus reglas (D-047):
+- Canales como Canal Anime, con un tema por obra y nombres de anime (`Serie - 01`, `Serie S2 - 08`, `Serie T2 - 01`, `Serie 003`, `42 - Título`), se detectan solos por sus nombres de archivo y se leen con sus reglas (D-047):
   - La temporada sale de la ficha («Temporada 2», «Serie S2») y «Final Season» es la siguiente a la última.
   - OVAs, especiales y películas numeradas se unen a la serie del tema, y también los arcos con ficha propia.
   - Sus obras no se mezclan con las de otros canales.
-- *Las Cositas* no cambia: se comprobó obra por obra con `tools/catalog_dump.cpp` (`cmake --build build --target telegarrm_catalog_dump`), que calcula el catálogo de una copia de la BD.
-- CrunchyShur pasa de 9 595 obras a 1 242 (*My Hero Academia*: 8 temporadas y 170 episodios). Tests: 463 comprobaciones.
+- *Canal Principal* no cambia: se comprobó obra por obra con `tools/catalog_dump.cpp` (`cmake --build build --target telegarrm_catalog_dump`), que calcula el catálogo de una copia de la BD.
+- Canal Anime pasa de 9 595 obras a 1 242 (*My Hero Academia*: 8 temporadas y 170 episodios). Tests: 463 comprobaciones.
 
 ### Fase 4.1: mejoras de uso
 - El logo de la cabecera lleva al catálogo.

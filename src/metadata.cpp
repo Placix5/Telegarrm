@@ -437,8 +437,8 @@ void MetadataService::run() {
         const std::int64_t now = nowSeconds();
         std::vector<Catalog::ItemPtr> pending;
         {
-            // Obras de varios canales con la misma clave ("Look Back" de 2024 en Las Cositas y en
-            // CrunchyShur) se buscan una vez: con la que lleve el identificador de TMDB en sus
+            // Obras de varios canales con la misma clave ("Look Back" de 2024 en Canal Principal y en
+            // Canal Anime) se buscan una vez: con la que lleve el identificador de TMDB en sus
             // archivos, si alguna lo lleva (D-048)
             std::map<std::string, Catalog::ItemPtr> byWorkKey;
             for (const Catalog::ItemPtr& item : items) {

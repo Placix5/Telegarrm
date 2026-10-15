@@ -379,7 +379,7 @@ bool takeFinalSeason(std::string& name) {
     return true;
 }
 
-// Formatos del anime (canal CrunchyShur, 08/10/2026). Primero los que dicen la temporada ("T2 - 01",
+// Formatos del anime (canal Canal Anime, 08/10/2026). Primero los que dicen la temporada ("T2 - 01",
 // "S2 - 08", "S3 EP11"); después la numeración absoluta, que no la dice
 std::optional<EpisodeInfo> parseAnimeEpisode(const std::string& clean) {
     // Guiones bajos como espacios: "One_Piece_Capitulo_8_Título"

@@ -336,7 +336,7 @@ Json itemSummaryJson(const Catalog::Item& item, const InfoPtr& info, const DbMan
 }
 
 // Prioridad de cada canal para elegir la obra principal de un grupo (D-048): primero el que se
-// añadió antes (Las Cositas)
+// añadió antes (Canal Principal)
 std::map<std::int64_t, int> channelRank(DbManager& db) {
     std::vector<DbManager::Channel> channels = db.listChannels();
     std::stable_sort(channels.begin(), channels.end(), [](const DbManager::Channel& a, const DbManager::Channel& b) {

@@ -73,10 +73,10 @@ Formato real visto: canales de una serie con una ficha (foto + pie con título, 
 - [x] Confirmaciones con el estilo de la página, con un resumen de lo que se va a hacer, y errores como avisos en la esquina, en lugar de los cuadros del navegador (D-044).
 
 ## Canales de anime (08/10/2026)
-- [x] CrunchyShur (un tema por obra, nombres como `Serie - 01`, `Serie S2 - 08`, `Serie T2 - 01`): episodios, temporadas de las fichas («S2», «Final Season»), extras y arcos unidos a la serie del tema (D-047). Solo en los canales que se detectan como de anime.
-- [x] *Las Cositas* idéntica antes y después, comprobado con `tools/catalog_dump.cpp`. Sus 24 obras que se habían unido a CrunchyShur vuelven a ser suyas.
+- [x] Canal Anime (un tema por obra, nombres como `Serie - 01`, `Serie S2 - 08`, `Serie T2 - 01`): episodios, temporadas de las fichas («S2», «Final Season»), extras y arcos unidos a la serie del tema (D-047). Solo en los canales que se detectan como de anime.
+- [x] *Canal Principal* idéntica antes y después, comprobado con `tools/catalog_dump.cpp`. Sus 24 obras que se habían unido a Canal Anime vuelven a ser suyas.
 - [ ] *Hunter x Hunter (2011)* sale en dos obras, por el nombre del grupo de subtítulos (`[BB]`) delante; unos 40 especiales numerados («SP 06», «OVA 03») salen como películas sueltas.
-- [ ] Decidir si los 105 archivos `Ladybug - 027` de *Las Cositas* deben leerse como episodios (cambiaría *Ladybug*: +100 episodios).
+- [ ] Decidir si los 105 archivos `Ladybug - 027` de *Canal Principal* deben leerse como episodios (cambiaría *Ladybug*: +100 episodios).
 - [x] TMDB no encontraba las obras que solo tienen el nombre japonés (*Boku no Hero Academia*; en TMDB es *My Hero Academia*): resuelto con los títulos alternativos de TMDB (D-048).
 
 ## La misma obra en varios canales (10/10/2026)
@@ -92,7 +92,7 @@ Formato real visto: canales de una serie con una ficha (foto + pie con título, 
 - [ ] Ver la pestaña «Biblioteca» en el navegador y en el móvil (sin la extensión de Chrome, solo se probó en Node).
 - [x] Archivos subidos dos veces, una sola versión; en los canales de anime, los cortos de cada episodio en «Otros archivos» (D-051).
 - [ ] Si cambia la ficha de TMDB de una obra ya descargada, su carpeta de la biblioteca no se mueve sola.
-- [ ] Datos de TMDB mal puestos que juntan obras distintas: *La conquista del planeta de los simios* y *Batalla por el planeta de los simios* salen juntas, y *Ranma ½* de 2024 (CrunchyShur) comparte datos con la de 1989 (*Las Cositas*).
+- [ ] Datos de TMDB mal puestos que juntan obras distintas: *La conquista del planeta de los simios* y *Batalla por el planeta de los simios* salen juntas, y *Ranma ½* de 2024 (Canal Anime) comparte datos con la de 1989 (*Canal Principal*).
 
 ## Siguientes pasos
 Por decidir con Plácido; ninguno está empezado.
