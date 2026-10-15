@@ -3,7 +3,7 @@
 Telegarrm es un servicio daemon (stack ARR, como Sonarr y Radarr) que utiliza Telegram (TDLib) como fuente e indexador para descargas automáticas de series y películas. Corre en una Raspberry Pi y se maneja desde el navegador.
 
 ## Qué hace
-Desde la web (`http://<ip-de-la-pi>:8080/`):
+Desde la web (`http://<ip-de-la-pi>:8080/`), con contraseña:
 - **Catálogo**: las series y películas publicadas en los canales y grupos que elijas, con portada, sinopsis y títulos de episodio de TMDB. Entiende tanto canales como *Las Cositas* (fichas y `1x01`) como foros de anime con un tema por obra (`Serie - 01`, `Serie S2 - 08`), que detecta solos.
   - Una obra publicada en varios canales, o con otro nombre (*Boku no Hero Academia* y *My Hero Academia*), sale una sola vez: se reconoce por su ficha de TMDB. Dentro se elige de qué canal ver los archivos.
   - Filtro por canal y, arriba, «Añadidas recientemente»: lo último que se ha publicado.
@@ -22,7 +22,8 @@ Funciona igual en el móvil: las pestañas se reorganizan, las tablas se convier
 ## Estructura del Proyecto
 - `src/`: Código fuente C++
   - `main.cpp`: arranque del daemon y servidor HTTP
-  - `api.cpp`: endpoints REST (`/api/...`)
+  - `api.cpp`: endpoints REST (`/api/...`) y el filtro que exige sesión en todos
+  - `auth.cpp`: contraseña de la web (scrypt), sesiones y límite de intentos
   - `channel_sync.cpp`: copia el historial de los canales vigilados en SQLite (clase `ChannelSync`)
   - `media_parser.cpp`: interpreta nombres de fichero y fichas (episodios, título, año, calidad, idioma)
   - `catalog.cpp`: agrupa los mensajes de cada canal en series y películas (clase `Catalog`)
@@ -35,11 +36,11 @@ Funciona igual en el móvil: las pestañas se reorganizan, las tablas se convier
   - `telegram_client.cpp`: cliente de TDLib en su propio hilo (clase `TelegramClient`)
   - `signal_watcher.cpp`: parada ordenada con SIGINT/SIGTERM (clase `SignalWatcher`)
 - `include/`: Cabeceras y dependencias de un solo archivo (`httplib.h`, `nlohmann/json.hpp`)
-- `tests/`: Tests (`ctest`) del parser, el catálogo, la BD, la biblioteca y el seguimiento, con ejemplos reales de los canales
+- `tests/`: Tests (`ctest`) del parser, el catálogo, la BD, la biblioteca, el seguimiento, TMDB y el acceso, con ejemplos reales de los canales
 - `tools/`: Herramientas de desarrollo; `catalog_dump.cpp` calcula el catálogo de una copia de la BD para comparar cambios del parser (y, con `--tmdb`, del criterio de TMDB)
 - `web/`: Interfaz web (`index.html`, `style.css`, `app.js`, sin dependencias)
 - `deploy/`: Servicio de systemd, regla de polkit, script de instalación y un borrador de `docker compose` para Jellyfin (`jellyfin-compose.yml`, pendiente de revisar: ver la hoja de ruta)
-- `db/`: Datos generados al ejecutar: `telegarrm.db` (SQLite), `tdlib/` (sesión de Telegram) y `tmdb/` (carátulas)
+- `db/`: Datos generados al ejecutar: `telegarrm.db` (SQLite, también la contraseña de la web con scrypt y las sesiones), `tdlib/` (sesión de Telegram), `tmdb/` (carátulas) y, hasta que se crea la contraseña, `codigo-acceso.txt`
 - `docs/`: Documentación. La arquitectura está en [docs/01_architecture_and_phases.md](docs/01_architecture_and_phases.md), la planificación vigente en [docs/ROADMAP.md](docs/ROADMAP.md) y los motivos de cada decisión en [docs/DECISIONS.md](docs/DECISIONS.md)
 - `build/`: Archivos de compilación
 
@@ -52,7 +53,45 @@ Detalle y tareas en [docs/ROADMAP.md](docs/ROADMAP.md).
 - [x] **Fase 3**: Descargas: cola, descompresión y renombrado para Jellyfin.
 - [x] **Fase 4**: Tele-ARR: mensajes nuevos en tiempo real, seguimiento de series y películas, auto-descarga de episodios nuevos, sustitución por versiones mejores, calidad real de cada archivo e historial de actividad.
 
-Siguientes pasos (autenticación, HTTPS, paso al servidor con RAID y Jellyfin): ver la hoja de ruta.
+Después: contraseña para la web (hecha, D-053) y pestaña «Biblioteca». Siguientes pasos (HTTPS, paso al servidor con RAID y Jellyfin): ver la hoja de ruta.
+
+## Instalación desde cero
+Resumen de una instalación nueva en Debian o Raspberry Pi OS; cada paso enlaza a su sección. Los ejemplos suponen que el repositorio está en `~/Telegarrm` y la biblioteca en `/srv/media`.
+
+1. **Dependencias y TDLib**: instala los paquetes y compila TDLib como se explica en [Dependencias](#dependencias).
+2. **Telegarrm**: clónalo, compílalo y pasa los tests:
+   ```bash
+   git clone https://github.com/Placix5/Telegarrm.git ~/Telegarrm
+   cd ~/Telegarrm
+   cmake -S . -B build
+   cmake --build build
+   ctest --test-dir build
+   ```
+3. **Credenciales**: créalas en `~/.config/telegarrm/env`, un archivo que solo puede leer tu usuario (ver [Configuración](#configuración)):
+   ```bash
+   mkdir -p ~/.config/telegarrm
+   install -m 600 /dev/null ~/.config/telegarrm/env
+   nano ~/.config/telegarrm/env
+   ```
+   Con este contenido (tus valores de <https://my.telegram.org> y, si quieres, de TMDB):
+   ```
+   TELEGARRM_API_ID=123456
+   TELEGARRM_API_HASH=0123456789abcdef0123456789abcdef
+   TELEGARRM_TMDB_TOKEN=eyJhbGciOi...
+   ```
+4. **Carpetas de la biblioteca**, en el mismo disco y propiedad de tu usuario:
+   ```bash
+   sudo mkdir -p /srv/media/descargas /srv/media/peliculas /srv/media/series
+   sudo chown -R "$USER": /srv/media
+   ```
+5. **Servicio**: instálalo con [Como servicio (systemd)](#como-servicio-systemd). Si tu usuario no es `plax` o el repositorio no está en `/home/plax/Telegarrm`, cambia antes esos datos en `deploy/telegarrm.service` (`User`, `Group`, `WorkingDirectory`, `EnvironmentFile`, `ExecStart` y `ReadWritePaths`) y el usuario en `deploy/50-telegarrm.rules`.
+6. **Contraseña de la web**: al arrancar por primera vez, el servicio deja un código de un solo uso en `db/codigo-acceso.txt`:
+   ```bash
+   cat ~/Telegarrm/db/codigo-acceso.txt
+   ```
+   Abre `http://<ip-de-la-pi>:8080/`. La web pide ese código y la contraseña nueva, dos veces y con al menos 10 caracteres. Al crearla entras directamente y el archivo del código se borra. Detalles en [Contraseña de la web](#contraseña-de-la-web).
+7. **Telegram**: en la pestaña **Estado**, inicia sesión con tu cuenta: teléfono, el código que te manda Telegram y, si la tienes, la contraseña de verificación en dos pasos. La sesión se conserva entre reinicios.
+8. **Ajustes y canales**: en **Ajustes**, indica el búfer de descargas y las bibliotecas (`/srv/media/descargas`, `/srv/media/peliculas` y `/srv/media/series`). En **Canales**, elige los canales o grupos que quieres vigilar. El catálogo se rellena al sincronizarlos.
 
 ## Dependencias
 - Compilador con C++17, CMake >= 3.14, SQLite3 y TDLib >= 1.8.
@@ -96,7 +135,9 @@ TELEGARRM_API_ID=123456 TELEGARRM_API_HASH=abcdef... ./build/telegarrm
 ```
 Ejecútalo desde la raíz del proyecto: las rutas `db/` y `web/` son relativas al directorio actual. Ctrl+C (SIGINT) o SIGTERM lo detienen de forma ordenada.
 
-La primera vez, abre `http://<ip-de-la-pi>:8080/` e inicia sesión en Telegram (teléfono, código y, si la tienes, contraseña de verificación en dos pasos). La sesión se conserva entre reinicios.
+La primera vez, abre `http://<ip-de-la-pi>:8080/`:
+1. Crea la contraseña de la web con el código de `db/codigo-acceso.txt` (ver [Contraseña de la web](#contraseña-de-la-web)).
+2. Inicia sesión en Telegram en la pestaña **Estado**: teléfono, código y, si la tienes, contraseña de verificación en dos pasos. La sesión se conserva entre reinicios.
 
 ### Como servicio (systemd)
 `deploy/telegarrm.service` es un servicio de sistema que corre como `plax`, aislado (solo puede escribir en `db/` y `/srv/media`), y lee las credenciales de `~/.config/telegarrm/env` (permisos `600`, con las variables de [Configuración](#configuración)). La regla de polkit `deploy/50-telegarrm.rules` permite a `plax` arrancarlo, pararlo y reiniciarlo sin `sudo`. Motivos en [docs/DECISIONS.md](docs/DECISIONS.md) (D-013).
@@ -110,16 +151,40 @@ sudo ./deploy/install-service.sh
 Desplegar una versión nueva del programa no necesita `sudo`: `cmake --build build && systemctl restart telegarrm` (con parada ordenada). Logs con `journalctl -u telegarrm -f`.
 
 ### Contraseña de la web
-La web y la API piden contraseña (D-053). La primera vez, la web pide crearla con un código de un solo uso que el servicio deja en `db/codigo-acceso.txt`, para que solo pueda hacerlo quien tenga acceso a la Pi:
-```bash
-cat ~/Telegarrm/db/codigo-acceso.txt
-```
-Se cambia en *Ajustes*. Si se olvida, este comando la borra junto con todas las sesiones, y la web vuelve a pedir crearla con un código nuevo:
+La web y toda la API piden contraseña. Hay un solo usuario y una sola contraseña (D-053).
+
+**Primera vez.** Mientras no haya contraseña, nadie puede usar la web: solo se puede crear la contraseña, y para eso hace falta un código de un solo uso.
+- El servicio deja el código en `db/codigo-acceso.txt`, dentro de la carpeta de Telegarrm, con permisos `600`: solo lo puede leer el usuario del servicio. Así nadie de tu red puede adelantarse a crear la contraseña; tiene que tener acceso a la Pi.
+  ```bash
+  cat ~/Telegarrm/db/codigo-acceso.txt
+  ```
+- En la web, escribe el código (con o sin guion, en mayúsculas o minúsculas) y la contraseña nueva dos veces: al menos 10 caracteres.
+- Al crearla entras directamente, y el archivo del código se borra.
+- El código no aparece en el registro del servicio (`journalctl`), solo en el archivo.
+- Si el servicio se reinicia antes de crear la contraseña, el código cambia: vuelve a leer el archivo.
+- Si el archivo no está, o ya hay contraseña (la web pide «Entrar»), o el servicio no ha arrancado: mira `journalctl -u telegarrm`.
+
+**Sesiones.**
+- Al entrar, el navegador guarda una cookie de sesión (`telegarrm_session`) que dura 30 días desde la última vez que se usa y sigue valiendo aunque se reinicie el servicio.
+- «Salir», en la cabecera, la cierra.
+- Cada navegador o dispositivo tiene su propia sesión.
+
+**Cambiarla.** En **Ajustes**, «Contraseña de la web»: pide la actual y la nueva. Al cambiarla se cierran las sesiones de los demás navegadores y dispositivos.
+
+**Intentos fallidos.** Tras 5 intentos fallidos desde un mismo dispositivo hay que esperar 30 segundos, y la espera se dobla con cada fallo, hasta 15 minutos. Tras 20 fallos en total, sean de quien sean, la espera es para todos. Los fallos se olvidan pasada una hora.
+
+**Si se olvida.** Desde la Pi, en la carpeta de Telegarrm, con el mismo usuario que el servicio (no hace falta pararlo):
 ```bash
 cd ~/Telegarrm && ./build/telegarrm --reset-password
 ```
+Borra la contraseña y cierra todas las sesiones. Al abrir la web, vuelve a pedir crear una con un código nuevo en `db/codigo-acceso.txt`. Este comando no toca nada más: ni la sesión de Telegram, ni los canales, ni las descargas, ni los ajustes.
 
-> Aún no hay HTTPS: la contraseña y el inicio de sesión de Telegram viajan sin cifrar. Usa la web solo dentro de tu red local o a través de la VPN.
+**Qué se guarda.**
+- La contraseña nunca se guarda en claro: en la base de datos (`db/telegarrm.db`, tabla `settings`) solo está su resultado con scrypt.
+- De cada sesión, solo la huella SHA-256 de su token (tabla `sessions`). Quien lea la base de datos no puede entrar con ellas.
+- No hace falta ninguna variable de entorno: la contraseña no está en `~/.config/telegarrm/env`.
+
+> Aún no hay HTTPS: la contraseña de la web y el inicio de sesión de Telegram viajan sin cifrar. Usa la web solo dentro de tu red local o a través de una VPN; no la publiques en Internet. Si la pones detrás de un proxy inverso con HTTPS que mande `X-Forwarded-Proto: https`, la cookie de sesión se marca como `Secure`.
 
 ## API
 Toda la API, salvo `/api/auth/`, necesita la cookie de sesión `telegarrm_session`; sin ella responde 401 (D-053).
