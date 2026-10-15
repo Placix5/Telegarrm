@@ -29,7 +29,7 @@ Cómo está hecho Telegarrm y cómo trabajar en él. La explicación técnica de
 - `web/`: la interfaz (`index.html`, `style.css`, `app.js`).
 - `tests/`: los tests, con nombres y fichas reales de canales.
 - `tools/catalog_dump.cpp`: calcula el catálogo de una copia de la base de datos, para comparar un cambio del parser obra por obra.
-- `deploy/`: compose de Docker (`deploy/docker/`) y servicio de systemd.
+- `deploy/`: compose de Docker (`deploy/docker/`, el sencillo, y `deploy/docker/con-secrets/`) y servicio de systemd.
 - `Dockerfile` y `.github/workflows/docker.yml`: la imagen de Docker y su publicación automática.
 - `docs/`: la documentación.
 
@@ -63,7 +63,7 @@ GitHub Actions (`.github/workflows/docker.yml`) la compila con cada push a `main
 2. Telegarrm, compilado y con los tests pasados (si fallan, no hay imagen);
 3. la imagen final, solo con lo necesario.
 
-La caché guarda TDLib compilado, así que cada versión nueva tarda unos minutos. Ninguna clave puede ir en el `Dockerfile`, el compose ni la imagen.
+La caché guarda TDLib compilado, así que cada versión nueva tarda unos minutos. Ninguna clave puede ir en el `Dockerfile`, la imagen ni los compose del repositorio (el sencillo lleva sus claves vacías).
 
 ## Normas del proyecto
 - **Idioma**: el código se comenta en castellano, y la web y los mensajes están en castellano.

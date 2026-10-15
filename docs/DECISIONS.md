@@ -59,7 +59,8 @@ Formato: **Contexto** (qué problema había), **Decisión**, **Alternativas desc
 | [D-051](#d-051-revisar-la-biblioteca-y-archivos-repetidos) | Revisar la biblioteca y archivos repetidos | Vigente |
 | [D-052](#d-052-pestaña-biblioteca-y-borrado-desde-la-web) | Pestaña «Biblioteca» y borrado desde la web | Vigente |
 | [D-053](#d-053-contraseña-para-la-web-y-la-api) | Contraseña para la web y la API | Vigente |
-| [D-054](#d-054-imagen-de-docker-sin-secretos) | Imagen de Docker sin secretos | Vigente |
+| [D-054](#d-054-imagen-de-docker-sin-secretos) | Imagen de Docker sin secretos | Vigente; el compose principal, sustituido por D-055 |
+| [D-055](#d-055-compose-sencillo-de-copiar-y-pegar) | Compose sencillo de copiar y pegar | Vigente |
 
 ---
 
@@ -913,7 +914,7 @@ Formato: **Contexto** (qué problema había), **Decisión**, **Alternativas desc
   - **Para que nada se cuele**: `.dockerignore` deja fuera `db/`, `build/`, `.git/`, `.env` y cualquier carpeta `secretos/`. `.gitignore` añade `.env` y `secretos/`.
   - **La Pi** sigue con el servicio nativo durante el desarrollo; el compose es para el servidor.
 - **Alternativas descartadas**:
-  - **Archivo `.env` con las claves**: más sencillo, pero quedan en el entorno del contenedor y salen con `docker inspect`. El `.env` del compose solo lleva rutas.
+  - **Archivo `.env` con las claves**: más sencillo, pero quedan en el entorno del contenedor y salen con `docker inspect`. El `.env` del compose solo lleva rutas. *Reconsiderada en D-055: el compose principal lleva ahora las claves en el entorno, y Docker secrets queda como variante.*
   - **Claves en la BD, escritas desde la web**: los secretos nunca van a la BD (regla del proyecto), y Telegram las necesita antes de arrancar.
   - **Compilar en el servidor**: TDLib tarda de 30 minutos a una hora y obliga a tener las herramientas de compilación allí.
   - **Emular ARM64 en una máquina x86_64**: horas por compilación.
@@ -947,3 +948,28 @@ Formato: **Contexto** (qué problema había), **Decisión**, **Alternativas desc
   - Los runners ARM64 de GitHub son gratuitos en repositorios públicos.
   - Cambiar la versión de TDLib, en la Pi o en el Dockerfile, obliga a revisar que la sesión siga valiendo.
 
+## D-055: Compose sencillo de copiar y pegar
+*15/10/2026*
+
+- **Contexto**: el repositorio es público y un amigo de Plácido lo va a instalar. Con D-054, instalarlo pedía un `.env`, tres archivos de claves con permisos 600 y crear las carpetas de datos con el dueño correcto antes de arrancar. Plácido: «normalmente la gente copia un docker compose y a funcionar».
+- **Decisión de Plácido**: que el compose principal sea de copiar, poner las claves y arrancar, sin subir nunca sus claves a GitHub.
+- **Decisión**:
+  - **`deploy/docker/compose.yaml`** es un único archivo, sin `.env`, con las claves en `environment:` (vacías en el repositorio) y la biblioteca en `/srv/media`. Se conserva todo el endurecimiento de D-054: usuario 1000, solo lectura, `cap_drop: ALL`, `no-new-privileges`, reinicio y 30 s para parar.
+  - **Datos en un volumen con nombre** (`telegarrm_datos`, en `/app/db`). La imagen crea `/app/db` del usuario 1000 con permisos 700, y Docker copia dueño y permisos al volumen la primera vez: no hay que crear ninguna carpeta. Con una carpeta montada, valen los de la carpeta, así que la variante de D-054 no cambia.
+  - **El código de la contraseña** se lee con `docker compose exec telegarrm cat db/codigo-acceso.txt`, sin saber dónde guarda Docker los datos. La web y el aviso de código incorrecto lo explican sin hablar de «la Pi».
+  - **La variante con Docker secrets** pasa tal cual a `deploy/docker/con-secrets/` (`compose.yaml` y `env.example`), y la guía explica las dos y cuándo elegir cada una. La Pi sigue con ella, sin cambios.
+  - **Para que las claves no acaben en git**: el compose y las guías dicen que se copie fuera del repositorio. `.gitignore` no puede protegerlo, porque el archivo del repositorio está versionado.
+- **Alternativas descartadas**:
+  - **Solo Docker secrets** (D-054): lo más seguro, pero cinco pasos antes de arrancar, y casi nadie lo espera en un servidor doméstico.
+  - **Claves en un `.env` junto al compose, como secrets de tipo `environment`**: no se verían con `docker inspect`, pero son dos archivos y las claves siguen en texto plano junto al compose; la ganancia es pequeña.
+  - **Un `entrypoint` que cree las carpetas y les dé dueño**: tendría que arrancar como root y bajar de usuario, en contra del endurecimiento de D-054.
+  - **Asistente web que pida y guarde las claves** (como wg-easy): descartado ya en D-054; las claves acabarían guardadas por el programa.
+- **Consecuencias**:
+  - Con el compose sencillo, las claves se ven con `docker inspect` y están en la copia del compose de cada uno. `docker inspect` solo lo puede usar quien ya controla Docker en ese equipo; el riesgo real es compartir el compose sin borrarlas, y las guías lo avisan.
+  - El volumen nace del usuario 1000. Con otro usuario, hay que montar una carpeta (lo dice la guía).
+  - Copias de seguridad y mudanzas con el volumen: `docker compose cp` (con `-a` al restaurar, para conservar el dueño).
+- **Verificación**: en la Pi, con una imagen local derivada de la publicada con este cambio en `/app/db`, otro proyecto (`telegarrm-prueba`), el puerto 8092 y claves falsas:
+  - El volumen nuevo nace con el usuario 1000 y permisos 700. Telegarrm crea en él la BD, `tdlib/` y el código, y conecta con Telegram.
+  - `docker compose exec telegarrm cat db/codigo-acceso.txt` muestra el código, y la API responde que falta crear la contraseña.
+  - Copia con el contenedor parado (`docker compose cp`), volumen borrado y restaurado con `docker compose cp -a`: los archivos vuelven con el usuario 1000 y Telegarrm arranca con ellos.
+  - Todo lo de la prueba (contenedor, volumen, imagen y carpetas) se borró después. El contenedor real no se tocó.

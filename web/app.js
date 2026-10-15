@@ -1815,7 +1815,7 @@ function showLogin(message) {
   authenticated = false;
   $("login-intro").textContent = authConfigured
     ? "Escribe la contraseña de Telegarrm."
-    : "Aún no hay contraseña. Créala con el código que hay en la Pi, en el archivo db/codigo-acceso.txt de la carpeta de Telegarrm (por ejemplo, con «cat ~/Telegarrm/db/codigo-acceso.txt»).";
+    : "Aún no hay contraseña. Créala con el código de un solo uso que hay en el servidor. Con Docker, en la carpeta del compose: «docker compose exec telegarrm cat db/codigo-acceso.txt». Sin Docker, en el archivo db/codigo-acceso.txt de la carpeta de Telegarrm.";
   $("entrar").textContent = authConfigured ? "Entrar" : "Crear la contraseña";
   $("login-code-field").hidden = authConfigured;
   $("login-repeat-field").hidden = authConfigured;

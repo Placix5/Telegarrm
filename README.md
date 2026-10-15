@@ -24,35 +24,26 @@ Se maneja desde el navegador, también desde el móvil, y está pensado para fun
 - Una carpeta para la biblioteca, mejor con el búfer de descargas en el mismo disco.
 
 ## Puesta en marcha rápida (Docker)
-La imagen se publica en `ghcr.io/placix5/telegarrm` y **no lleva ninguna clave**: las tuyas se quedan en archivos de tu equipo. La guía completa, con todas las opciones, está en [docs/instalacion-docker.md](docs/instalacion-docker.md).
+La imagen se publica en `ghcr.io/placix5/telegarrm` y **no lleva ninguna clave**: pones las tuyas en el compose de tu equipo. La guía completa, con una variante más segura para las claves, está en [docs/instalacion-docker.md](docs/instalacion-docker.md).
 
-1. Descarga [`deploy/docker/compose.yaml`](deploy/docker/compose.yaml) y [`deploy/docker/env.example`](deploy/docker/env.example) a una carpeta, por ejemplo `/opt/docker/telegarrm`, y renombra el segundo a `.env`. Ahí se cambian las rutas, el usuario y el puerto.
-2. Crea las carpetas de datos, de claves y de la biblioteca, con tu usuario como dueño (aquí, el 1000; mira el tuyo con `id`):
+1. **Prepara la biblioteca**, si aún no la tienes, con tu usuario como dueño (aquí, el 1000; mira el tuyo con `id`):
    ```bash
-   sudo mkdir -p /opt/docker/telegarrm/db /opt/docker/telegarrm/secretos /srv/media/descargas /srv/media/peliculas /srv/media/series
-   sudo chown -R 1000:1000 /opt/docker/telegarrm /srv/media
-   sudo chmod 700 /opt/docker/telegarrm/db /opt/docker/telegarrm/secretos
+   sudo mkdir -p /srv/media/descargas /srv/media/peliculas /srv/media/series
+   sudo chown -R 1000:1000 /srv/media
    ```
-3. Guarda tus claves en esa carpeta, una por archivo y solo con el valor: `telegram_api_id`, `telegram_api_hash` y `tmdb_token` (este puede quedar vacío). Por ejemplo, con un editor:
-   ```bash
-   sudo -u '#1000' nano /opt/docker/telegarrm/secretos/telegram_api_hash
-   ```
-   Cuando estén los tres, deja que solo los pueda leer su dueño:
-   ```bash
-   sudo chmod 600 /opt/docker/telegarrm/secretos/*
-   ```
-4. Arranca Telegarrm desde la carpeta del compose:
+2. **Copia [`deploy/docker/compose.yaml`](deploy/docker/compose.yaml)** a una carpeta de tu equipo, por ejemplo `/opt/docker/telegarrm/compose.yaml`, y pon tus claves en `TELEGARRM_API_ID`, `TELEGARRM_API_HASH` y, si quieres, `TELEGARRM_TMDB_TOKEN`. Si tu biblioteca, tu usuario o el puerto son otros, cámbialos ahí también.
+3. **Arráncalo** desde esa carpeta:
    ```bash
    docker compose up -d
    ```
-5. Abre `http://<ip-del-equipo>:8080` y sigue los [primeros pasos](#primeros-pasos).
+4. Abre `http://<ip-del-equipo>:8080` y sigue los [primeros pasos](#primeros-pasos).
 
 Para actualizar: `docker compose pull && docker compose up -d`.
 
 ## Primeros pasos
-1. **Crea la contraseña de la web.** La primera vez, Telegarrm pide un código de un solo uso que solo se puede leer en el propio equipo; así nadie de tu red puede adelantarse:
+1. **Crea la contraseña de la web.** La primera vez, Telegarrm pide un código de un solo uso que solo se puede leer en el propio equipo; así nadie de tu red puede adelantarse. Desde la carpeta del compose:
    ```bash
-   sudo cat /opt/docker/telegarrm/db/codigo-acceso.txt
+   docker compose exec telegarrm cat db/codigo-acceso.txt
    ```
 2. **Inicia sesión en Telegram** en la pestaña *Estado*: tu número, el código que te envía Telegram y, si la tienes, tu contraseña de verificación en dos pasos.
 3. **Configura la biblioteca** en *Ajustes*: el búfer de descargas y las carpetas de películas y series (en el ejemplo, `/srv/media/descargas`, `/srv/media/peliculas` y `/srv/media/series`).
@@ -61,9 +52,9 @@ Para actualizar: `docker compose pull && docker compose up -d`.
 Cómo se usa cada pestaña: [docs/uso.md](docs/uso.md).
 
 ## Seguridad
-- Tus claves de Telegram y TMDB nunca van en el repositorio ni en la imagen.
+- Tus claves de Telegram y TMDB nunca van en el repositorio ni en la imagen: solo en tu copia del compose. No la compartas (por ejemplo, al pedir ayuda) sin borrarlas antes.
 - La web pide contraseña y limita los intentos fallidos.
-- La carpeta de datos contiene la sesión de tu cuenta de Telegram: quien la tenga puede usar tu cuenta. No la compartas ni la subas a ningún sitio.
+- Los datos de Telegarrm contienen la sesión de tu cuenta de Telegram: quien la tenga puede usar tu cuenta. No la compartas ni la subas a ningún sitio.
 - **Aún no hay HTTPS**: usa Telegarrm solo en tu red local o a través de una VPN, y no lo publiques en Internet.
 
 Más detalles en [docs/configuracion.md](docs/configuracion.md).
@@ -75,7 +66,7 @@ Telegarrm descarga lo que se publica en los canales a los que tú tienes acceso.
 | | |
 | --- | --- |
 | [Uso](docs/uso.md) | Qué hace cada pestaña: catálogo, descargas, seguimiento, biblioteca |
-| [Instalación con Docker](docs/instalacion-docker.md) | Paso a paso, claves, actualizar y mudar una instalación |
+| [Instalación con Docker](docs/instalacion-docker.md) | Paso a paso, claves con Docker secrets, copias de seguridad y mudanzas |
 | [Instalación sin Docker](docs/instalacion-nativa.md) | Compilar en Debian o Raspberry Pi OS e instalarlo como servicio |
 | [Configuración y seguridad](docs/configuracion.md) | Variables, ajustes, contraseña de la web y qué se guarda |
 | [API](docs/api.md) | La API REST que usa la web |

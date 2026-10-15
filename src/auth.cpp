@@ -259,7 +259,7 @@ Auth::Result Auth::setup(const std::string& code, const std::string& password, c
     if (setupCode_.empty() || !sameText(normalizeCode(code), setupCode_)) {
         fail(client);
         result.status = 403;
-        result.error = "El código no es correcto. Está en " + setupCodePath_ + ", en la Pi";
+        result.error = "El código no es correcto. Está en " + setupCodePath_ + ", en el servidor";
         return result;
     }
     if (const auto problem = passwordProblem(password)) {

@@ -10,7 +10,7 @@ Telegarrm necesita las claves de la API de Telegram y, opcionalmente, un token d
 | `TELEGARRM_TMDB_TOKEN` | No | «API Read Access Token» de [TMDB](https://www.themoviedb.org/settings/api), para portadas, sinopsis y títulos de episodio. Sin él, el catálogo usa solo lo que dicen las fichas de Telegram. |
 | `TELEGARRM_PORT` | No | Puerto de la web (8080 si no se indica) |
 
-Cada clave se puede dar también como archivo: `TELEGARRM_API_ID_FILE`, `TELEGARRM_API_HASH_FILE` y `TELEGARRM_TMDB_TOKEN_FILE`, con la ruta de un archivo que solo contenga el valor. Es lo que usa Docker (Docker secrets). No pueden estar a la vez una variable y su `_FILE`, y un archivo vacío cuenta como «sin configurar».
+Cada clave se puede dar también como archivo: `TELEGARRM_API_ID_FILE`, `TELEGARRM_API_HASH_FILE` y `TELEGARRM_TMDB_TOKEN_FILE`, con la ruta de un archivo que solo contenga el valor. Es lo que usa la [variante con Docker secrets](instalacion-docker.md#con-docker-secrets); el compose sencillo usa las variables. No pueden estar a la vez una variable y su `_FILE`, y un archivo vacío cuenta como «sin configurar».
 
 ## Ajustes
 El resto se configura en la pestaña *Ajustes* de la web (ver [Uso](uso.md#ajustes)): el búfer de descargas, las bibliotecas de películas y series, el espacio libre mínimo y si se conservan las versiones sustituidas.
@@ -29,7 +29,7 @@ La web y toda la API piden contraseña. Hay un solo usuario y una sola contrase�
 
 ### Primera vez
 Mientras no haya contraseña, la web solo permite crearla, y para eso pide un código de un solo uso. Así nadie de tu red puede adelantarse a crearla: hay que tener acceso al equipo donde corre Telegarrm.
-- El código está en el archivo `codigo-acceso.txt` de la carpeta de datos (`db/codigo-acceso.txt` sin Docker; en Docker, dentro de `TELEGARRM_DATA`), con permisos 600.
+- El código está en el archivo `codigo-acceso.txt` de la carpeta de datos (`db/codigo-acceso.txt` sin Docker), con permisos 600. Con Docker se lee con `docker compose exec telegarrm cat db/codigo-acceso.txt`, desde la carpeta del compose.
 - Se escribe con o sin guion, en mayúsculas o minúsculas.
 - La contraseña debe tener al menos 10 caracteres.
 - El código vale hasta que se crea la contraseña, aunque Telegarrm se reinicie entretanto. Al crearla, el archivo se borra.
@@ -55,7 +55,7 @@ Este comando borra la contraseña y todas las sesiones, y deja un código nuevo 
   ```
 
 ## Qué guarda Telegarrm
-Todo está en su carpeta de datos (`db/` sin Docker; `TELEGARRM_DATA` en Docker):
+Todo está en su carpeta de datos: `db/` sin Docker; en Docker, `/app/db` dentro del contenedor (el volumen `telegarrm_datos`, o la carpeta `TELEGARRM_DATA` con Docker secrets):
 
 | | Qué es |
 | --- | --- |
@@ -67,7 +67,7 @@ Todo está en su carpeta de datos (`db/` sin Docker; `TELEGARRM_DATA` en Docker)
 Las claves de Telegram y TMDB no se guardan aquí: llegan cada vez que arranca, por variables o archivos.
 
 ## Seguridad
-- **Claves**: nunca en el repositorio, la imagen ni la base de datos. En Docker, tampoco en las variables de entorno del contenedor.
+- **Claves**: nunca en el repositorio, la imagen ni la base de datos. Con el compose sencillo están en tu copia del compose y se ven con `docker inspect`; con Docker secrets, solo en archivos con permisos 600 (ver [las dos formas](instalacion-docker.md#dos-formas-de-instalarlo)).
 - **Web**: contraseña con scrypt, sesiones con cookie que el JavaScript no puede leer y que otras webs no pueden usar (`HttpOnly`, `SameSite=Strict`), límite de intentos, y rechazo de las peticiones que cambian algo enviadas desde otra web.
 - **Archivos**: Telegarrm solo borra dentro de las carpetas de la biblioteca, nunca a través de enlaces, y solo lo que él mismo colocó, las versiones sustituidas o lo que pidas borrar desde la pestaña *Biblioteca*.
 - **Programas externos** (7-Zip, ffprobe): se lanzan sin pasar por una terminal, con cada argumento por separado, para que un nombre de archivo raro no pueda ejecutar nada.

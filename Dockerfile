@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 # Imagen de Telegarrm (docs/DECISIONS.md, D-054). No lleva ningún secreto: las claves de Telegram y
-# TMDB llegan al arrancar, como Docker secrets (ver deploy/docker/compose.yaml). Debian trixie, como
+# TMDB llegan al arrancar, en el entorno o como Docker secrets (ver deploy/docker/). Debian trixie, como
 # la Raspberry Pi. Tres etapas: TDLib, Telegarrm (compilado y probado) y la imagen final, solo con lo
 # necesario para funcionar.
 
@@ -60,7 +60,10 @@ RUN ldconfig
 WORKDIR /app
 COPY --from=build /src/telegarrm/build/telegarrm /app/telegarrm
 COPY web /app/web
-# Datos (BD, sesión de Telegram, contraseña de la web): /app/db, montada desde el servidor.
+# Datos (BD, sesión de Telegram, contraseña de la web): /app/db. Se crea aquí, del usuario 1000 y
+# solo accesible por él, para que un volumen de Docker nuevo nazca así (D-055). Si se monta una
+# carpeta del servidor, vale la de la carpeta.
+RUN mkdir /app/db && chown 1000:1000 /app/db && chmod 700 /app/db
 # HOME en /tmp: ffmpeg y 7-Zip no tienen nada que guardar.
 ENV TZ=Europe/Madrid HOME=/tmp
 USER 1000:1000

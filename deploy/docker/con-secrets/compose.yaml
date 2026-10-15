@@ -1,0 +1,58 @@
+# Telegarrm en Docker, con las claves como Docker secrets (D-054). Es la variante más segura; la
+# sencilla, con las claves en el propio compose, está en deploy/docker/compose.yaml (D-055).
+# Jellyfin va en su propio compose.
+#
+# Antes del primer arranque (detalles en docs/instalacion-docker.md, «Con Docker secrets»):
+#   1. Copia env.example a .env, junto a este archivo, y cambia las rutas si tu servidor es distinto.
+#   2. Crea las carpetas de datos y de claves, y los tres archivos de claves (permisos 600, de PUID).
+#   3. docker compose up -d
+#
+# Ninguna clave va en este archivo ni en la imagen: se leen de archivos del servidor (Docker secrets),
+# que el contenedor ve en /run/secrets, de solo lectura, y que no salen con «docker inspect».
+
+name: telegarrm
+
+services:
+  telegarrm:
+    image: ghcr.io/placix5/telegarrm:${TELEGARRM_TAG:-latest}
+    container_name: telegarrm
+    # También al pedir «Reiniciar ahora» en Ajustes (el programa sale con el código 75)
+    restart: unless-stopped
+    # Mismo usuario que los archivos de la biblioteca: Jellyfin los lee con él
+    user: "${PUID:-1000}:${PGID:-1000}"
+    ports:
+      - "${TELEGARRM_PORT:-8080}:8080"
+    environment:
+      TZ: ${TZ:-Europe/Madrid}
+      TELEGARRM_API_ID_FILE: /run/secrets/telegram_api_id
+      TELEGARRM_API_HASH_FILE: /run/secrets/telegram_api_hash
+      TELEGARRM_TMDB_TOKEN_FILE: /run/secrets/tmdb_token
+    secrets:
+      - telegram_api_id
+      - telegram_api_hash
+      - tmdb_token
+    volumes:
+      # BD, sesión de Telegram y contraseña de la web: lo único que hay que conservar (y proteger)
+      - ${TELEGARRM_DATA:-/opt/docker/telegarrm/db}:/app/db
+      # La biblioteca, con la misma ruta dentro que fuera: las de Ajustes valen tal cual, y lo
+      # descargado pasa a la biblioteca sin copiarse si el búfer está en el mismo disco
+      - ${MEDIA_DIR:-/srv/media}:${MEDIA_DIR:-/srv/media}
+    # Solo puede escribir en sus carpetas montadas y en /tmp (en memoria)
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    # Tiempo para cerrar la sesión de TDLib de forma ordenada
+    stop_grace_period: 30s
+
+secrets:
+  telegram_api_id:
+    file: ${TELEGARRM_SECRETS:-/opt/docker/telegarrm/secretos}/telegram_api_id
+  telegram_api_hash:
+    file: ${TELEGARRM_SECRETS:-/opt/docker/telegarrm/secretos}/telegram_api_hash
+  # Puede estar vacío: sin token de TMDB, el catálogo usa solo las fichas de Telegram
+  tmdb_token:
+    file: ${TELEGARRM_SECRETS:-/opt/docker/telegarrm/secretos}/tmdb_token

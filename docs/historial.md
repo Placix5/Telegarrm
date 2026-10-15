@@ -3,6 +3,8 @@
 Del más reciente al más antiguo. Los números D-0XX enlazan al [registro de decisiones](DECISIONS.md), que explica el porqué de cada cambio. Los canales reales de las pruebas aparecen con nombres genéricos (*Canal Principal*, Canal Anime).
 
 ## Docker
+- Compose sencillo en `deploy/docker/compose.yaml`: se copia, se ponen las claves y se arranca ([D-055](DECISIONS.md)). Los datos van en un volumen de Docker que se crea solo, y el código de la contraseña se lee con `docker compose exec`. La variante con Docker secrets pasa a `deploy/docker/con-secrets/`.
+- La web y el aviso de código incorrecto ya no hablan de «la Pi», sino del servidor.
 - La Raspberry Pi donde se desarrolla y prueba Telegarrm pasa al contenedor, con sus datos montados tal cual (misma contraseña, sesión de Telegram y catálogo) y el servicio nativo desactivado.
 - `Dockerfile` en tres etapas (TDLib 1.8.67, Telegarrm con sus tests y una imagen final de Debian trixie solo con lo necesario), publicada por GitHub Actions en `ghcr.io/placix5/telegarrm` para x86_64 y ARM64 ([D-054](DECISIONS.md)).
 - Compose propio en `deploy/docker/`, con las claves como Docker secrets (`*_FILE`), rutas configurables, usuario sin privilegios y sistema de archivos de solo lectura. Jellyfin queda en su compose aparte.

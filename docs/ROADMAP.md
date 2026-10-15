@@ -1,6 +1,6 @@
 # Hoja de ruta de Telegarrm
 
-*Estado al 15/10/2026: Fases 1 a 4.1 completadas; canales de anime (D-047), obras agrupadas por TMDB (D-048), temporadas con ficha propia (D-049) películas con otro nombre en TMDB (D-050), revisión de la biblioteca (D-051), pestaña «Biblioteca» (D-052), contraseña para la web (D-053) e imagen de Docker (D-054).*
+*Estado al 15/10/2026: Fases 1 a 4.1 completadas; canales de anime (D-047), obras agrupadas por TMDB (D-048), temporadas con ficha propia (D-049) películas con otro nombre en TMDB (D-050), revisión de la biblioteca (D-051), pestaña «Biblioteca» (D-052), contraseña para la web (D-053), imagen de Docker (D-054) y compose sencillo (D-055).*
 
 Documento vivo con el plan de implementación; los motivos de cada decisión están en [DECISIONS.md](DECISIONS.md) y cómo está construido, en [arquitectura.md](arquitectura.md). Lo mantiene Claude Code (desarrollo y plan técnico); Gemini revisa el código y la documentación; Plácido decide prioridades y valida en uso real.
 
@@ -106,6 +106,7 @@ Por decidir con Plácido; ninguno está empezado.
 - [x] Primera compilación en GitHub Actions y prueba de la imagen ARM64 en la Pi con el compose (otra carpeta de datos, otro puerto y claves falsas).
 - [x] Paquete `ghcr.io/placix5/telegarrm` descargable sin iniciar sesión.
 - [x] La Raspberry Pi funciona con el contenedor (`/opt/docker/telegarrm`), con sus datos de siempre y el servicio nativo desactivado (15/10/2026).
+- [x] Compose sencillo de copiar y pegar, con las claves en él y los datos en un volumen; Docker secrets como variante (D-055, 15/10/2026).
 - [ ] Probar una descarga e importación completas desde el contenedor.
 - Llevar el servicio al servidor con el SSD del sistema y el RAID: búfer y bibliotecas en el RAID (D-033), y Jellyfin en Docker (datos de los contenedores en `/opt/docker`) leyendo `/srv/media`. Pasos en [instalacion-docker.md](instalacion-docker.md).
 - `deploy/jellyfin-compose.yml`: borrador añadido el 07/10/2026, fuera del trabajo de Claude.
