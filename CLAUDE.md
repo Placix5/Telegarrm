@@ -16,7 +16,7 @@ El proyecto anterior (CLI) está en `~/TelegramDownloader`: de ahí se migran el
 *   **Base de Datos**: SQLite3 (C API).
 *   **Herramientas externas** (lanzadas sin shell): 7-Zip (`7zip` y `7zip-rar`) para descomprimir y `ffprobe` (paquete `ffmpeg`) para leer la calidad real de los vídeos. zlib para leer el principio de un ZIP comprimido.
 
-La arquitectura (hilos, flujo de datos, tablas y módulos) está en `docs/01_architecture_and_phases.md`.
+La arquitectura (hilos, flujo de datos, tablas y módulos) está en `docs/arquitectura.md`.
 
 ## Reglas de Desarrollo
 1.  **NO bloquees el hilo principal**: El servidor HTTP de `cpp-httplib` usa un método `listen()` bloqueante. TDLib y sus callbacks deben correr en hilos secundarios (ej. `std::thread`).
@@ -28,7 +28,7 @@ La arquitectura (hilos, flujo de datos, tablas y módulos) está en `docs/01_arc
 7.  **Localización**: unidades del SI (kB/MB/GB, MB/s, base 1000), fechas `dd/mm/aaaa`, hora `Europe/Madrid`.
 
 ## Comandos de Proyecto
-*   **Dependencias** (Debian / Raspberry Pi OS): `sudo apt install build-essential cmake libsqlite3-dev gperf zlib1g-dev libssl-dev 7zip 7zip-rar ffmpeg`, más TDLib compilado en `~/td/tdlib` (ver README). 7-Zip lo usa la importación a la biblioteca (`7zip-rar` añade el códec de RAR); `ffprobe` (de `ffmpeg`) lee la calidad real de cada vídeo.
+*   **Dependencias** (Debian / Raspberry Pi OS): `sudo apt install build-essential cmake libsqlite3-dev gperf zlib1g-dev libssl-dev 7zip 7zip-rar ffmpeg`, más TDLib compilado en `~/td/tdlib` (ver `docs/instalacion-nativa.md`). 7-Zip lo usa la importación a la biblioteca (`7zip-rar` añade el códec de RAR); `ffprobe` (de `ffmpeg`) lee la calidad real de cada vídeo.
 *   **Compilar**: `cmake -S . -B build && cmake --build build`
 *   **Tests**: `ctest --test-dir build` o `./build/telegarrm_tests` (parser, catálogo, BD, biblioteca y seguimiento, con casos reales en `tests/parser_tests.cpp`; algunos generan vídeos y comprimidos con ffmpeg y 7-Zip). Cada formato nuevo de canal que se descubra se añade como caso de test. La compilación completa tarda más de 2 min en la Pi: lánzala en segundo plano.
 *   **Ejecutar**: `TELEGARRM_API_ID=... TELEGARRM_API_HASH=... [TELEGARRM_TMDB_TOKEN=...] ./build/telegarrm` desde la raíz del proyecto: las rutas `db/` y `web/` son relativas al directorio actual.
@@ -42,6 +42,7 @@ La arquitectura (hilos, flujo de datos, tablas y módulos) está en `docs/01_arc
 *   **Migraciones de la BD**: antes de desplegar una (con el contenedor), copia `db/telegarrm.db` con la API de copia de SQLite (no con `cp`, por el WAL) a un sitio temporal.
 
 ## Flujo de Trabajo
+*   **Documentación**: el repositorio es público. El `README.md` es breve y para quien llega nuevo (qué es, instalación rápida con Docker, primeros pasos), sin datos personales ni detalles técnicos. Lo demás va en `docs/` (índice en `docs/README.md`): `uso.md`, `instalacion-docker.md`, `instalacion-nativa.md`, `configuracion.md`, `api.md`, `desarrollo.md`, `arquitectura.md` e `historial.md`. Al cambiar algo visible, actualiza la guía que toque y `historial.md`.
 *   La planificación vigente está en `docs/ROADMAP.md`: mantenla al día al cerrar cada hito.
 *   **Registra cada decisión en `docs/DECISIONS.md` en el momento de tomarla** (contexto, decisión, alternativas descartadas, consecuencias). Si una cambia, márcala como sustituida en lugar de borrarla.
 *   Commits pequeños y descriptivos, **solo en local**: Plácido decide cuándo hacer push a GitHub.

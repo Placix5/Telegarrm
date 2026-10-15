@@ -103,13 +103,13 @@ Formato: **Contexto** (qué problema había), **Decisión**, **Alternativas desc
 *06/10/2026 · Decisión de Plácido*
 
 - **Decisión**: `TELEGARRM_API_ID` y `TELEGARRM_API_HASH` solo por entorno. Como servicio, se leen de `~/.config/telegarrm/env` (permisos `600`).
-- **Alternativas descartadas**: guardarlas en la tabla `settings` (lo proponía `03_current_task.md`), porque los secretos acabarían en la BD y en sus copias de seguridad. Tampoco un `config.json` como el proyecto antiguo.
+- **Alternativas descartadas**: guardarlas en la tabla `settings` (lo proponía la nota de la tarea 03, hoy en `historico/tarea-03.md`), porque los secretos acabarían en la BD y en sus copias de seguridad. Tampoco un `config.json` como el proyecto antiguo.
 - **Consecuencias**: sin ellas, el servicio no arranca y da un error claro. Nunca se escriben en logs ni en la BD.
 
 ## D-007: Inicio de sesión de Telegram desde la web
 *06/10/2026*
 
-- **Contexto**: el proyecto antiguo pedía teléfono y código por terminal; `03_current_task.md` proponía hacerlo por CLI la primera vez.
+- **Contexto**: el proyecto antiguo pedía teléfono y código por terminal; la nota de la tarea 03 (`historico/tarea-03.md`) proponía hacerlo por CLI la primera vez.
 - **Decisión**: endpoints `/api/telegram/auth/{phone,code,password}` y un formulario web guiado por el `authorizationState` de TDLib.
 - **Motivo**: el objetivo del proyecto es no depender de SSH, y un servicio de systemd no tiene terminal.
 - **Consecuencias**: hasta que la web tenga autenticación y HTTPS, el inicio de sesión viaja en claro por la red local (pendiente en ROADMAP, "Transversal"). Si Telegram cierra la sesión (ej. revocada desde otro dispositivo), se crea un cliente nuevo para volver a iniciarla desde la web.
@@ -451,7 +451,7 @@ Formato: **Contexto** (qué problema había), **Decisión**, **Alternativas desc
 ## D-035: Seguimiento de series y películas
 *07/10/2026 · Fase 4*
 
-- **Contexto**: la Fase 4 (docs/05_current_task.md) pide que el servicio funcione solo: descargar los episodios nuevos de lo que se sigue y sustituir una película o episodio descargado cuando llega una versión mejor.
+- **Contexto**: la Fase 4 (`historico/tarea-05.md`) pide que el servicio funcione solo: descargar los episodios nuevos de lo que se sigue y sustituir una película o episodio descargado cuando llega una versión mejor.
 - **Decisión**:
   - **Tabla `follows`**: una fila por obra seguida, con tipo, título, año, identificador de TMDB, clave de obra (`tipo|título|año`, la de `MetadataService`) y una ficha de la obra (`chat_id`, `anchor_id`). La obra se reencuentra en el catálogo por cualquiera de sus fichas; si ya no está, por TMDB y después por la clave. Si la ficha principal cambia, se actualiza sola.
   - **Solo cuenta lo que se publica después de seguir** (`created_at`). Seguir no descarga el catálogo antiguo; para eso están los botones de temporada.

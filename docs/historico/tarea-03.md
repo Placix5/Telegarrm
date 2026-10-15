@@ -4,7 +4,7 @@
 > - Credenciales (`api_id`, `api_hash`) en **variables de entorno**, no en la tabla `settings`: decisión de Plácido, para que los secretos no estén en la BD.
 > - Inicio de sesión (teléfono, código, 2FA) **desde la web** (`/api/telegram/auth/*` y `web/index.html`) en lugar de la terminal, para no depender de SSH.
 >
-> Se usa la interfaz JSON (`Td::TdJson`) como el proyecto original, pero con la API nueva (`td_send`/`td_receive`). La planificación vigente está en [ROADMAP.md](ROADMAP.md).
+> Se usa la interfaz JSON (`Td::TdJson`) como el proyecto original, pero con la API nueva (`td_send`/`td_receive`). La planificación vigente está en [ROADMAP.md](../ROADMAP.md).
 
 **Fase Actual:** Fase 1 Continuación (Integración de la librería real de TDLib).
 

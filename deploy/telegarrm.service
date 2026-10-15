@@ -1,5 +1,5 @@
 # Servicio de sistema de systemd para Telegarrm (corre como el usuario plax).
-# Instalación, actualización y motivos: README ("Como servicio") y docs/DECISIONS.md (D-012).
+# Instalación, actualización y motivos: docs/instalacion-nativa.md y docs/DECISIONS.md (D-012).
 #
 # Se COPIA a /etc/systemd/system (no se enlaza): la unidad la lee systemd como root
 # y no debe poder modificarla un usuario sin privilegios.

@@ -1,6 +1,6 @@
 # Telegarrm en Docker (docs/DECISIONS.md, D-054). Jellyfin va en su propio compose.
 #
-# Antes del primer arranque (detalles en el README, «Docker»):
+# Antes del primer arranque (detalles en docs/instalacion-docker.md):
 #   1. Copia env.example a .env, junto a este archivo, y cambia las rutas si tu servidor es distinto.
 #   2. Crea las carpetas de datos y de claves, y los tres archivos de claves (permisos 600, de PUID).
 #   3. docker compose up -d

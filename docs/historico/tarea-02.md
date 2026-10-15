@@ -1,6 +1,6 @@
 # Tarea Actual para Claude Code
 
-> **Estado: completada el 06/10/2026.** La planificación vigente está en [ROADMAP.md](ROADMAP.md).
+> **Estado: completada el 06/10/2026.** La planificación vigente está en [ROADMAP.md](../ROADMAP.md).
 
 **Fase Actual:** Inicio de Fase 1 (Integración de Base de Datos y TDLib base).
 

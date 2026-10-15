@@ -1,6 +1,6 @@
 # Tarea Actual para Claude Code
 
-> **Estado: completada el 06/10/2026** (D-030 y D-031 en [DECISIONS.md](DECISIONS.md)). Se hizo también la parte opcional: el trabajador descarga de verdad con TDLib, con progreso, cancelación y reanudación. Diferencia con lo pedido: los archivos quedan de momento en la caché de TDLib (`db/tdlib`), porque aún no está definida la ruta de la biblioteca; moverlos y descomprimirlos es el siguiente paso de la Fase 3.
+> **Estado: completada el 06/10/2026** (D-030 y D-031 en [DECISIONS.md](../DECISIONS.md)). Se hizo también la parte opcional: el trabajador descarga de verdad con TDLib, con progreso, cancelación y reanudación. Diferencia con lo pedido: los archivos quedan de momento en la caché de TDLib (`db/tdlib`), porque aún no está definida la ruta de la biblioteca; moverlos y descomprimirlos es el siguiente paso de la Fase 3.
 
 **Fase Actual:** Cierre de Fase 2 (TMDB) e Inicio de Fase 3 (Descargas).
 
