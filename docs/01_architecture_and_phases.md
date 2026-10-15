@@ -6,7 +6,7 @@ El plan inicial (de Gemini) preveía una tabla `media` con las series y películ
 
 ## Visión general
 
-Un único proceso en C++17 (`build/telegarrm`) que corre en la Raspberry Pi como servicio de systemd (D-013) o, en el servidor, en un contenedor de Docker (`Dockerfile` y `deploy/docker/`, D-054). Las claves llegan por variables de entorno o por archivos (Docker secrets), nunca en la imagen:
+Un único proceso en C++17 (`build/telegarrm`) que corre en un contenedor de Docker (`Dockerfile` y `deploy/docker/`, D-054; en la Raspberry Pi desde el 15/10/2026) o como servicio de systemd (D-013). Las claves llegan por variables de entorno o por archivos (Docker secrets), nunca en la imagen:
 
 ```
 Telegram ⇄ TDLib ⇄ TelegramClient (hilo receptor: respuestas y actualizaciones)

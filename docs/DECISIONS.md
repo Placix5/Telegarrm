@@ -935,6 +935,13 @@ Formato: **Contexto** (qué problema había), **Decisión**, **Alternativas desc
     - `docker compose stop` cierra TDLib en orden en 1 s.
     - `--reset-password` funciona con `docker compose exec`. Estas pruebas mostraron que el código nuevo no estaba en el archivo hasta abrir la web; ahora el comando lo deja escrito (D-053).
   - La imagen ocupa 875 MB, casi todo por ffmpeg.
+- **La Pi pasa al contenedor** (15/10/2026, a petición de Plácido):
+  - Plácido descartó un asistente de primera configuración que guardara las claves (como wg-easy): se quedan los Docker secrets.
+  - Compose en `/opt/docker/telegarrm`, junto a los de sus otros contenedores. Las claves están en `secretos/`, escritas desde `~/.config/telegarrm/env` sin mostrarlas y con permisos 600.
+  - Los datos se montan donde estaban (`~/Telegarrm/db`): sin mover la sesión de Telegram, y con vuelta atrás inmediata.
+  - El servicio nativo queda desactivado (`systemctl disable`, lo hizo Plácido) para que un reinicio no arranque los dos con la misma sesión.
+  - Antes del cambio se hizo una copia de la BD. El contenedor arrancó con la sesión de Telegram de siempre, el mismo catálogo, TMDB activo y la contraseña de la web ya creada.
+  - **Desarrollo**: un cambio llega a la Pi tras el push y la imagen de GitHub (unos 3 min). Lo compilado en local sirve para tests e instancias de prueba.
 - **Consecuencias**:
   - El paquete de GitHub (`ghcr.io/placix5/telegarrm`) se crea privado. Para que el servidor lo descargue sin iniciar sesión, hay que hacerlo público en los ajustes del paquete; no lleva secretos.
   - Los runners ARM64 de GitHub son gratuitos en repositorios públicos.

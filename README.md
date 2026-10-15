@@ -151,6 +151,8 @@ sudo ./deploy/install-service.sh
 ```
 Desplegar una versión nueva del programa no necesita `sudo`: `cmake --build build && systemctl restart telegarrm` (con parada ordenada). Logs con `journalctl -u telegarrm -f`.
 
+> Desde el 15/10/2026 la Raspberry Pi del proyecto usa Docker ([En Docker (servidor)](#en-docker-servidor)) con el servicio nativo desactivado. El servicio sigue siendo una forma válida de instalarlo, pero nunca a la vez que el contenedor: compartirían la sesión de Telegram.
+
 ### En Docker (servidor)
 Para un servidor que solo tiene Docker (D-054). La imagen, `ghcr.io/placix5/telegarrm`, la compila y publica GitHub Actions con cada push a `main`, para x86_64 y ARM64, después de pasar los tests. **No lleva ninguna clave**: las de Telegram y TMDB se leen de archivos del servidor (Docker secrets). Jellyfin va en su propio compose; los dos comparten la carpeta de la biblioteca.
 
@@ -315,6 +317,7 @@ Los pasos del inicio de sesión responden `{"ok": true}`, o `{"error": "..."}` c
 
 ## Historial de cambios
 ### Docker
+- La Raspberry Pi pasa al contenedor: compose en `/opt/docker/telegarrm`, con los datos de siempre montados (misma contraseña, sesión de Telegram y catálogo) y el servicio nativo desactivado.
 - `Dockerfile` en tres etapas (TDLib 1.8.67, Telegarrm con sus tests y una imagen final de Debian trixie solo con lo necesario), publicada por GitHub Actions en `ghcr.io/placix5/telegarrm` para x86_64 y ARM64 (D-054).
 - Compose propio en `deploy/docker/`, con las claves como Docker secrets (`*_FILE`), rutas configurables, usuario sin privilegios y sistema de archivos de solo lectura. Jellyfin queda en su compose aparte.
 
