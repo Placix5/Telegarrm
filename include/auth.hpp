@@ -49,7 +49,7 @@ public:
 
     // ¿Hay contraseña? Si no, la web pide crearla
     bool configured();
-    // Sin contraseña: deja el código para crearla en su archivo (si no lo había ya)
+    // Sin contraseña: deja el código para crearla en su archivo o, si ya hay uno ahí, usa ese
     void prepareSetup();
     // Crea la primera contraseña con el código de un solo uso
     Result setup(const std::string& code, const std::string& password, const std::string& client);

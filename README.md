@@ -233,7 +233,7 @@ La web y toda la API piden contraseña. Hay un solo usuario y una sola contrase�
 - En la web, escribe el código (con o sin guion, en mayúsculas o minúsculas) y la contraseña nueva dos veces: al menos 10 caracteres.
 - Al crearla entras directamente, y el archivo del código se borra.
 - El código no aparece en el registro del servicio (`journalctl`), solo en el archivo.
-- Si el servicio se reinicia antes de crear la contraseña, el código cambia: vuelve a leer el archivo.
+- El código vale hasta que se crea la contraseña, aunque el servicio se reinicie entretanto.
 - Si el archivo no está, o ya hay contraseña (la web pide «Entrar»), o el servicio no ha arrancado: mira `journalctl -u telegarrm`.
 
 **Sesiones.**
@@ -249,7 +249,7 @@ La web y toda la API piden contraseña. Hay un solo usuario y una sola contrase�
 ```bash
 cd ~/Telegarrm && ./build/telegarrm --reset-password
 ```
-Borra la contraseña y cierra todas las sesiones. Al abrir la web, vuelve a pedir crear una con un código nuevo en `db/codigo-acceso.txt`. Este comando no toca nada más: ni la sesión de Telegram, ni los canales, ni las descargas, ni los ajustes.
+Borra la contraseña, cierra todas las sesiones y deja un código nuevo en `db/codigo-acceso.txt`. Al abrir la web, pide crear otra contraseña con ese código. Este comando no toca nada más: ni la sesión de Telegram, ni los canales, ni las descargas, ni los ajustes.
 
 **Qué se guarda.**
 - La contraseña nunca se guarda en claro: en la base de datos (`db/telegarrm.db`, tabla `settings`) solo está su resultado con scrypt.

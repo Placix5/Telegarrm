@@ -109,7 +109,7 @@ El catálogo distingue dos tipos de canal, que detecta solo por los nombres de s
 | `db_manager.cpp` | SQLite |
 | `signal_watcher.cpp` | Parada ordenada |
 
-Las reglas de decisión (parser, catálogo, seguimiento, episodios que faltan, nombres, borrado seguro, novedades) son funciones puras o casi. Se prueban en `tests/parser_tests.cpp` con ejemplos reales de los canales (612 comprobaciones; D-022). `tools/catalog_dump.cpp` calcula el catálogo de una copia de la BD para comparar un cambio del parser obra por obra (D-047) y, con `--tmdb`, la coincidencia de TMDB guardada y la del criterio actual (D-048).
+Las reglas de decisión (parser, catálogo, seguimiento, episodios que faltan, nombres, borrado seguro, novedades) son funciones puras o casi. Se prueban en `tests/parser_tests.cpp` con ejemplos reales de los canales (614 comprobaciones; D-022). `tools/catalog_dump.cpp` calcula el catálogo de una copia de la BD para comparar un cambio del parser obra por obra (D-047) y, con `--tmdb`, la coincidencia de TMDB guardada y la del criterio actual (D-048).
 
 ## Web
 

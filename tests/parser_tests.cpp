@@ -2045,9 +2045,17 @@ void testAuth() {
         CHECK(!access.valid(created.token) && !access.valid(other.token));
         CHECK(!access.login("contraseña segura", "10.0.0.7").ok && access.login("contraseña nueva", "10.0.0.7").ok);
 
-        // telegarrm --reset-password: sin contraseña ni sesiones
+        // telegarrm --reset-password: sin contraseña ni sesiones, y con el código nuevo ya en el archivo,
+        // que el servicio en marcha (otra instancia de Auth) acepta
         CHECK(Auth::reset(db));
         CHECK(!access.configured() && !access.valid(changed.token));
+        Auth command(db, codePath);
+        command.prepareSetup();
+        std::ifstream newCode(codePath);
+        std::getline(newCode, line);
+        const std::string code2 = line.substr(line.rfind(' ') + 1);
+        CHECK(code2.size() == 11 && code2 != code);
+        CHECK(access.setup(code2, "contraseña otra vez", "10.0.0.8").ok);
     }
     fs::remove_all(base);
 }

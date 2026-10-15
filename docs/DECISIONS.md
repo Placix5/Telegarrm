@@ -862,7 +862,8 @@ Formato: **Contexto** (qué problema había), **Decisión**, **Alternativas desc
   - **Primera contraseña**: hace falta un código de un solo uso, que el servicio deja en `db/codigo-acceso.txt` con permisos 0600. Solo lo lee quien tenga acceso a la Pi; así nadie de la red puede adelantarse a crear la contraseña.
     - No va al registro del servicio, porque los secretos nunca van a los registros.
     - Se borra al crear la contraseña.
-  - **Restablecer**: `./build/telegarrm --reset-password`, desde la carpeta de Telegarrm, borra la contraseña y todas las sesiones. La web vuelve a pedir crearla con un código nuevo.
+    - Mientras exista, el servicio usa el código del archivo: no cambia al reiniciar (desde el 15/10/2026, tras las pruebas en Docker de D-054).
+  - **Restablecer**: `./build/telegarrm --reset-password`, desde la carpeta de Telegarrm, borra la contraseña y todas las sesiones y deja ya el código nuevo en el archivo. La web vuelve a pedir crearla con ese código.
   - **En la web**: pantalla de entrada (o de creación de la contraseña), «Salir» en la cabecera y «Contraseña de la web» en *Ajustes*.
   - **Pruebas**: `TELEGARRM_PORT` (opcional) cambia el puerto. Las pruebas de la API se hacen con otra instancia, en otra carpeta y con credenciales falsas, sin tocar la sesión ni la contraseña reales.
 - **Alternativas descartadas**:
@@ -921,7 +922,19 @@ Formato: **Contexto** (qué problema había), **Decisión**, **Alternativas desc
   - Tests: 612 comprobaciones, con la lectura de claves por archivo.
   - `docker compose config` valida el compose con claves de prueba, y no aparece ningún valor de las claves.
   - Los paquetes de la imagen existen en Debian trixie.
-  - Pendiente: la primera compilación en GitHub Actions (tras el push) y probar la imagen ARM64 en la Pi, con otra carpeta de datos y otro puerto.
+  - GitHub Actions: la primera compilación tardó 17 min (ARM64) y 20 min (x86_64), con los tests pasados en las dos.
+  - Imagen ARM64 probada en la Pi con el compose, otra carpeta de datos, el puerto 8091 y claves falsas:
+    - `docker inspect` no muestra ninguna clave, solo las rutas `*_FILE`.
+    - El proceso tiene el usuario 1000 y ninguna capacidad (`CapEff` a cero).
+    - No puede escribir en `/app` ni en `/etc`; sí en `/tmp`.
+    - Lleva 7-Zip con el módulo de RAR y ffprobe.
+    - TDLib 1.8.67 conecta con Telegram.
+    - Se crea la contraseña con el código y la sesión funciona.
+    - Los ajustes aceptan la biblioteca montada, que la pestaña «Biblioteca» lista y borra.
+    - «Reiniciar ahora» reinicia el contenedor (código 75) sin perder la sesión.
+    - `docker compose stop` cierra TDLib en orden en 1 s.
+    - `--reset-password` funciona con `docker compose exec`. Estas pruebas mostraron que el código nuevo no estaba en el archivo hasta abrir la web; ahora el comando lo deja escrito (D-053).
+  - La imagen ocupa 875 MB, casi todo por ffmpeg.
 - **Consecuencias**:
   - El paquete de GitHub (`ghcr.io/placix5/telegarrm`) se crea privado. Para que el servidor lo descargue sin iniciar sesión, hay que hacerlo público en los ajustes del paquete; no lleva secretos.
   - Los runners ARM64 de GitHub son gratuitos en repositorios públicos.

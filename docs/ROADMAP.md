@@ -103,8 +103,8 @@ Por decidir con Plácido; ninguno está empezado.
 
 ### Paso al servidor definitivo
 - [x] Imagen de Docker sin secretos, publicada por GitHub Actions para x86_64 y ARM64, con su compose aparte de Jellyfin (D-054, 15/10/2026).
-- [ ] Primera compilación en GitHub Actions y prueba de la imagen ARM64 en la Pi (otra carpeta de datos y otro puerto).
-- [ ] Hacer público el paquete `ghcr.io/placix5/telegarrm` (o iniciar sesión en el servidor).
+- [x] Primera compilación en GitHub Actions y prueba de la imagen ARM64 en la Pi con el compose (otra carpeta de datos, otro puerto y claves falsas).
+- [x] Paquete `ghcr.io/placix5/telegarrm` descargable sin iniciar sesión.
 - Llevar el servicio al servidor con el SSD del sistema y el RAID: búfer y bibliotecas en el RAID (D-033), y Jellyfin en Docker (datos de los contenedores en `/opt/docker`) leyendo `/srv/media`. Pasos en el README, «En Docker (servidor)».
 - `deploy/jellyfin-compose.yml`: borrador añadido el 07/10/2026, fuera del trabajo de Claude.
   - Bien: monta las bibliotecas en solo lectura y usa el usuario 1000 (`plax`), que puede leer lo que importa Telegarrm.
@@ -121,4 +121,4 @@ Por decidir con Plácido; ninguno está empezado.
 - Renombrar los archivos de la biblioteca cuya etiqueta de calidad no coincide con el vídeo (importados antes de D-039).
 
 ### Hecho de lo transversal
-- [x] Tests (`ctest`) del parser, el catálogo, la BD, la biblioteca, el seguimiento, TMDB y el acceso: 612 comprobaciones, algunas con vídeos y comprimidos reales generados con ffmpeg y 7-Zip.
+- [x] Tests (`ctest`) del parser, el catálogo, la BD, la biblioteca, el seguimiento, TMDB y el acceso: 614 comprobaciones, algunas con vídeos y comprimidos reales generados con ffmpeg y 7-Zip.

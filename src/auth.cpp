@@ -12,6 +12,7 @@
 #include <cctype>
 #include <ctime>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <stdexcept>
 #include <vector>
@@ -198,6 +199,20 @@ void Auth::prepareSetup() {
     std::lock_guard<std::mutex> lock(mutex_);
     if (!setupCode_.empty() || configured()) {
         return;
+    }
+    // Si ya hay un código en el archivo (de un arranque anterior o de --reset-password), vale ese: no
+    // cambia por reiniciar el servicio, y el comando puede dejarlo listo antes de abrir la web
+    {
+        std::ifstream in(setupCodePath_);
+        std::string line;
+        std::getline(in, line);
+        const auto space = line.rfind(' ');
+        const std::string existing = normalizeCode(space == std::string::npos ? "" : line.substr(space + 1));
+        if (existing.size() == 10) {
+            setupCode_ = existing;
+            std::cout << "[Acceso] Aún no hay contraseña. El código para crearla está en " << setupCodePath_ << std::endl;
+            return;
+        }
     }
     std::vector<unsigned char> random(10);
     if (RAND_bytes(random.data(), static_cast<int>(random.size())) != 1) {

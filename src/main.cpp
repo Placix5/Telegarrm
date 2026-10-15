@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <climits>
 #include <cstdlib>
+#include <filesystem>
 #include <iostream>
 #include <optional>
 #include <string>
@@ -85,7 +86,11 @@ int resetPassword() {
         std::cerr << "Error: no se pudo borrar la contraseña en '" << kDbPath << "'." << std::endl;
         return 1;
     }
-    std::cout << "Contraseña borrada y sesiones cerradas. Abre la web: pedirá crear otra con el código de "
+    // Deja ya el código nuevo: el servicio en marcha usa el del archivo
+    Auth auth(db, kSetupCodePath);
+    std::filesystem::remove(kSetupCodePath);
+    auth.prepareSetup();
+    std::cout << "Contraseña borrada y sesiones cerradas. Abre la web: pedirá crear otra con el código que hay en "
               << kSetupCodePath << "." << std::endl;
     return 0;
 }
