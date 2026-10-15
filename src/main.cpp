@@ -5,9 +5,11 @@
 #include <cstdlib>
 #include <iostream>
 #include <optional>
+#include <string>
 #include <utility>
 
 #include "api.hpp"
+#include "auth.hpp"
 #include "catalog.hpp"
 #include "channel_sync.hpp"
 #include "db_manager.hpp"
@@ -26,7 +28,8 @@ namespace {
 constexpr const char* kDbPath = "db/telegarrm.db";
 constexpr const char* kTdlibDir = "db/tdlib";
 constexpr const char* kTmdbImageDir = "db/tmdb/images";
-constexpr int kPort = 8080;
+constexpr const char* kSetupCodePath = "db/codigo-acceso.txt";
+constexpr int kDefaultPort = 8080;
 // Código de salida para pedir a systemd que reinicie el servicio (RestartForceExitStatus=75)
 constexpr int kRestartExitCode = 75;
 
@@ -55,13 +58,46 @@ std::optional<TelegramClient::Config> telegramConfigFromEnv() {
     return config;
 }
 
+// TELEGARRM_PORT (opcional, para pruebas con otra instancia): puerto de la web; si no, 8080
+int portFromEnv() {
+    const char* value = std::getenv("TELEGARRM_PORT");
+    if (!value || !*value) {
+        return kDefaultPort;
+    }
+    char* end = nullptr;
+    const long port = std::strtol(value, &end, 10);
+    return (*end == '\0' && port > 0 && port < 65536) ? static_cast<int>(port) : kDefaultPort;
+}
+
+// telegarrm --reset-password: olvida la contraseña de la web y cierra todas las sesiones (D-053). Al
+// volver a entrar, la web pide crear otra con el código que se deja en db/codigo-acceso.txt.
+int resetPassword() {
+    DbManager db(kDbPath);
+    if (!db.open() || !Auth::reset(db)) {
+        std::cerr << "Error: no se pudo borrar la contraseña en '" << kDbPath << "'." << std::endl;
+        return 1;
+    }
+    std::cout << "Contraseña borrada y sesiones cerradas. Abre la web: pedirá crear otra con el código de "
+              << kSetupCodePath << "." << std::endl;
+    return 0;
+}
+
 }  // namespace
 
-int main() {
+int main(int argc, char** argv) {
+    if (argc == 2 && std::string(argv[1]) == "--reset-password") {
+        return resetPassword();
+    }
+    if (argc > 1) {
+        std::cerr << "Uso: " << argv[0] << " [--reset-password]" << std::endl;
+        return 2;
+    }
+
     // Debe ir antes de crear cualquier hilo (ver signal_watcher.hpp)
     SignalWatcher signals;
 
     std::cout << "Iniciando Telegarrm " TELEGARRM_VERSION "..." << std::endl;
+    const int port = portFromEnv();
 
     auto telegramConfig = telegramConfigFromEnv();
     if (!telegramConfig) {
@@ -76,6 +112,12 @@ int main() {
     }
     // Registrar la versión en ejecución; /api/status la lee después desde SQLite
     db.setSetting("version", TELEGARRM_VERSION);
+
+    // Acceso a la web (D-053). Sin contraseña, deja el código para crearla en db/codigo-acceso.txt.
+    Auth auth(db, kSetupCodePath);
+    if (!auth.configured()) {
+        auth.prepareSetup();
+    }
 
     // Búfer de descargas de los ajustes. Si no se puede usar (ej. el disco no está montado o el
     // servicio no tiene permiso), se arranca con el predeterminado y la web lo avisa.
@@ -125,7 +167,7 @@ int main() {
     // Inicializar el servidor HTTP
     httplib::Server svr;
     std::atomic<bool> restartRequested{false};
-    registerApiRoutes(svr, {db, telegram, sync, catalog, metadata, tmdb, downloads, tracker, prober, downloadDir,
+    registerApiRoutes(svr, {db, telegram, sync, catalog, metadata, tmdb, downloads, tracker, prober, auth, downloadDir,
                             downloadDirWarning,
                             [&svr, &restartRequested] {
                                 restartRequested = true;
@@ -146,8 +188,8 @@ int main() {
 
     // El puerto se reserva antes de arrancar TDLib: una segunda instancia termina aquí
     // sin llegar a tocar la sesión de Telegram de la primera
-    if (!svr.bind_to_port("0.0.0.0", kPort)) {
-        std::cerr << "Error: no se pudo escuchar en el puerto " << kPort << "." << std::endl;
+    if (!svr.bind_to_port("0.0.0.0", port)) {
+        std::cerr << "Error: no se pudo escuchar en el puerto " << port << "." << std::endl;
         return 1;
     }
 
@@ -163,7 +205,7 @@ int main() {
     downloads.start();
     tracker.start();
 
-    std::cout << "Servidor web escuchando en http://localhost:" << kPort << std::endl;
+    std::cout << "Servidor web escuchando en http://localhost:" << port << std::endl;
 
     // SIGINT/SIGTERM detienen el servidor, lo que hace volver a listen_after_bind()
     signals.start([&svr] { svr.stop(); });

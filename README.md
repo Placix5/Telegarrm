@@ -81,8 +81,9 @@ Las credenciales de la API de Telegram se obtienen en <https://my.telegram.org> 
 | `TELEGARRM_API_ID` | `api_id` de la aplicación (número) |
 | `TELEGARRM_API_HASH` | `api_hash` de la aplicación |
 | `TELEGARRM_TMDB_TOKEN` | Opcional. "API Read Access Token" de [TMDB](https://www.themoviedb.org/settings/api) para títulos de episodio, sinopsis y carátulas. Sin él, el catálogo usa solo las fichas de Telegram (y lo ya consultado). |
+| `TELEGARRM_PORT` | Opcional. Puerto de la web (8080 si no se indica); sirve para levantar una segunda instancia de prueba. |
 
-Sin ellas, el servicio no arranca.
+Sin las dos primeras, el servicio no arranca.
 
 El resto se configura desde la pestaña **Ajustes** de la web: búfer de descargas (dónde descarga TDLib; se aplica con "Reiniciar ahora"), bibliotecas de películas y series, espacio libre mínimo y si se conserva la versión anterior cuando el seguimiento la mejora. Estructura recomendada en [D-033](docs/DECISIONS.md#d-033-estructura-de-carpetas-srvmedia-y-jellyfin): todo en el mismo disco (`/srv/media/descargas`, `/srv/media/peliculas`, `/srv/media/series`) para que llevar lo descargado a la biblioteca sea instantáneo. La sesión de Telegram se guarda en `db/tdlib/` (permisos `0700`): da acceso completo a la cuenta, así que no la copies ni la subas a ningún sitio.
 
@@ -108,11 +109,28 @@ sudo ./deploy/install-service.sh
 ```
 Desplegar una versión nueva del programa no necesita `sudo`: `cmake --build build && systemctl restart telegarrm` (con parada ordenada). Logs con `journalctl -u telegarrm -f`.
 
-> La web aún no tiene autenticación y el inicio de sesión viaja por HTTP sin cifrar: úsala solo dentro de tu red local o a través de la VPN.
+### Contraseña de la web
+La web y la API piden contraseña (D-053). La primera vez, la web pide crearla con un código de un solo uso que el servicio deja en `db/codigo-acceso.txt`, para que solo pueda hacerlo quien tenga acceso a la Pi:
+```bash
+cat ~/Telegarrm/db/codigo-acceso.txt
+```
+Se cambia en *Ajustes*. Si se olvida, este comando la borra junto con todas las sesiones, y la web vuelve a pedir crearla con un código nuevo:
+```bash
+cd ~/Telegarrm && ./build/telegarrm --reset-password
+```
+
+> Aún no hay HTTPS: la contraseña y el inicio de sesión de Telegram viajan sin cifrar. Usa la web solo dentro de tu red local o a través de la VPN.
 
 ## API
+Toda la API, salvo `/api/auth/`, necesita la cookie de sesión `telegarrm_session`; sin ella responde 401 (D-053).
+
 | Método y ruta | Descripción |
 | --- | --- |
+| `GET /api/auth/status` | `{"configured", "authenticated"}`: si hay contraseña y si esta sesión es válida |
+| `POST /api/auth/setup` | `{"code", "password"}`: crea la primera contraseña con el código de `db/codigo-acceso.txt` y abre sesión |
+| `POST /api/auth/login` | `{"password"}`: abre sesión. 401 si no es la contraseña; 429 con `Retry-After` tras varios fallos |
+| `POST /api/auth/logout` | Cierra la sesión |
+| `POST /api/auth/password` | `{"current", "password"}`: cambia la contraseña y cierra las demás sesiones |
 | `GET /api/status` | Estado del servicio, de la BD (`version` leída de `settings`), de Telegram, de TMDB (`metadata`: obras encontradas y sin encontrar) y la última novedad del catálogo (`events.last_id`). HTTP 503 si la BD falla. |
 | `GET /api/events?after={id}` | Novedades del catálogo posteriores a `id`: archivos nuevos de cada obra recién publicados en Telegram (D-043). La web las usa para avisar a quien está viendo esa obra |
 | `POST /api/telegram/auth/phone` | `{"phone_number": "+34..."}` |
@@ -159,6 +177,11 @@ Ejemplo de `/api/status`:
 Los pasos del inicio de sesión responden `{"ok": true}`, o `{"error": "..."}` con HTTP 400 (dato incorrecto, ej. `PHONE_CODE_INVALID`), 409 (Telegram no espera ese dato ahora) o 504 (Telegram no responde).
 
 ## Historial de cambios
+### Contraseña para la web
+- La web y la API piden contraseña (D-053). Se guarda con scrypt; las sesiones duran 30 días desde su último uso, con cookie `HttpOnly` y `SameSite=Strict`, y en la BD solo está su huella.
+- La primera contraseña exige el código de `db/codigo-acceso.txt`. Hay un límite de intentos fallidos, «Salir» en la cabecera, cambio de contraseña en *Ajustes* y `--reset-password` para restablecerla.
+- Tests: 606 comprobaciones.
+
 ### Pestaña «Biblioteca»
 - Lo que hay en disco, con su ficha del catálogo, y borrado de series, temporadas, películas o archivos con confirmación (D-052). Solo puede borrar archivos dentro de la biblioteca. Las descargas afectadas pasan a «Borrada».
 - «Revisar la biblioteca» pasa aquí desde *Ajustes*. Con siete pestañas, en el móvil se reparten en filas (4 + 3).

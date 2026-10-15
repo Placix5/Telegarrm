@@ -58,6 +58,7 @@ Formato: **Contexto** (qué problema había), **Decisión**, **Alternativas desc
 | [D-050](#d-050-películas-con-otro-nombre-en-tmdb) | Películas con otro nombre en TMDB | Vigente |
 | [D-051](#d-051-revisar-la-biblioteca-y-archivos-repetidos) | Revisar la biblioteca y archivos repetidos | Vigente |
 | [D-052](#d-052-pestaña-biblioteca-y-borrado-desde-la-web) | Pestaña «Biblioteca» y borrado desde la web | Vigente |
+| [D-053](#d-053-contraseña-para-la-web-y-la-api) | Contraseña para la web y la API | Vigente |
 
 ---
 
@@ -837,4 +838,49 @@ Formato: **Contexto** (qué problema había), **Decisión**, **Alternativas desc
   - En la Pi, el endpoint rechaza las rutas peligrosas (404 o 400) sin tocar nada.
   - La web, ejecutada en Node con la API real, lista las 5 series y las 2 películas con sus fichas, despliega los archivos y pide confirmación; al cancelar, no llama a la API.
   - No se ha podido ver en Chrome (la extensión no estaba conectada): falta mirar el aspecto, sobre todo en el móvil.
+
+## D-053: Contraseña para la web y la API
+*15/10/2026*
+
+- **Contexto**: la web no pedía nada. Desde D-052 puede borrar la biblioteca, y desde la Fase 1 inicia sesión en Telegram. Cualquiera en la red local (un invitado en el wifi, un aparato comprometido) podía hacer las dos cosas. Es además el primer requisito para usarla fuera de casa (ROADMAP). Plácido eligió hacerlo antes que llevar el programa a Docker.
+- **Decisión**:
+  - **Un solo usuario y una contraseña**, la de Plácido.
+    - Se guarda con **scrypt** (OpenSSL, que ya se usaba): N = 2^15, r = 8, p = 1, con sal de 16 bytes, en `settings` (`auth_password`). Son 32 MiB y unos 0,1 s por comprobación en la Pi.
+    - Se compara en tiempo constante. Mínimo 10 caracteres.
+  - **Sesiones**:
+    - Un token aleatorio de 32 bytes en una cookie `telegarrm_session` con `HttpOnly` (el JavaScript no la ve) y `SameSite=Strict` (otra web no puede usarla). Lleva `Secure` cuando un proxy dice que la petición llegó por HTTPS.
+    - En la BD (migración 9, tabla `sessions`) solo se guarda su SHA-256: quien lea la BD no puede usar las sesiones.
+    - Duran 30 días desde el último uso y sobreviven a los reinicios del servicio.
+    - Cambiar la contraseña cierra las demás sesiones.
+  - **Qué protege**: un filtro previo de `cpp-httplib` exige sesión en toda la API, salvo `/api/auth/` (estado, crear la contraseña, entrar, salir y cambiarla). Sin sesión, la API responde 401 y la web muestra la pantalla de entrada. La web estática, que no tiene datos, se sirve sin sesión. Las portadas van por la API y también la piden.
+  - **Otras webs**: además de `SameSite`, las peticiones que cambian algo con un `Origin` de otra web se rechazan (403). Sin `Origin` (curl y otros clientes que no son navegadores) se aceptan con sesión.
+  - **Intentos fallidos**:
+    - Tras 5 de un mismo cliente (IP), hay que esperar 30 s, y la espera se dobla con cada fallo (hasta 15 min).
+    - Tras 20 de todos juntos, 1 min que también se dobla.
+    - Los fallos se olvidan pasada una hora. La espera se indica con `Retry-After`.
+  - **Primera contraseña**: hace falta un código de un solo uso, que el servicio deja en `db/codigo-acceso.txt` con permisos 0600. Solo lo lee quien tenga acceso a la Pi; así nadie de la red puede adelantarse a crear la contraseña.
+    - No va al registro del servicio, porque los secretos nunca van a los registros.
+    - Se borra al crear la contraseña.
+  - **Restablecer**: `./build/telegarrm --reset-password`, desde la carpeta de Telegarrm, borra la contraseña y todas las sesiones. La web vuelve a pedir crearla con un código nuevo.
+  - **En la web**: pantalla de entrada (o de creación de la contraseña), «Salir» en la cabecera y «Contraseña de la web» en *Ajustes*.
+  - **Pruebas**: `TELEGARRM_PORT` (opcional) cambia el puerto. Las pruebas de la API se hacen con otra instancia, en otra carpeta y con credenciales falsas, sin tocar la sesión ni la contraseña reales.
+- **Alternativas descartadas**:
+  - **Autenticación básica de HTTP**: el navegador la recuerda sin poder cerrar la sesión, y la pide con un diálogo propio.
+  - **Contraseña en una variable de entorno**: habría que reiniciar el servicio para cambiarla, y estaría en claro en el archivo de entorno.
+  - **Código de la primera contraseña en el registro**: es un secreto; mejor en un archivo que solo lee el usuario del servicio.
+  - **Dejar entrar sin contraseña desde la propia Pi (127.0.0.1)**: detrás de un proxy inverso (HTTPS), todas las peticiones llegarían desde ahí.
+  - **Varios usuarios**: no hacen falta. La tabla de sesiones admite añadirlos más adelante.
+- **Verificación**:
+  - Tests (606 comprobaciones): contraseña, código, sesiones, salir, límite de intentos, cambio de contraseña y restablecimiento.
+  - De principio a fin, con otra instancia en el puerto 8091:
+    - La API sin sesión da 401 y la web estática 200.
+    - El código falso da 403; con el código bueno se crea la contraseña y llega la cookie.
+    - Un POST desde otra web da 403.
+    - Tras salir, la API vuelve a dar 401.
+    - El sexto intento fallido da 429 con `Retry-After`.
+    - `--reset-password` funciona con el servicio en marcha.
+  - La web, ejecutada en Node con un servidor de mentira: crear la contraseña, errores, entrar y vuelta a la entrada al perder la sesión.
+- **Consecuencias**:
+  - **Pendiente**: HTTPS. Mientras tanto, la contraseña viaja en claro por la red local, como ya pasaba con el inicio de sesión de Telegram.
+  - Las comprobaciones de la API del servicio real necesitan una sesión, que es de Plácido. Se hacen con otra instancia de prueba.
 

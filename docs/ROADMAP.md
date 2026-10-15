@@ -1,6 +1,6 @@
 # Hoja de ruta de Telegarrm
 
-*Estado al 10/10/2026: Fases 1 a 4.1 completadas; canales de anime (D-047), obras agrupadas por TMDB (D-048), temporadas con ficha propia (D-049) películas con otro nombre en TMDB (D-050), revisión de la biblioteca (D-051) y pestaña «Biblioteca» (D-052).*
+*Estado al 15/10/2026: Fases 1 a 4.1 completadas; canales de anime (D-047), obras agrupadas por TMDB (D-048), temporadas con ficha propia (D-049) películas con otro nombre en TMDB (D-050), revisión de la biblioteca (D-051), pestaña «Biblioteca» (D-052) y contraseña para la web (D-053).*
 
 Documento vivo con el plan de implementación; los motivos de cada decisión están en [DECISIONS.md](DECISIONS.md) y cómo está construido, en [01_architecture_and_phases.md](01_architecture_and_phases.md). Lo mantiene Claude Code (desarrollo y plan técnico); Gemini revisa el código y la documentación; Plácido decide prioridades y valida en uso real.
 
@@ -98,8 +98,8 @@ Formato real visto: canales de una serie con una ficha (foto + pie con título, 
 Por decidir con Plácido; ninguno está empezado.
 
 ### Antes de exponer la web fuera de la red local
-- **Autenticación** en la web y la API: ahora cualquiera en la LAN puede usarla.
-- **HTTPS** mediante proxy inverso: el login de Telegram y la contraseña 2FA viajan hoy en claro por HTTP.
+- [x] **Contraseña** en la web y la API (D-053, 15/10/2026).
+- **HTTPS** mediante proxy inverso: la contraseña de la web, el login de Telegram y la contraseña 2FA viajan hoy en claro por HTTP. La cookie ya lleva `Secure` si el proxy manda `X-Forwarded-Proto: https`.
 
 ### Paso al servidor definitivo
 - Llevar el servicio al servidor con el SSD del sistema y el RAID: búfer y bibliotecas en el RAID (D-033), y Jellyfin en Docker (datos de los contenedores en `/opt/docker`) leyendo `/srv/media`.
@@ -118,4 +118,4 @@ Por decidir con Plácido; ninguno está empezado.
 - Renombrar los archivos de la biblioteca cuya etiqueta de calidad no coincide con el vídeo (importados antes de D-039).
 
 ### Hecho de lo transversal
-- [x] Tests (`ctest`) del parser, el catálogo, la BD, la biblioteca, el seguimiento y TMDB: 569 comprobaciones, algunas con vídeos y comprimidos reales generados con ffmpeg y 7-Zip.
+- [x] Tests (`ctest`) del parser, el catálogo, la BD, la biblioteca, el seguimiento, TMDB y el acceso: 606 comprobaciones, algunas con vídeos y comprimidos reales generados con ffmpeg y 7-Zip.

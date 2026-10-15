@@ -188,6 +188,15 @@ constexpr Migration kMigrations[] = {
             PRIMARY KEY (chat_id, message_id)
         ) WITHOUT ROWID;
     )SQL"},
+    {9, R"SQL(
+        -- Sesiones de la web (D-053): solo el SHA-256 del token, que va en la cookie
+        CREATE TABLE sessions (
+            token_hash   TEXT    PRIMARY KEY,
+            created_at   INTEGER NOT NULL,
+            last_used_at INTEGER NOT NULL,
+            expires_at   INTEGER NOT NULL
+        ) WITHOUT ROWID;
+    )SQL"},
 };
 
 // Finaliza automáticamente las sentencias preparadas.
@@ -487,6 +496,96 @@ bool DbManager::setSetting(const std::string& key, const std::string& value) {
         return false;
     }
     return true;
+}
+
+bool DbManager::deleteSetting(const std::string& key) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!db_) {
+        return false;
+    }
+    StmtPtr stmt = prepare(db_.get(), "DELETE FROM settings WHERE key = ?1;");
+    if (!stmt) {
+        return false;
+    }
+    bindText(stmt.get(), 1, key);
+    if (sqlite3_step(stmt.get()) != SQLITE_DONE) {
+        logError(db_.get(), "borrar el ajuste");
+        return false;
+    }
+    return true;
+}
+
+bool DbManager::addSession(const std::string& tokenHash, std::int64_t now, std::int64_t expiresAt) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!db_) {
+        return false;
+    }
+    StmtPtr stmt = prepare(db_.get(),
+                           "INSERT INTO sessions (token_hash, created_at, last_used_at, expires_at) VALUES (?1, ?2, ?2, ?3);");
+    if (!stmt) {
+        return false;
+    }
+    bindText(stmt.get(), 1, tokenHash);
+    sqlite3_bind_int64(stmt.get(), 2, now);
+    sqlite3_bind_int64(stmt.get(), 3, expiresAt);
+    if (sqlite3_step(stmt.get()) != SQLITE_DONE) {
+        logError(db_.get(), "guardar la sesión");
+        return false;
+    }
+    return true;
+}
+
+std::optional<DbManager::Session> DbManager::getSession(const std::string& tokenHash) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!db_) {
+        return std::nullopt;
+    }
+    StmtPtr stmt = prepare(db_.get(), "SELECT created_at, last_used_at, expires_at FROM sessions WHERE token_hash = ?1;");
+    if (!stmt) {
+        return std::nullopt;
+    }
+    bindText(stmt.get(), 1, tokenHash);
+    if (sqlite3_step(stmt.get()) != SQLITE_ROW) {
+        return std::nullopt;
+    }
+    return Session{sqlite3_column_int64(stmt.get(), 0), sqlite3_column_int64(stmt.get(), 1),
+                   sqlite3_column_int64(stmt.get(), 2)};
+}
+
+bool DbManager::touchSession(const std::string& tokenHash, std::int64_t now, std::int64_t expiresAt) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!db_) {
+        return false;
+    }
+    StmtPtr stmt = prepare(db_.get(), "UPDATE sessions SET last_used_at = ?2, expires_at = ?3 WHERE token_hash = ?1;");
+    if (!stmt) {
+        return false;
+    }
+    bindText(stmt.get(), 1, tokenHash);
+    sqlite3_bind_int64(stmt.get(), 2, now);
+    sqlite3_bind_int64(stmt.get(), 3, expiresAt);
+    return sqlite3_step(stmt.get()) == SQLITE_DONE;
+}
+
+int DbManager::deleteSessions(const std::string& tokenHash, bool allButThis, std::int64_t expiredBefore) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!db_) {
+        return 0;
+    }
+    // Una sesión (o todas menos ella) y, de paso, las caducadas
+    StmtPtr stmt = prepare(db_.get(), allButThis
+                                          ? "DELETE FROM sessions WHERE token_hash <> ?1 OR expires_at < ?2;"
+                                          : "DELETE FROM sessions WHERE token_hash = ?1 OR expires_at < ?2;");
+    if (!stmt) {
+        return 0;
+    }
+    bindText(stmt.get(), 1, tokenHash);
+    sqlite3_bind_int64(stmt.get(), 2, expiredBefore);
+    if (sqlite3_step(stmt.get()) != SQLITE_DONE) {
+        logError(db_.get(), "borrar sesiones");
+        return 0;
+    }
+    return sqlite3_changes(db_.get());
 }
 
 std::vector<DbManager::Channel> DbManager::listChannels() {

@@ -19,6 +19,7 @@
 
 #include <unistd.h>
 
+#include "auth.hpp"
 #include "catalog.hpp"
 #include "download_manager.hpp"
 #include "library.hpp"
@@ -1972,6 +1973,85 @@ void testLibraryBrowseAndDelete() {
     fs::remove_all(base);
 }
 
+// D-053: contraseña de la web, sesiones y límite de intentos
+void testAuth() {
+    namespace fs = std::filesystem;
+    // Contraseña con scrypt: con sal, comprobable y nunca en claro
+    const std::string stored = auth::hashPassword("una contraseña larga");
+    CHECK(stored.rfind("scrypt$", 0) == 0 && stored.find("una contraseña") == std::string::npos);
+    CHECK(stored != auth::hashPassword("una contraseña larga"));  // Sal distinta cada vez
+    CHECK(auth::verifyPassword("una contraseña larga", stored));
+    CHECK(!auth::verifyPassword("una contraseña larg", stored));
+    CHECK(!auth::verifyPassword("", "basura"));
+    CHECK(!auth::verifyPassword("x", "scrypt$99999999999$8$1$00$00"));  // Parámetros desorbitados
+    CHECK_EQ(auth::cookieValue("tema=oscuro; telegarrm_session=abc123; otra=1", auth::kCookie), "abc123");
+    CHECK_EQ(auth::cookieValue("xtelegarrm_session=no", auth::kCookie), "");
+
+    const fs::path base = fs::temp_directory_path() / ("telegarrm_auth_" + std::to_string(::getpid()));
+    fs::remove_all(base);
+    fs::create_directories(base);
+    {
+        DbManager db((base / "test.db").string());
+        CHECK(db.open());
+        const std::string codePath = (base / "codigo-acceso.txt").string();
+        Auth access(db, codePath);
+        CHECK(!access.configured());
+        CHECK(access.login("lo que sea", "10.0.0.1").status == 409);
+
+        // El código para crear la contraseña está en un archivo que solo lee su dueño
+        access.prepareSetup();
+        CHECK(fs::exists(codePath));
+        CHECK((fs::status(codePath).permissions() & (fs::perms::group_all | fs::perms::others_all)) == fs::perms::none);
+        std::ifstream in(codePath);
+        std::string line;
+        std::getline(in, line);
+        const std::string code = line.substr(line.rfind(' ') + 1);
+        CHECK_EQ(static_cast<int>(code.size()), 11);
+
+        CHECK(access.setup("AAAAA-AAAAA", "contraseña segura", "10.0.0.1").status == 403);
+        CHECK(access.setup(code, "corta", "10.0.0.1").status == 400);
+        // En minúsculas y sin guion también vale
+        std::string typed = code;
+        typed.erase(5, 1);
+        std::transform(typed.begin(), typed.end(), typed.begin(), [](unsigned char c) { return std::tolower(c); });
+        Auth::Result created = access.setup(typed, "contraseña segura", "10.0.0.1");
+        CHECK(created.ok && created.token.size() == 64);
+        CHECK(access.configured() && !fs::exists(codePath));
+        CHECK(access.setup(code, "otra contraseña", "10.0.0.1").status == 409);
+        CHECK(access.valid(created.token));
+        CHECK(!access.valid("") && !access.valid(std::string(64, '0')));
+        // En la BD solo está el SHA-256 del token
+        CHECK(db.getSession(auth::sha256Hex(created.token)).has_value() && !db.getSession(created.token).has_value());
+
+        // Entrar, salir
+        Auth::Result session = access.login("contraseña segura", "10.0.0.2");
+        CHECK(session.ok && access.valid(session.token));
+        access.logout(session.token);
+        CHECK(!access.valid(session.token) && access.valid(created.token));
+
+        // Cinco fallos de un mismo cliente: espera (los demás clientes siguen pudiendo)
+        for (int i = 0; i < 5; ++i) {
+            CHECK(access.login("mal", "10.0.0.3").status == 401);
+        }
+        const Auth::Result locked = access.login("contraseña segura", "10.0.0.3");
+        CHECK(locked.status == 429 && locked.retryAfter > 0);
+        CHECK(access.login("contraseña segura", "10.0.0.4").ok);
+
+        // Cambiar la contraseña cierra las demás sesiones
+        Auth::Result other = access.login("contraseña segura", "10.0.0.5");
+        CHECK(access.changePassword("mal", "contraseña nueva", created.token, "10.0.0.6").status == 403);
+        Auth::Result changed = access.changePassword("contraseña segura", "contraseña nueva", created.token, "10.0.0.6");
+        CHECK(changed.ok && access.valid(changed.token));
+        CHECK(!access.valid(created.token) && !access.valid(other.token));
+        CHECK(!access.login("contraseña segura", "10.0.0.7").ok && access.login("contraseña nueva", "10.0.0.7").ok);
+
+        // telegarrm --reset-password: sin contraseña ni sesiones
+        CHECK(Auth::reset(db));
+        CHECK(!access.configured() && !access.valid(changed.token));
+    }
+    fs::remove_all(base);
+}
+
 // D-048: criterio de TMDB con respuestas guardadas en la caché (sin red)
 void testTmdbMatching() {
     namespace fs = std::filesystem;
@@ -2180,6 +2260,7 @@ int main() {
     testCatalogRepeatedFiles();
     testLibraryScan();
     testLibraryBrowseAndDelete();
+    testAuth();
 
     std::cout << (checks - failures) << "/" << checks << " comprobaciones correctas" << std::endl;
     return failures == 0 ? 0 : 1;

@@ -189,6 +189,20 @@ public:
     // Devuelve std::nullopt si la clave no existe, es NULL o hubo un error.
     std::optional<std::string> getSetting(const std::string& key);
     bool setSetting(const std::string& key, const std::string& value);
+    bool deleteSetting(const std::string& key);
+
+    // --- Sesiones de la web (D-053), por el SHA-256 de su token ---
+    struct Session {
+        std::int64_t createdAt = 0;
+        std::int64_t lastUsedAt = 0;
+        std::int64_t expiresAt = 0;
+    };
+    bool addSession(const std::string& tokenHash, std::int64_t now, std::int64_t expiresAt);
+    std::optional<Session> getSession(const std::string& tokenHash);
+    bool touchSession(const std::string& tokenHash, std::int64_t now, std::int64_t expiresAt);
+    // Borra esa sesión (o, con allButThis, todas las demás) y las caducadas antes de expiredBefore.
+    // Devuelve cuántas ha borrado.
+    int deleteSessions(const std::string& tokenHash, bool allButThis, std::int64_t expiredBefore);
 
     std::vector<Channel> listChannels();
     std::optional<Channel> getChannel(std::int64_t id);

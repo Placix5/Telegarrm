@@ -333,3 +333,7 @@ td.episode { white-space: nowrap; font-variant-numeric: tabular-nums; }
 .library-season .danger { margin-left: auto; }
 .library-file { padding: 0.3rem 0; font-size: 0.9rem; }
 .library-file-text span { overflow-wrap: anywhere; }
+/* Entrada a la web (D-053) */
+nav[hidden] { display: none; }  /* El display de nav anularía el atributo hidden */
+.login-box { max-width: 26rem; margin: 2rem auto; }
+.login-box button[type="submit"] { width: 100%; }

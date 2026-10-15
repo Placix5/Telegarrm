@@ -6,6 +6,7 @@
 namespace httplib {
 class Server;
 }
+class Auth;
 class Catalog;
 class ChannelSync;
 class DbManager;
@@ -27,6 +28,7 @@ struct ApiServices {
     DownloadManager& downloads;
     Tracker& tracker;
     ReleaseProber& prober;
+    Auth& auth;
     // Búfer de descargas con el que arrancó TDLib (para saber si un cambio exige reiniciar)
     std::string activeDownloadDir;
     // Aviso si la carpeta configurada no se pudo usar al arrancar (vacío = sin aviso)

@@ -1,6 +1,6 @@
 # Arquitectura de Telegarrm
 
-*Actualizada el 10/10/2026: canales de anime (D-047), obras agrupadas por TMDB (D-048), temporadas con ficha propia (D-049) películas con otro nombre en TMDB (D-050), revisión de la biblioteca (D-051) y pestaña «Biblioteca» (D-052).*
+*Actualizada el 15/10/2026: canales de anime (D-047), obras agrupadas por TMDB (D-048), temporadas con ficha propia (D-049) películas con otro nombre en TMDB (D-050), revisión de la biblioteca (D-051) pestaña «Biblioteca» (D-052) y contraseña para la web (D-053).*
 
 El plan inicial (de Gemini) preveía una tabla `media` con las series y películas. No llegó a existir: el catálogo se calcula en memoria a partir de los mensajes guardados (D-020), así que una mejora del parser se aplica sin migraciones. Los motivos de cada decisión están en [DECISIONS.md](DECISIONS.md) y el plan, en [ROADMAP.md](ROADMAP.md).
 
@@ -69,7 +69,7 @@ El catálogo distingue dos tipos de canal, que detecta solo por los nombres de s
 
 ## Datos
 
-**SQLite** (`db/telegarrm.db`): WAL, una conexión con mutex y migraciones con `PRAGMA user_version`. Va por la versión 8 (D-014).
+**SQLite** (`db/telegarrm.db`): WAL, una conexión con mutex y migraciones con `PRAGMA user_version`. Va por la versión 9 (D-014).
 
 | Tabla | Contenido |
 | --- | --- |
@@ -80,6 +80,7 @@ El catálogo distingue dos tipos de canal, que detecta solo por los nombres de s
 | `follows`, `auto_releases` | Obras seguidas y archivos que el seguimiento ya puso en cola |
 | `activity` | Historial de lo que hace el sistema solo (las 5000 entradas más recientes) |
 | `release_probes` | Calidad real de cada archivo, comprobada antes de descargarlo o al importarlo |
+| `sessions` | Sesiones de la web: SHA-256 del token, uso y caducidad (D-053) |
 
 **Fuera de SQLite**:
 - `db/tdlib/`: sesión de Telegram (permisos `0700`).
@@ -92,7 +93,7 @@ El catálogo distingue dos tipos de canal, que detecta solo por los nombres de s
 | Módulo | Responsabilidad |
 | --- | --- |
 | `main.cpp` | Arranque, servidor HTTP con la web estática de `web/`, orden de construcción y parada |
-| `api.cpp` | Endpoints REST (`/api/...`) |
+| `api.cpp` | Endpoints REST (`/api/...`) y filtro de sesión delante de todos (D-053) |
 | `telegram_client.cpp` | TDLib: peticiones asíncronas y síncronas, autorización y reparto de actualizaciones |
 | `channel_sync.cpp` | Historial y mensajes nuevos de los canales vigilados |
 | `media_parser.cpp` | Nombres de fichero y fichas: episodios, título, año, calidad, etiquetas, partes e idiomas |
@@ -103,11 +104,12 @@ El catálogo distingue dos tipos de canal, que detecta solo por los nombres de s
 | `release_prober.cpp` | Calidad real de un archivo sin descargarlo entero |
 | `tracker.cpp` | Seguimiento: reglas puras (`tracking::`) y su hilo (`Tracker`) |
 | `settings.cpp` | Ajustes y comprobación de rutas |
+| `auth.cpp` | Contraseña de la web (scrypt), sesiones y límite de intentos (D-053) |
 | `process.cpp` | Procesos externos sin shell |
 | `db_manager.cpp` | SQLite |
 | `signal_watcher.cpp` | Parada ordenada |
 
-Las reglas de decisión (parser, catálogo, seguimiento, episodios que faltan, nombres, borrado seguro, novedades) son funciones puras o casi. Se prueban en `tests/parser_tests.cpp` con ejemplos reales de los canales (569 comprobaciones; D-022). `tools/catalog_dump.cpp` calcula el catálogo de una copia de la BD para comparar un cambio del parser obra por obra (D-047) y, con `--tmdb`, la coincidencia de TMDB guardada y la del criterio actual (D-048).
+Las reglas de decisión (parser, catálogo, seguimiento, episodios que faltan, nombres, borrado seguro, novedades) son funciones puras o casi. Se prueban en `tests/parser_tests.cpp` con ejemplos reales de los canales (606 comprobaciones; D-022). `tools/catalog_dump.cpp` calcula el catálogo de una copia de la BD para comparar un cambio del parser obra por obra (D-047) y, con `--tmdb`, la coincidencia de TMDB guardada y la del criterio actual (D-048).
 
 ## Web
 
@@ -133,4 +135,5 @@ Las novedades llegan a la web sin conexiones permanentes (D-043):
 - Servicio aislado: solo escribe en `db/` y `/srv/media` (D-013).
 - Procesos externos sin shell (D-018).
 - Solo se borran ficheros de la biblioteca que la propia aplicación colocó, versiones anteriores de lo importado o lo que se pide borrar desde la pestaña «Biblioteca», con confirmación; nunca fuera de sus carpetas, ni a través de enlaces (D-037, D-041, D-052).
-- La web aún no tiene autenticación ni HTTPS: solo para la red local (ver ROADMAP).
+- La web y la API piden contraseña (scrypt) y sesión con cookie `HttpOnly` y `SameSite=Strict`; en la BD solo está el SHA-256 de cada sesión. Hay límite de intentos y, para crear la primera contraseña, un código que solo se lee en la Pi (D-053).
+- Aún no hay HTTPS: solo para la red local o la VPN (ver ROADMAP).

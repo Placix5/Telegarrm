@@ -122,12 +122,12 @@ function showError(id, message) {
 
 // fetch con JSON; lanza Error con el mensaje de la API si la respuesta no es 2xx
 async function api(path, options = {}) {
-  const res = await fetch(path, {
-    cache: "no-store",
-    ...options,
+  const res = await fetch(path, Object.assign({ cache: "no-store" }, options, {
     headers: options.body ? { "Content-Type": "application/json" } : undefined,
-  });
+  }));
   const data = await res.json().catch(() => ({}));
+  // Sesión caducada o cerrada desde otro sitio (D-053): vuelta a la pantalla de entrada
+  if (res.status === 401 && !path.startsWith("/api/auth/")) sessionLost();
   if (!res.ok) throw new Error(data.error || `Error HTTP ${res.status}`);
   return data;
 }
@@ -157,6 +157,15 @@ function currentRoute() {
 
 function showRoute() {
   routeShown = true;
+  // Sin sesión en la web (D-053), solo la pantalla de entrada
+  document.querySelector("nav").hidden = !authenticated;
+  $("view-login").hidden = authenticated;
+  if (!authenticated) {
+    for (const view of ["catalog", "detail", "downloads", "library", "activity", "channels", "settings", "status"]) {
+      $(`view-${view}`).hidden = true;
+    }
+    return;
+  }
   let route = currentRoute();
   // Sin sesión de Telegram solo tiene sentido la pantalla de estado (inicio de sesión)
   if (!telegramReady && route.view !== "status") route = { view: "status" };
@@ -1795,7 +1804,124 @@ $("add-form").addEventListener("submit", async (event) => {
 // Sondeo del estado
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Acceso a la web (D-053)
+// ---------------------------------------------------------------------------
+
+let authenticated = false;
+let authConfigured = true;
+
+function showLogin(message) {
+  authenticated = false;
+  $("login-intro").textContent = authConfigured
+    ? "Escribe la contraseña de Telegarrm."
+    : "Aún no hay contraseña. Créala con el código que hay en la Pi, en el archivo db/codigo-acceso.txt de la carpeta de Telegarrm (por ejemplo, con «cat ~/Telegarrm/db/codigo-acceso.txt»).";
+  $("entrar").textContent = authConfigured ? "Entrar" : "Crear la contraseña";
+  $("login-code-field").hidden = authConfigured;
+  $("login-repeat-field").hidden = authConfigured;
+  $("login-code").required = !authConfigured;
+  $("login-repeat").required = !authConfigured;
+  $("login-password").autocomplete = authConfigured ? "current-password" : "new-password";
+  $("login-submit").textContent = authConfigured ? "Entrar" : "Crear y entrar";
+  const box = $("login-message");
+  box.hidden = !message;
+  box.textContent = message || "";
+  showRoute();
+  $(authConfigured ? "login-password" : "login-code").focus();
+}
+
+function sessionLost() {
+  if (authenticated) showLogin("La sesión ha caducado o se ha cerrado. Vuelve a entrar.");
+}
+
+async function checkAuth() {
+  try {
+    const status = await api("/api/auth/status");
+    authConfigured = status.configured;
+    authenticated = status.authenticated;
+  } catch (e) {
+    setStatus("st-service", "Sin respuesta del servidor", "err");
+    showLogin("No se pudo contactar con Telegarrm. ¿Está en marcha?");
+    return;
+  }
+  if (authenticated) {
+    showRoute();
+    refresh();
+  } else {
+    showLogin();
+  }
+}
+
+$("login-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const password = $("login-password").value;
+  const box = $("login-message");
+  if (!authConfigured && password !== $("login-repeat").value) {
+    box.hidden = false;
+    box.textContent = "Las dos contraseñas no coinciden.";
+    return;
+  }
+  $("login-submit").disabled = true;
+  try {
+    if (authConfigured) {
+      await api("/api/auth/login", { method: "POST", body: JSON.stringify({ password }) });
+    } else {
+      await api("/api/auth/setup", { method: "POST", body: JSON.stringify({ code: $("login-code").value, password }) });
+    }
+    for (const id of ["login-password", "login-repeat", "login-code"]) $(id).value = "";
+    authenticated = true;
+    authConfigured = true;
+    box.hidden = true;
+    routeShown = false;
+    showRoute();
+    refresh();
+  } catch (e) {
+    box.hidden = false;
+    box.textContent = e.message;
+    $("login-password").select();
+  } finally {
+    $("login-submit").disabled = false;
+  }
+});
+
+$("logout").addEventListener("click", async (event) => {
+  event.preventDefault();
+  try {
+    await api("/api/auth/logout", { method: "POST" });
+  } catch (e) {
+    // Se sale igualmente: la página se recarga sin datos
+  }
+  location.hash = "#/catalogo";
+  location.reload();
+});
+
+$("password-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const message = $("password-message");
+  const password = $("pw-new").value;
+  if (password !== $("pw-repeat").value) {
+    message.className = "field-status err";
+    message.textContent = "Las dos contraseñas nuevas no coinciden.";
+    return;
+  }
+  $("pw-submit").disabled = true;
+  try {
+    await api("/api/auth/password", {
+      method: "POST", body: JSON.stringify({ current: $("pw-current").value, password }),
+    });
+    for (const id of ["pw-current", "pw-new", "pw-repeat"]) $(id).value = "";
+    message.className = "field-status ok";
+    message.textContent = "Contraseña cambiada. Las sesiones de otros navegadores se han cerrado.";
+  } catch (e) {
+    message.className = "field-status err";
+    message.textContent = e.message;
+  } finally {
+    $("pw-submit").disabled = false;
+  }
+});
+
 async function refresh() {
+  if (!authenticated) return;
   let data;
   try {
     data = await api("/api/status");
@@ -1828,13 +1954,14 @@ async function refresh() {
   if (data.events) checkEvents(data.events.last_id);
 }
 
-refresh();
+checkAuth();
 setInterval(refresh, STATUS_POLL_MS);
 setInterval(() => {
+  if (!authenticated) return;
   if (telegramReady && currentRoute().view === "catalog") loadCatalog();
   if (telegramReady && currentRoute().view === "activity") loadActivity();
 }, CATALOG_POLL_MS);
 // La ficha abierta, por si cambia algo que no avisa (ej. un archivo borrado a mano de la biblioteca)
 setInterval(() => {
-  if (telegramReady && currentRoute().view === "detail") refreshDetail();
+  if (authenticated && telegramReady && currentRoute().view === "detail") refreshDetail();
 }, DETAIL_POLL_MS);

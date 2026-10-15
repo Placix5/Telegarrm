@@ -18,11 +18,38 @@
       <a href="#/canales" data-view="channels">Canales</a>
       <a href="#/ajustes" data-view="settings">Ajustes</a>
       <a href="#/estado" data-view="status">Estado</a>
+      <a href="#/salir" id="logout">Salir</a>
     </nav>
   </div>
 </header>
 
 <main>
+  <!-- Entrada a la web (D-053): la contraseña o, la primera vez, crearla con el código de la Pi -->
+  <div class="view" id="view-login" hidden>
+    <section class="login-box" aria-labelledby="entrar">
+      <h2 id="entrar">Entrar</h2>
+      <form id="login-form">
+        <p class="hint" id="login-intro"></p>
+        <!-- Para los gestores de contraseñas: un solo usuario -->
+        <input type="text" name="username" autocomplete="username" value="telegarrm" hidden>
+        <div class="field" id="login-code-field" hidden>
+          <label for="login-code">Código</label>
+          <input id="login-code" autocomplete="one-time-code" spellcheck="false" placeholder="XXXXX-XXXXX">
+        </div>
+        <div class="field">
+          <label for="login-password">Contraseña</label>
+          <input id="login-password" type="password" autocomplete="current-password" required>
+        </div>
+        <div class="field" id="login-repeat-field" hidden>
+          <label for="login-repeat">Repite la contraseña</label>
+          <input id="login-repeat" type="password" autocomplete="new-password">
+        </div>
+        <button type="submit" id="login-submit">Entrar</button>
+        <p id="login-message" class="error-box err" role="alert" hidden></p>
+      </form>
+    </section>
+  </div>
+
   <!-- Catálogo -->
   <div class="view" id="view-catalog" hidden>
     <div class="toolbar">
@@ -166,6 +193,26 @@
 
         <button type="submit" id="settings-save">Guardar</button>
         <p id="settings-message" class="error-box" role="status" hidden></p>
+      </form>
+
+      <h3>Contraseña de la web</h3>
+      <form id="password-form">
+        <input type="text" name="username" autocomplete="username" value="telegarrm" hidden>
+        <div class="field">
+          <label for="pw-current">Contraseña actual</label>
+          <input id="pw-current" type="password" autocomplete="current-password" required>
+        </div>
+        <div class="field">
+          <label for="pw-new">Contraseña nueva</label>
+          <input id="pw-new" type="password" autocomplete="new-password" required>
+          <p class="hint">Al menos 10 caracteres. Se cierran las sesiones abiertas en otros navegadores o dispositivos.</p>
+        </div>
+        <div class="field">
+          <label for="pw-repeat">Repite la contraseña nueva</label>
+          <input id="pw-repeat" type="password" autocomplete="new-password" required>
+        </div>
+        <button type="submit" class="secondary" id="pw-submit">Cambiar la contraseña</button>
+        <p id="password-message" class="field-status" role="status"></p>
       </form>
     </section>
   </div>

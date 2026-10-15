@@ -15,6 +15,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include "auth.hpp"
 #include "catalog.hpp"
 #include "channel_sync.hpp"
 #include "db_manager.hpp"
@@ -1466,7 +1467,109 @@ void registerLibraryRoutes(httplib::Server& server, DbManager& db, Catalog& cata
     });
 }
 
+// Acceso (D-053): una contraseña, sesión en una cookie y toda la API detrás
+std::string sessionToken(const httplib::Request& req) {
+    return auth::cookieValue(req.get_header_value("Cookie"), auth::kCookie);
+}
+
+// HttpOnly: el JavaScript no la ve. SameSite=Strict: otra web no puede usarla. Secure solo con HTTPS
+// (un proxy que lo diga): por HTTP el navegador no la mandaría.
+void setSessionCookie(const httplib::Request& req, httplib::Response& res, const std::string& token) {
+    std::string cookie = std::string(auth::kCookie) + "=" + token +
+                         "; Path=/; HttpOnly; SameSite=Strict; Max-Age=" + (token.empty() ? "0" : "2592000");
+    if (req.get_header_value("X-Forwarded-Proto") == "https") {
+        cookie += "; Secure";
+    }
+    res.set_header("Set-Cookie", cookie);
+}
+
+void sendAuthResult(const httplib::Request& req, httplib::Response& res, const Auth::Result& result) {
+    if (!result.ok) {
+        if (result.retryAfter > 0) {
+            res.set_header("Retry-After", std::to_string(result.retryAfter));
+        }
+        sendError(res, result.status, result.error);
+        return;
+    }
+    setSessionCookie(req, res, result.token);
+    sendJson(res, 200, {{"ok", true}});
+}
+
+// ¿La petición viene de una página de otra web? Además de SameSite, las que cambian algo deben traer
+// el Origin de esta (o ninguno: curl y otros clientes que no son navegadores)
+bool foreignOrigin(const httplib::Request& req) {
+    const std::string origin = req.get_header_value("Origin");
+    if (origin.empty()) {
+        return false;
+    }
+    const auto scheme = origin.find("://");
+    return scheme == std::string::npos || origin.substr(scheme + 3) != req.get_header_value("Host");
+}
+
+void registerAuthRoutes(httplib::Server& server, Auth& auth) {
+    // Toda la API, salvo /api/auth/, necesita sesión. La web estática (sin datos) se sirve sin ella.
+    server.set_pre_routing_handler([&auth](const httplib::Request& req, httplib::Response& res) {
+        if (req.path.rfind("/api/", 0) != 0) {
+            return httplib::Server::HandlerResponse::Unhandled;
+        }
+        if (req.method != "GET" && req.method != "HEAD" && foreignOrigin(req)) {
+            sendError(res, 403, "Petición desde otra web");
+            return httplib::Server::HandlerResponse::Handled;
+        }
+        if (req.path.rfind("/api/auth/", 0) == 0 || auth.valid(sessionToken(req))) {
+            return httplib::Server::HandlerResponse::Unhandled;
+        }
+        sendError(res, 401, "Inicia sesión");
+        return httplib::Server::HandlerResponse::Handled;
+    });
+
+    // {"configured", "authenticated"}: sin contraseña, la web pide crearla (con el código de la Pi)
+    server.Get("/api/auth/status", [&auth](const httplib::Request& req, httplib::Response& res) {
+        const bool configured = auth.configured();
+        if (!configured) {
+            auth.prepareSetup();
+        }
+        sendJson(res, 200, {{"configured", configured}, {"authenticated", configured && auth.valid(sessionToken(req))}});
+    });
+
+    server.Post("/api/auth/setup", [&auth](const httplib::Request& req, httplib::Response& res) {
+        const Json body = Json::parse(req.body, nullptr, false);
+        if (!body.is_object()) {
+            sendError(res, 400, "Petición no válida");
+            return;
+        }
+        sendAuthResult(req, res, auth.setup(body.value("code", ""), body.value("password", ""), req.remote_addr));
+    });
+
+    server.Post("/api/auth/login", [&auth](const httplib::Request& req, httplib::Response& res) {
+        const Json body = Json::parse(req.body, nullptr, false);
+        if (!body.is_object()) {
+            sendError(res, 400, "Petición no válida");
+            return;
+        }
+        sendAuthResult(req, res, auth.login(body.value("password", ""), req.remote_addr));
+    });
+
+    server.Post("/api/auth/logout", [&auth](const httplib::Request& req, httplib::Response& res) {
+        auth.logout(sessionToken(req));
+        setSessionCookie(req, res, "");
+        sendJson(res, 200, {{"ok", true}});
+    });
+
+    // {"current", "password"}: cierra las demás sesiones
+    server.Post("/api/auth/password", [&auth](const httplib::Request& req, httplib::Response& res) {
+        const Json body = Json::parse(req.body, nullptr, false);
+        if (!body.is_object()) {
+            sendError(res, 400, "Petición no válida");
+            return;
+        }
+        sendAuthResult(req, res, auth.changePassword(body.value("current", ""), body.value("password", ""),
+                                                     sessionToken(req), req.remote_addr));
+    });
+}
+
 void registerApiRoutes(httplib::Server& server, const ApiServices& services) {
+    registerAuthRoutes(server, services.auth);
     registerStatusRoutes(server, services.db, services.telegram, services.metadata, services.catalog);
     registerAuthRoutes(server, services.telegram);
     registerChannelRoutes(server, services.db, services.telegram, services.sync, services.catalog);
