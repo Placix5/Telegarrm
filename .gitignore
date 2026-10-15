@@ -3,3 +3,7 @@
 
 # Base de datos generada en tiempo de ejecución
 /db/
+
+# Docker: valores reales del servidor (D-054)
+.env
+secretos/

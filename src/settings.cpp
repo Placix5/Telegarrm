@@ -4,6 +4,7 @@
 #include <unistd.h>
 
 #include <cerrno>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -111,3 +112,35 @@ PathCheck checkPath(const std::string& path) {
     check.ok = true;
     return check;
 }
+
+Secret readSecret(const std::string& name) {
+    Secret secret;
+    const char* direct = std::getenv(name.c_str());
+    const char* file = std::getenv((name + "_FILE").c_str());
+    const bool hasDirect = direct && *direct;
+    const bool hasFile = file && *file;
+    if (hasDirect && hasFile) {
+        secret.error = "están a la vez " + name + " y " + name + "_FILE: deja solo una";
+        return secret;
+    }
+    if (hasDirect) {
+        secret.value = direct;
+        return secret;
+    }
+    if (!hasFile) {
+        return secret;
+    }
+    std::ifstream in(file, std::ios::binary);
+    if (!in) {
+        // Solo el nombre del archivo: el contenido nunca va al registro
+        secret.error = "no se pudo leer " + std::string(file) + " (" + name + "_FILE)";
+        return secret;
+    }
+    std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    const auto first = text.find_first_not_of(" \t\r\n");
+    const auto last = text.find_last_not_of(" \t\r\n");
+    // Vacío: sin configurar (el token de TMDB es opcional; las claves de Telegram se echan en falta después)
+    secret.value = first == std::string::npos ? "" : text.substr(first, last - first + 1);
+    return secret;
+}
+

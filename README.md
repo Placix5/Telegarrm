@@ -39,7 +39,8 @@ Funciona igual en el móvil: las pestañas se reorganizan, las tablas se convier
 - `tests/`: Tests (`ctest`) del parser, el catálogo, la BD, la biblioteca, el seguimiento, TMDB y el acceso, con ejemplos reales de los canales
 - `tools/`: Herramientas de desarrollo; `catalog_dump.cpp` calcula el catálogo de una copia de la BD para comparar cambios del parser (y, con `--tmdb`, del criterio de TMDB)
 - `web/`: Interfaz web (`index.html`, `style.css`, `app.js`, sin dependencias)
-- `deploy/`: Servicio de systemd, regla de polkit, script de instalación y un borrador de `docker compose` para Jellyfin (`jellyfin-compose.yml`, pendiente de revisar: ver la hoja de ruta)
+- `deploy/`: Servicio de systemd, regla de polkit, script de instalación, el compose de Telegarrm en Docker (`deploy/docker/`) y un borrador de compose para Jellyfin (`jellyfin-compose.yml`, pendiente de revisar: ver la hoja de ruta)
+- `Dockerfile`, `.github/workflows/docker.yml`: imagen de Docker, que GitHub Actions compila y publica (D-054)
 - `db/`: Datos generados al ejecutar: `telegarrm.db` (SQLite, también la contraseña de la web con scrypt y las sesiones), `tdlib/` (sesión de Telegram), `tmdb/` (carátulas) y, hasta que se crea la contraseña, `codigo-acceso.txt`
 - `docs/`: Documentación. La arquitectura está en [docs/01_architecture_and_phases.md](docs/01_architecture_and_phases.md), la planificación vigente en [docs/ROADMAP.md](docs/ROADMAP.md) y los motivos de cada decisión en [docs/DECISIONS.md](docs/DECISIONS.md)
 - `build/`: Archivos de compilación
@@ -53,10 +54,10 @@ Detalle y tareas en [docs/ROADMAP.md](docs/ROADMAP.md).
 - [x] **Fase 3**: Descargas: cola, descompresión y renombrado para Jellyfin.
 - [x] **Fase 4**: Tele-ARR: mensajes nuevos en tiempo real, seguimiento de series y películas, auto-descarga de episodios nuevos, sustitución por versiones mejores, calidad real de cada archivo e historial de actividad.
 
-Después: contraseña para la web (hecha, D-053) y pestaña «Biblioteca». Siguientes pasos (HTTPS, paso al servidor con RAID y Jellyfin): ver la hoja de ruta.
+Después: contraseña para la web (hecha, D-053) y pestaña «Biblioteca». Siguientes pasos (HTTPS, paso al servidor en Docker): ver la hoja de ruta.
 
 ## Instalación desde cero
-Resumen de una instalación nueva en Debian o Raspberry Pi OS; cada paso enlaza a su sección. Los ejemplos suponen que el repositorio está en `~/Telegarrm` y la biblioteca en `/srv/media`.
+Resumen de una instalación nueva en Debian o Raspberry Pi OS, compilando el programa; cada paso enlaza a su sección. Los ejemplos suponen que el repositorio está en `~/Telegarrm` y la biblioteca en `/srv/media`. En un servidor que solo tiene Docker, sigue [En Docker (servidor)](#en-docker-servidor) en lugar de los pasos 1 a 5.
 
 1. **Dependencias y TDLib**: instala los paquetes y compila TDLib como se explica en [Dependencias](#dependencias).
 2. **Telegarrm**: clónalo, compílalo y pasa los tests:
@@ -122,7 +123,7 @@ Las credenciales de la API de Telegram se obtienen en <https://my.telegram.org> 
 | `TELEGARRM_TMDB_TOKEN` | Opcional. "API Read Access Token" de [TMDB](https://www.themoviedb.org/settings/api) para títulos de episodio, sinopsis y carátulas. Sin él, el catálogo usa solo las fichas de Telegram (y lo ya consultado). |
 | `TELEGARRM_PORT` | Opcional. Puerto de la web (8080 si no se indica); sirve para levantar una segunda instancia de prueba. |
 
-Sin las dos primeras, el servicio no arranca.
+Sin las dos primeras, el servicio no arranca. Cada clave se puede dar también como archivo: `TELEGARRM_API_ID_FILE`, `TELEGARRM_API_HASH_FILE` y `TELEGARRM_TMDB_TOKEN_FILE` con la ruta de un archivo que solo contenga el valor. Así funciona en Docker, con Docker secrets. No pueden estar a la vez la variable y su `_FILE`.
 
 El resto se configura desde la pestaña **Ajustes** de la web: búfer de descargas (dónde descarga TDLib; se aplica con "Reiniciar ahora"), bibliotecas de películas y series, espacio libre mínimo y si se conserva la versión anterior cuando el seguimiento la mejora. Estructura recomendada en [D-033](docs/DECISIONS.md#d-033-estructura-de-carpetas-srvmedia-y-jellyfin): todo en el mismo disco (`/srv/media/descargas`, `/srv/media/peliculas`, `/srv/media/series`) para que llevar lo descargado a la biblioteca sea instantáneo. La sesión de Telegram se guarda en `db/tdlib/` (permisos `0700`): da acceso completo a la cuenta, así que no la copies ni la subas a ningún sitio.
 
@@ -149,6 +150,77 @@ Instalación con `sudo`, una vez y cada vez que cambie algo en `deploy/`. El scr
 sudo ./deploy/install-service.sh
 ```
 Desplegar una versión nueva del programa no necesita `sudo`: `cmake --build build && systemctl restart telegarrm` (con parada ordenada). Logs con `journalctl -u telegarrm -f`.
+
+### En Docker (servidor)
+Para un servidor que solo tiene Docker (D-054). La imagen, `ghcr.io/placix5/telegarrm`, la compila y publica GitHub Actions con cada push a `main`, para x86_64 y ARM64, después de pasar los tests. **No lleva ninguna clave**: las de Telegram y TMDB se leen de archivos del servidor (Docker secrets). Jellyfin va en su propio compose; los dos comparten la carpeta de la biblioteca.
+
+Todo lo del servidor está en [`deploy/docker/`](deploy/docker/): `compose.yaml` y `env.example`.
+
+1. **Archivos del compose**: copia `deploy/docker/compose.yaml` y `deploy/docker/env.example` al servidor, por ejemplo a `/opt/docker/telegarrm/`. Renombra el segundo a `.env` y cambia lo que haga falta:
+   - `PUID` y `PGID`: el usuario dueño de la biblioteca, el mismo que use Jellyfin (mira el tuyo con `id`).
+   - `TELEGARRM_DATA`, `TELEGARRM_SECRETS` y `MEDIA_DIR`: las carpetas de datos, de claves y de la biblioteca.
+   - `TELEGARRM_PORT`: el puerto de la web.
+   - `TELEGARRM_TAG`: para fijar una versión de la imagen en lugar de `latest`.
+2. **Carpetas**, propiedad de ese usuario y solo para él:
+   ```bash
+   sudo mkdir -p /opt/docker/telegarrm/db /opt/docker/telegarrm/secretos /srv/media/descargas /srv/media/peliculas /srv/media/series
+   sudo chown -R 1000:1000 /opt/docker/telegarrm /srv/media
+   sudo chmod 700 /opt/docker/telegarrm/db /opt/docker/telegarrm/secretos
+   ```
+   Créalas antes de arrancar: si falta una, Docker la crea como root y Telegarrm no podrá escribir en ella.
+3. **Claves**: un archivo por clave en la carpeta de claves, solo con el valor, con permisos 600 y del mismo usuario:
+   ```bash
+   S=/opt/docker/telegarrm/secretos
+   sudo -u '#1000' sh -c "umask 077; printf '%s' '123456' > $S/telegram_api_id"
+   sudo -u '#1000' sh -c "umask 077; printf '%s' '0123456789abcdef0123456789abcdef' > $S/telegram_api_hash"
+   sudo -u '#1000' sh -c "umask 077; printf '%s' 'eyJhbGciOi...' > $S/tmdb_token"
+   ```
+   - Los valores son los tuyos de <https://my.telegram.org> y de TMDB.
+   - `tmdb_token` tiene que existir, pero puede estar vacío si no usas TMDB.
+   - Para no dejar las claves en el historial de la terminal, puedes crear los archivos con un editor (`sudo -u '#1000' nano /opt/docker/telegarrm/secretos/telegram_api_hash`).
+   - El contenedor las ve en `/run/secrets/`, de solo lectura. No están en la imagen, en el compose ni en sus variables de entorno, así que tampoco salen con `docker inspect`.
+4. **Imagen**: si el paquete de GitHub es público, no hace falta nada. Si es privado, inicia sesión una vez con un token de GitHub con permiso `read:packages`:
+   ```bash
+   docker login ghcr.io -u Placix5
+   ```
+5. **Arrancar**, desde la carpeta del compose:
+   ```bash
+   docker compose up -d
+   docker compose logs -f
+   ```
+6. **Primer uso**: crea la contraseña de la web con el código que deja en la carpeta de datos. Después inicia sesión en Telegram y configura **Ajustes** y **Canales**, como en los pasos 6 a 8 de [Instalación desde cero](#instalación-desde-cero).
+   ```bash
+   sudo cat /opt/docker/telegarrm/db/codigo-acceso.txt
+   ```
+   En **Ajustes**, las rutas de la biblioteca son las del servidor (`/srv/media/...`): el contenedor las ve con la misma ruta.
+
+**Actualizar**: `docker compose pull && docker compose up -d`. Los datos siguen en `TELEGARRM_DATA`.
+
+**Restablecer la contraseña**:
+```bash
+docker compose exec telegarrm /app/telegarrm --reset-password
+```
+
+**El contenedor está limitado**:
+- corre con el usuario de `PUID`, no como root;
+- su sistema de archivos es de solo lectura, salvo los datos, la biblioteca y `/tmp`;
+- no tiene privilegios del sistema ni puede ganarlos;
+- se reinicia solo, también cuando se pide «Reiniciar ahora» en *Ajustes*.
+
+**Traer una instalación de la Raspberry Pi**: la carpeta `db/` lleva la base de datos, la contraseña de la web y la sesión de Telegram. Esta última da acceso completo a la cuenta: cópiala solo directamente entre tus máquinas y nunca la dejes a la vista.
+1. En la Pi, para el servicio y no lo vuelvas a arrancar. Dos instalaciones con la misma sesión de Telegram a la vez se pisarían.
+   ```bash
+   systemctl stop telegarrm && sudo systemctl disable telegarrm
+   ```
+2. Copia la carpeta al servidor y dásela al usuario del contenedor:
+   ```bash
+   scp -r ~/Telegarrm/db/* servidor:/opt/docker/telegarrm/db/
+   ```
+   ```bash
+   sudo chown -R 1000:1000 /opt/docker/telegarrm/db && sudo chmod 700 /opt/docker/telegarrm/db
+   ```
+3. Si el búfer de descargas o las bibliotecas cambian de ruta en el servidor, ajústalas en **Ajustes** después de arrancar.
+4. `docker compose up -d`. La imagen lleva la misma versión de TDLib que la Pi (1.8.67), así que la sesión de Telegram debería seguir valiendo. Si no, la web pedirá iniciar sesión de nuevo.
 
 ### Contraseña de la web
 La web y toda la API piden contraseña. Hay un solo usuario y una sola contraseña (D-053).
@@ -242,6 +314,10 @@ Ejemplo de `/api/status`:
 Los pasos del inicio de sesión responden `{"ok": true}`, o `{"error": "..."}` con HTTP 400 (dato incorrecto, ej. `PHONE_CODE_INVALID`), 409 (Telegram no espera ese dato ahora) o 504 (Telegram no responde).
 
 ## Historial de cambios
+### Docker
+- `Dockerfile` en tres etapas (TDLib 1.8.67, Telegarrm con sus tests y una imagen final de Debian trixie solo con lo necesario), publicada por GitHub Actions en `ghcr.io/placix5/telegarrm` para x86_64 y ARM64 (D-054).
+- Compose propio en `deploy/docker/`, con las claves como Docker secrets (`*_FILE`), rutas configurables, usuario sin privilegios y sistema de archivos de solo lectura. Jellyfin queda en su compose aparte.
+
 ### Contraseña para la web
 - La web y la API piden contraseña (D-053). Se guarda con scrypt; las sesiones duran 30 días desde su último uso, con cookie `HttpOnly` y `SameSite=Strict`, y en la BD solo está su huella.
 - La primera contraseña exige el código de `db/codigo-acceso.txt`. Hay un límite de intentos fallidos, «Salir» en la cabecera, cambio de contraseña en *Ajustes* y `--reset-password` para restablecerla.

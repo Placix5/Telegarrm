@@ -33,15 +33,23 @@ constexpr int kDefaultPort = 8080;
 // Código de salida para pedir a systemd que reinicie el servicio (RestartForceExitStatus=75)
 constexpr int kRestartExitCode = 75;
 
-// Credenciales de la API de Telegram (https://my.telegram.org), leídas del entorno
+// Credenciales de la API de Telegram (https://my.telegram.org): de las variables de entorno o, en
+// Docker, de los archivos que digan TELEGARRM_API_ID_FILE y TELEGARRM_API_HASH_FILE (D-054)
 std::optional<TelegramClient::Config> telegramConfigFromEnv() {
-    const char* apiId = std::getenv("TELEGARRM_API_ID");
-    const char* apiHash = std::getenv("TELEGARRM_API_HASH");
-    if (!apiId || !*apiId || !apiHash || !*apiHash) {
-        std::cerr << "Error: faltan las variables de entorno TELEGARRM_API_ID y TELEGARRM_API_HASH "
-                     "(se obtienen en https://my.telegram.org)." << std::endl;
+    const Secret apiIdSecret = readSecret("TELEGARRM_API_ID");
+    const Secret apiHashSecret = readSecret("TELEGARRM_API_HASH");
+    for (const Secret* secret : {&apiIdSecret, &apiHashSecret}) {
+        if (!secret->error.empty()) {
+            std::cerr << "Error: " << secret->error << "." << std::endl;
+            return std::nullopt;
+        }
+    }
+    if (apiIdSecret.value.empty() || apiHashSecret.value.empty()) {
+        std::cerr << "Error: faltan TELEGARRM_API_ID y TELEGARRM_API_HASH (o, en Docker, TELEGARRM_API_ID_FILE y "
+                     "TELEGARRM_API_HASH_FILE); se obtienen en https://my.telegram.org." << std::endl;
         return std::nullopt;
     }
+    const char* apiId = apiIdSecret.value.c_str();
 
     char* end = nullptr;
     errno = 0;
@@ -53,7 +61,7 @@ std::optional<TelegramClient::Config> telegramConfigFromEnv() {
 
     TelegramClient::Config config;
     config.apiId = static_cast<int>(id);
-    config.apiHash = apiHash;
+    config.apiHash = apiHashSecret.value;
     config.databaseDir = kTdlibDir;
     return config;
 }
@@ -141,8 +149,12 @@ int main(int argc, char** argv) {
     Catalog catalog(db);
 
     // Metadatos de TMDB (opcionales: sin token, el catálogo usa solo los datos de las fichas)
-    const char* tmdbToken = std::getenv("TELEGARRM_TMDB_TOKEN");
-    TmdbClient tmdb(db, tmdbToken ? tmdbToken : "", kTmdbImageDir);
+    const Secret tmdbToken = readSecret("TELEGARRM_TMDB_TOKEN");
+    if (!tmdbToken.error.empty()) {
+        std::cerr << "Error: " << tmdbToken.error << "." << std::endl;
+        return 1;
+    }
+    TmdbClient tmdb(db, tmdbToken.value, kTmdbImageDir);
     MetadataService metadata(db, catalog, tmdb);
 
     TelegramClient telegram(std::move(*telegramConfig));

@@ -2052,6 +2052,40 @@ void testAuth() {
     fs::remove_all(base);
 }
 
+// D-054: claves por variable de entorno o, en Docker, por archivo (Docker secrets)
+void testSecrets() {
+    namespace fs = std::filesystem;
+    const fs::path base = fs::temp_directory_path() / ("telegarrm_secret_" + std::to_string(::getpid()));
+    fs::remove_all(base);
+    fs::create_directories(base);
+    const std::string name = "TELEGARRM_TEST_SECRET";
+    ::unsetenv(name.c_str());
+    ::unsetenv((name + "_FILE").c_str());
+    Secret secret = readSecret(name);
+    CHECK(secret.value.empty() && secret.error.empty());  // Sin configurar
+
+    ::setenv(name.c_str(), "directo", 1);
+    CHECK_EQ(readSecret(name).value, "directo");
+
+    writeFile(base / "clave", 0, 'x');
+    { std::ofstream out(base / "clave"); out << "  desde-archivo\n\n"; }
+    ::setenv((name + "_FILE").c_str(), (base / "clave").c_str(), 1);
+    CHECK(!readSecret(name).error.empty());  // Las dos a la vez: no se sabe cuál vale
+    ::unsetenv(name.c_str());
+    secret = readSecret(name);
+    CHECK(secret.error.empty() && secret.value == "desde-archivo");
+
+    ::setenv((name + "_FILE").c_str(), (base / "no-existe").c_str(), 1);
+    secret = readSecret(name);
+    CHECK(secret.value.empty() && secret.error.find("no-existe") != std::string::npos);
+    { std::ofstream out(base / "vacia"); out << "\n"; }
+    ::setenv((name + "_FILE").c_str(), (base / "vacia").c_str(), 1);
+    secret = readSecret(name);
+    CHECK(secret.value.empty() && secret.error.empty());  // Vacío: sin configurar (TMDB es opcional)
+    ::unsetenv((name + "_FILE").c_str());
+    fs::remove_all(base);
+}
+
 // D-048: criterio de TMDB con respuestas guardadas en la caché (sin red)
 void testTmdbMatching() {
     namespace fs = std::filesystem;
@@ -2261,6 +2295,7 @@ int main() {
     testLibraryScan();
     testLibraryBrowseAndDelete();
     testAuth();
+    testSecrets();
 
     std::cout << (checks - failures) << "/" << checks << " comprobaciones correctas" << std::endl;
     return failures == 0 ? 0 : 1;

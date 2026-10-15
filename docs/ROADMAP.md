@@ -1,6 +1,6 @@
 # Hoja de ruta de Telegarrm
 
-*Estado al 15/10/2026: Fases 1 a 4.1 completadas; canales de anime (D-047), obras agrupadas por TMDB (D-048), temporadas con ficha propia (D-049) películas con otro nombre en TMDB (D-050), revisión de la biblioteca (D-051), pestaña «Biblioteca» (D-052) y contraseña para la web (D-053).*
+*Estado al 15/10/2026: Fases 1 a 4.1 completadas; canales de anime (D-047), obras agrupadas por TMDB (D-048), temporadas con ficha propia (D-049) películas con otro nombre en TMDB (D-050), revisión de la biblioteca (D-051), pestaña «Biblioteca» (D-052), contraseña para la web (D-053) e imagen de Docker (D-054).*
 
 Documento vivo con el plan de implementación; los motivos de cada decisión están en [DECISIONS.md](DECISIONS.md) y cómo está construido, en [01_architecture_and_phases.md](01_architecture_and_phases.md). Lo mantiene Claude Code (desarrollo y plan técnico); Gemini revisa el código y la documentación; Plácido decide prioridades y valida en uso real.
 
@@ -102,7 +102,10 @@ Por decidir con Plácido; ninguno está empezado.
 - **HTTPS** mediante proxy inverso: la contraseña de la web, el login de Telegram y la contraseña 2FA viajan hoy en claro por HTTP. La cookie ya lleva `Secure` si el proxy manda `X-Forwarded-Proto: https`.
 
 ### Paso al servidor definitivo
-- Llevar el servicio al servidor con el SSD del sistema y el RAID: búfer y bibliotecas en el RAID (D-033), y Jellyfin en Docker (datos de los contenedores en `/opt/docker`) leyendo `/srv/media`.
+- [x] Imagen de Docker sin secretos, publicada por GitHub Actions para x86_64 y ARM64, con su compose aparte de Jellyfin (D-054, 15/10/2026).
+- [ ] Primera compilación en GitHub Actions y prueba de la imagen ARM64 en la Pi (otra carpeta de datos y otro puerto).
+- [ ] Hacer público el paquete `ghcr.io/placix5/telegarrm` (o iniciar sesión en el servidor).
+- Llevar el servicio al servidor con el SSD del sistema y el RAID: búfer y bibliotecas en el RAID (D-033), y Jellyfin en Docker (datos de los contenedores en `/opt/docker`) leyendo `/srv/media`. Pasos en el README, «En Docker (servidor)».
 - `deploy/jellyfin-compose.yml`: borrador añadido el 07/10/2026, fuera del trabajo de Claude.
   - Bien: monta las bibliotecas en solo lectura y usa el usuario 1000 (`plax`), que puede leer lo que importa Telegarrm.
   - Pendiente de decidir si se queda en el repositorio.
@@ -118,4 +121,4 @@ Por decidir con Plácido; ninguno está empezado.
 - Renombrar los archivos de la biblioteca cuya etiqueta de calidad no coincide con el vídeo (importados antes de D-039).
 
 ### Hecho de lo transversal
-- [x] Tests (`ctest`) del parser, el catálogo, la BD, la biblioteca, el seguimiento, TMDB y el acceso: 606 comprobaciones, algunas con vídeos y comprimidos reales generados con ffmpeg y 7-Zip.
+- [x] Tests (`ctest`) del parser, el catálogo, la BD, la biblioteca, el seguimiento, TMDB y el acceso: 612 comprobaciones, algunas con vídeos y comprimidos reales generados con ffmpeg y 7-Zip.

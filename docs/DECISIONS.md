@@ -59,6 +59,7 @@ Formato: **Contexto** (qué problema había), **Decisión**, **Alternativas desc
 | [D-051](#d-051-revisar-la-biblioteca-y-archivos-repetidos) | Revisar la biblioteca y archivos repetidos | Vigente |
 | [D-052](#d-052-pestaña-biblioteca-y-borrado-desde-la-web) | Pestaña «Biblioteca» y borrado desde la web | Vigente |
 | [D-053](#d-053-contraseña-para-la-web-y-la-api) | Contraseña para la web y la API | Vigente |
+| [D-054](#d-054-imagen-de-docker-sin-secretos) | Imagen de Docker sin secretos | Vigente |
 
 ---
 
@@ -883,4 +884,46 @@ Formato: **Contexto** (qué problema había), **Decisión**, **Alternativas desc
 - **Consecuencias**:
   - **Pendiente**: HTTPS. Mientras tanto, la contraseña viaja en claro por la red local, como ya pasaba con el inicio de sesión de Telegram.
   - Las comprobaciones de la API del servicio real necesitan una sesión, que es de Plácido. Se hacen con otra instancia de prueba.
+
+## D-054: Imagen de Docker sin secretos
+*15/10/2026*
+
+- **Contexto**: Telegarrm va a pasar al servidor de Plácido, que solo tendrá Docker y Jellyfin (en su propio compose). El repositorio es público en GitHub, así que ni la imagen ni el compose pueden llevar las claves de Telegram ni la de TMDB.
+- **Decisiones de Plácido**: el servidor es x86_64; la imagen la compila y publica GitHub; las claves, con Docker secrets; las rutas, configurables.
+- **Decisión**:
+  - **`Dockerfile` en tres etapas sobre `debian:trixie-slim`**, la misma Debian que la Pi:
+    1. TDLib, fijado en el commit `42e6a52`, la versión 1.8.67 de la Pi. Así la sesión de Telegram se puede llevar de una instalación a otra. Cambiarlo es una decisión, no un detalle.
+    2. Telegarrm, compilado y con los tests pasados como usuario sin privilegios (algunos comprueban permisos, y como root siempre se podría escribir). Si fallan, no hay imagen.
+    3. La imagen final: solo el programa, `libtdjson`, la web y lo necesario para funcionar (OpenSSL, SQLite, zlib, 7-Zip con RAR del repositorio `non-free`, ffmpeg por ffprobe y la zona horaria). Corre con el usuario 1000.
+  - **GitHub Actions** (`.github/workflows/docker.yml`) la compila con cada push a `main`, en una máquina x86_64 y otra ARM64. Con emulación, compilar TDLib tardaría horas.
+    - Une las dos arquitecturas bajo `ghcr.io/placix5/telegarrm:latest` y `:sha-<commit>`.
+    - La caché de GitHub guarda TDLib compilado.
+    - Solo usa el token que GitHub da a cada ejecución.
+  - **Claves**: `TELEGARRM_API_ID_FILE`, `TELEGARRM_API_HASH_FILE` y `TELEGARRM_TMDB_TOKEN_FILE` apuntan a un archivo con el valor (`readSecret`, en `settings.cpp`).
+    - Siguen valiendo las variables de siempre, que usa la Pi. Si están las dos, es un error.
+    - Un archivo vacío es «sin configurar», para que el token de TMDB pueda faltar.
+    - El compose los da como Docker secrets: archivos del servidor con permisos 600 que el contenedor ve en `/run/secrets/`. No están en el entorno del contenedor ni salen con `docker inspect`.
+  - **Compose** (`deploy/docker/compose.yaml` y `env.example`):
+    - Rutas y usuario configurables, con `/opt/docker/telegarrm/db`, `/opt/docker/telegarrm/secretos`, `/srv/media` y 1000:1000 por defecto.
+    - La biblioteca se monta con la misma ruta dentro que fuera, así que las rutas de *Ajustes* valen tal cual y el paso del búfer a la biblioteca sigue sin copiar.
+    - Sistema de archivos de solo lectura salvo los volúmenes y `/tmp` (en memoria, donde van los temporales de la comprobación de calidad).
+    - Sin capacidades del sistema y con `no-new-privileges`.
+    - `restart: unless-stopped`, que también cubre «Reiniciar ahora» (código 75), y 30 s para cerrar TDLib.
+  - **Para que nada se cuele**: `.dockerignore` deja fuera `db/`, `build/`, `.git/`, `.env` y cualquier carpeta `secretos/`. `.gitignore` añade `.env` y `secretos/`.
+  - **La Pi** sigue con el servicio nativo durante el desarrollo; el compose es para el servidor.
+- **Alternativas descartadas**:
+  - **Archivo `.env` con las claves**: más sencillo, pero quedan en el entorno del contenedor y salen con `docker inspect`. El `.env` del compose solo lleva rutas.
+  - **Claves en la BD, escritas desde la web**: los secretos nunca van a la BD (regla del proyecto), y Telegram las necesita antes de arrancar.
+  - **Compilar en el servidor**: TDLib tarda de 30 minutos a una hora y obliga a tener las herramientas de compilación allí.
+  - **Emular ARM64 en una máquina x86_64**: horas por compilación.
+  - **Jellyfin en el mismo compose**: Plácido lo quiere aparte.
+- **Verificación**:
+  - Tests: 612 comprobaciones, con la lectura de claves por archivo.
+  - `docker compose config` valida el compose con claves de prueba, y no aparece ningún valor de las claves.
+  - Los paquetes de la imagen existen en Debian trixie.
+  - Pendiente: la primera compilación en GitHub Actions (tras el push) y probar la imagen ARM64 en la Pi, con otra carpeta de datos y otro puerto.
+- **Consecuencias**:
+  - El paquete de GitHub (`ghcr.io/placix5/telegarrm`) se crea privado. Para que el servidor lo descargue sin iniciar sesión, hay que hacerlo público en los ajustes del paquete; no lleva secretos.
+  - Los runners ARM64 de GitHub son gratuitos en repositorios públicos.
+  - Cambiar la versión de TDLib, en la Pi o en el Dockerfile, obliga a revisar que la sesión siga valiendo.
 

@@ -1,0 +1,13 @@
+# Lo que nunca entra en la imagen (D-054): datos, sesión de Telegram, claves y compilaciones locales
+db/
+build/
+*.db
+*.env
+.env
+**/secretos/
+.git/
+.github/
+# Ni lo que no hace falta para compilar
+docs/
+deploy/
+*.md

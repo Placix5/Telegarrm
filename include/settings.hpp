@@ -39,3 +39,15 @@ PathCheck checkPath(const std::string& path);
 // dentro del aislamiento de systemd cada ReadWritePaths es un punto de montaje distinto y rename()
 // falla entre ellos (EXDEV) aunque estén en el mismo disco. std::nullopt si no se pudo probar.
 std::optional<bool> canRename(const std::string& fromDir, const std::string& toDir);
+
+// Secreto de la configuración (D-054): de la variable NAME o, en Docker, del archivo que diga
+// NAME_FILE (Docker secrets, montados en /run/secrets). Del archivo se quitan los espacios y saltos de
+// línea de los extremos. value vacío y error vacío: no está configurado (tampoco con un archivo vacío,
+// para que el token de TMDB, opcional, se pueda dejar sin poner). Con error: no se pudo leer, o están
+// las dos (no se sabría cuál vale).
+struct Secret {
+    std::string value;
+    std::string error;
+};
+Secret readSecret(const std::string& name);
+
