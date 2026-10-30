@@ -10,6 +10,7 @@
 #include <functional>
 #include <iostream>
 #include <iterator>
+#include <limits>
 #include <map>
 #include <memory>
 #include <set>
@@ -2746,6 +2747,70 @@ void testTrackingReposts() {
     fs::remove_all(base);
 }
 
+// D-059: lo borrado en los canales se quita
+void testDeletedMessages() {
+    namespace fs = std::filesystem;
+    const fs::path base = fs::temp_directory_path() / ("telegarrm_borrados_" + std::to_string(::getpid()));
+    fs::remove_all(base);
+    fs::create_directories(base);
+    {
+        DbManager db((base / "test.db").string());
+        CHECK(db.open());
+        CHECK(db.addChannel(-500, "Canal Principal"));
+        const auto inChat = [](std::int64_t chatId, Message message, std::int64_t date) {
+            message.chatId = chatId;
+            message.date = date;
+            return message;
+        };
+        std::vector<Message> stored;
+        for (std::int64_t id = 1; id <= 5; ++id) {
+            stored.push_back(inChat(-500, video(id, "Serie 1x0" + std::to_string(id) + ".mkv", 100), 1000));
+        }
+        CHECK(db.saveSyncBatch(-500, stored, {5, 1, true}));
+        DbManager::ArchiveListing listing = listingOf(3, 100, {"Serie 1x03.mkv"});
+        listing.chatId = -500;
+        CHECK(db.saveArchiveListing(listing));
+        // El repaso va de los más recientes a los más antiguos, por tramos
+        CHECK(db.messageIdsBefore(-500, std::numeric_limits<std::int64_t>::max(), 2) ==
+              (std::vector<std::int64_t>{5, 4}));
+        CHECK(db.messageIdsBefore(-500, 4, 10) == (std::vector<std::int64_t>{3, 2, 1}));
+        // Se quitan con lo que se sabía de sus archivos; uno que no estaba no cuenta
+        CHECK_EQ(db.deleteMessages(-500, {3, 4, 99}), 2);
+        CHECK(db.messageIdsBefore(-500, 100, 10) == (std::vector<std::int64_t>{5, 2, 1}));
+        CHECK(db.archiveListings(-500).empty());
+        CHECK_EQ(db.deleteMessages(-500, {}), 0);
+        CHECK(db.deleteMessages(-600, {1}) == 0 && db.channelMessages(-500).size() == 3);
+    }
+    fs::remove_all(base);
+
+    // Resubida cuando el mensaje del que salió lo que se tiene ya se borró del canal: se sabe por su
+    // descarga (tamaño, y la fecha en que se pidió)
+    const std::vector<Message> messages = {
+        inTopic(at(photo(4, "Hora de Aventuras: Misiones Legendarias - Temporada 1 (1080p)"), 2'000'000), 4),
+        inTopic(at(video(5, "Hora_de_aventuras_Misiones_legendarias_S01E01_Ballestabros_1080pDolby.mkv", 872364099),
+                   2'000'000), 4),
+    };
+    const auto items = build(-500, "Canal Principal", messages, kTopics);
+    CHECK_EQ(static_cast<int>(items.size()), 1);
+    if (items.size() == 1) {
+        library::DiskVideo disk;
+        disk.path = "/srv/media/series/Hora de Aventuras/Season 01/Hora de Aventuras S01E01 - 1080p.mkv";
+        disk.season = 1;
+        disk.episode = 1;
+        disk.quality = "1080p";
+        disk.size = 850702013;
+        const tracking::LibraryOrigins origins = {{disk.path, {850702013, 1'200'000}}};
+        const auto owned = tracking::ownedVersions(items[0], {}, {disk}, origins);
+        CHECK(owned.size() == 1 && owned[0].size == 850702013 && owned[0].published == 1'200'000);
+        const auto plan = tracking::plan(items[0], {1'000'000, ""}, owned, handledIds({}), 3'000'000);
+        CHECK(plan.actions.size() == 1 && plan.actions[0].type == tracking::Action::Type::Repost);
+        // Sin saber de dónde salió (ni descarga ni el mismo tamaño en el canal), no se toca
+        CHECK(tracking::plan(items[0], {1'000'000, ""}, tracking::ownedVersions(items[0], {}, {disk}), handledIds({}),
+                             3'000'000)
+                  .actions.empty());
+    }
+}
+
 int main() {
     testEpisodes();
     testFichas();
@@ -2798,6 +2863,7 @@ int main() {
     testCatalogArchiveListings();
     testTrackingPacks();
     testTrackingReposts();
+    testDeletedMessages();
 
     std::cout << (checks - failures) << "/" << checks << " comprobaciones correctas" << std::endl;
     return failures == 0 ? 0 : 1;

@@ -5,6 +5,7 @@
 #include <condition_variable>
 #include <cstdint>
 #include <functional>
+#include <map>
 #include <mutex>
 #include <set>
 #include <thread>
@@ -24,6 +25,9 @@ class TelegramClient;
 // - Tiempo real (D-036): abre los canales vigilados en TDLib (openChat) y, cuando llega un
 //   updateNewMessage de uno de ellos, trae sus mensajes nuevos. Los avisos se agrupan: una
 //   película en cinco partes provoca una sola sincronización.
+// - Borrados (D-059): lo que se borra en el canal (updateDeleteMessages) se quita al momento. Para lo
+//   que se borró sin aviso (Telegarrm apagado), cada ronda repasa unos miles de mensajes guardados, de
+//   los más recientes a los más antiguos, y pregunta a Telegram si siguen ahí.
 // Se construye antes de TelegramClient::start() (se suscribe a sus actualizaciones) y se
 // detiene antes que él.
 class ChannelSync {
@@ -70,6 +74,10 @@ private:
     Result syncChannel(const DbManager::Channel& channel, bool full);
     // Lista de temas de un grupo con temas (getForumTopics, paginado)
     Result syncTopics(std::int64_t chatId);
+    // Quita los mensajes borrados en Telegram y avisa al catálogo
+    void applyDeletions(const std::map<std::int64_t, std::vector<std::int64_t>>& deletions);
+    // Repasa un tramo de los mensajes guardados de un canal y quita los que ya no existen (getMessages)
+    Result auditChannel(const DbManager::Channel& channel);
     // getChatHistory con reintentos tras FLOOD_WAIT; devuelve mensajes con id < fromMessageId
     Result fetchHistory(std::int64_t chatId, std::int64_t fromMessageId, HistoryPage& page);
     // Espera interrumpible; false si se ha pedido parar
@@ -86,9 +94,12 @@ private:
     bool syncRequested_ = false;
     std::set<std::int64_t> watched_;        // Canales vigilados (para filtrar las actualizaciones)
     std::set<std::int64_t> pending_;        // Canales con mensajes nuevos sin sincronizar
+    std::map<std::int64_t, std::vector<std::int64_t>> deleted_;  // Borrados en Telegram, sin aplicar
     Clock::time_point firstEventAt_;        // Primer y último aviso del grupo pendiente
     Clock::time_point lastEventAt_;
     std::atomic<std::int64_t> syncingChatId_{0};
 
     std::set<std::int64_t> openChats_;      // Abiertos con openChat (solo los usa el hilo de sincronización)
+    // Repaso de borrados: por dónde va en cada canal (mensajes menores que este; solo el hilo de sincronización)
+    std::map<std::int64_t, std::int64_t> auditCursor_;
 };

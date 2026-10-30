@@ -1,6 +1,6 @@
 # Arquitectura de Telegarrm
 
-*Actualizada el 15/10/2026: canales de anime (D-047), obras agrupadas por TMDB (D-048), temporadas con ficha propia (D-049) películas con otro nombre en TMDB (D-050), revisión de la biblioteca (D-051) pestaña «Biblioteca» (D-052), contraseña para la web (D-053), imagen de Docker (D-054), compose sencillo (D-055), temporadas en un archivo (D-056), lo que hay dentro de los comprimidos (D-057) y resubidas (D-058).*
+*Actualizada el 15/10/2026: canales de anime (D-047), obras agrupadas por TMDB (D-048), temporadas con ficha propia (D-049) películas con otro nombre en TMDB (D-050), revisión de la biblioteca (D-051) pestaña «Biblioteca» (D-052), contraseña para la web (D-053), imagen de Docker (D-054), compose sencillo (D-055), temporadas en un archivo (D-056), lo que hay dentro de los comprimidos (D-057), resubidas (D-058) y mensajes borrados (D-059).*
 
 El plan inicial (de Gemini) preveía una tabla `media` con las series y películas. No llegó a existir: el catálogo se calcula en memoria a partir de los mensajes guardados (D-020), así que una mejora del parser se aplica sin migraciones. Los motivos de cada decisión están en [DECISIONS.md](DECISIONS.md) y el plan, en [ROADMAP.md](ROADMAP.md).
 
@@ -46,7 +46,7 @@ El catálogo distingue dos tipos de canal, que detecta solo por los nombres de s
 | Principal | Servidor HTTP (`cpp-httplib`, `listen` bloqueante); las peticiones las atiende su grupo de hilos | Siempre |
 | `SignalWatcher` | Espera SIGINT/SIGTERM con `sigwait` y detiene el servidor (D-010) | Al parar |
 | `TelegramClient` | Único `td_receive`: entrega cada respuesta a su petición (`@extra`) y reparte las actualizaciones (D-009) | Siempre |
-| `ChannelSync` | Historial de los canales vigilados y mensajes nuevos: ronda completa cada 15 min y sincronización rápida 20 s después de un `updateNewMessage` (D-015, D-036) | Con mensajes nuevos |
+| `ChannelSync` | Historial de los canales vigilados y mensajes nuevos: ronda completa cada 15 min y sincronización rápida 20 s después de un `updateNewMessage` (D-015, D-036). Quita lo borrado en el canal al recibir `updateDeleteMessages` y, en cada ronda, repasa unos 3000 mensajes guardados por canal con `getMessages` (D-059) | Con mensajes nuevos o borrados |
 | `MetadataService` | Busca en TMDB las obras nuevas del catálogo (D-029, D-030). Si cambia el criterio, vuelve a buscarlas todas, mostrando mientras los datos anteriores (D-048) | Cuando cambia el catálogo y cada 6 h |
 | `DownloadManager` | Cola de descargas, de una en una; importa cada una a la biblioteca (D-031, D-034) | Con algo en cola |
 | `Tracker` | Revisa las obras seguidas y pone en cola lo nuevo o mejor (D-035) | Cuando cambia el catálogo; cada 5 min si hay algo a medio publicar |
@@ -114,7 +114,7 @@ El catálogo distingue dos tipos de canal, que detecta solo por los nombres de s
 | `db_manager.cpp` | SQLite |
 | `signal_watcher.cpp` | Parada ordenada |
 
-Las reglas de decisión (parser, catálogo, seguimiento, episodios que faltan, nombres, borrado seguro, novedades) son funciones puras o casi. Se prueban en `tests/parser_tests.cpp` con ejemplos reales de los canales (714 comprobaciones; D-022). `tools/catalog_dump.cpp` calcula el catálogo de una copia de la BD para comparar un cambio del parser obra por obra (D-047) y, con `--tmdb`, la coincidencia de TMDB guardada y la del criterio actual (D-048).
+Las reglas de decisión (parser, catálogo, seguimiento, episodios que faltan, nombres, borrado seguro, novedades) son funciones puras o casi. Se prueban en `tests/parser_tests.cpp` con ejemplos reales de los canales (729 comprobaciones; D-022). `tools/catalog_dump.cpp` calcula el catálogo de una copia de la BD para comparar un cambio del parser obra por obra (D-047) y, con `--tmdb`, la coincidencia de TMDB guardada y la del criterio actual (D-048).
 
 ## Web
 

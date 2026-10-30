@@ -106,10 +106,16 @@ std::vector<std::size_t> candidateReleases(const Catalog::Item& item, const Rule
 // Título, año e identificador de TMDB de una obra para la biblioteca: los de TMDB si los hay; si no,
 // los del catálogo
 library::WorkInfo workInfo(const Catalog::Item& item, const MetadataService& metadata);
+// De qué archivo del canal salió cada archivo de la biblioteca colocado por una descarga (D-058, D-059):
+// ruta -> (tamaño, publicación). Sirve aunque el mensaje ya se haya borrado del canal: entonces la fecha
+// es la de la descarga, que fue después.
+using LibraryOrigins = std::map<std::string, std::pair<std::int64_t, std::int64_t>>;
+LibraryOrigins libraryOrigins(const Catalog& catalog, const std::vector<DbManager::Download>& downloads);
+
 // Lo que se tiene de una obra (D-041): sus descargas en cola, en curso o terminadas, más los vídeos
 // que ya hay en su carpeta de la biblioteca (downloadId 0)
 std::vector<Owned> ownedVersions(const Catalog::Item& item, const OwnedByItem& downloads,
-                                 const std::vector<library::DiskVideo>& disk);
+                                 const std::vector<library::DiskVideo>& disk, const LibraryOrigins& origins = {});
 
 // Obra del catálogo de cada seguimiento: por cualquiera de sus fichas; si no, por TMDB o por la
 // clave de obra (si el catálogo cambia la ficha principal). item es nullptr si ya no está.

@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <iostream>
+#include <limits>
 #include <optional>
 #include <regex>
 #include <string>
@@ -30,6 +31,12 @@ constexpr int kBatchSize = 100;
 constexpr auto kRequestTimeout = std::chrono::seconds(20);
 // Frecuencia de los mensajes de progreso en el log
 constexpr std::size_t kProgressEvery = 1000;
+// Repaso de borrados (D-059): lotes de kBatchSize mensajes por canal en cada ronda (unos 3000 cada 15 min)
+constexpr int kAuditBatches = 30;
+// Salvaguarda: si en un repaso desaparecen más de tantos y más de esta parte de lo repasado, es más
+// probable un fallo que un borrado de verdad, y no se quita nada
+constexpr std::size_t kAuditMaxGone = 100;
+constexpr double kAuditMaxGoneShare = 0.3;
 
 std::string typeOf(const Json& object) {
     return object.is_object() ? object.value("@type", "") : "";
@@ -172,6 +179,28 @@ void ChannelSync::requestSync() {
 }
 
 void ChannelSync::onUpdate(const Json& update) {
+    // Borrados en el canal (D-059). from_cache: solo se ha olvidado en TDLib; !is_permanent: el mensaje
+    // ha cambiado de identificador (ej. al terminar de enviarse)
+    if (typeOf(update) == "updateDeleteMessages") {
+        if (!update.value("is_permanent", false) || update.value("from_cache", false)) {
+            return;
+        }
+        const std::int64_t chatId = update.value("chat_id", std::int64_t{0});
+        const Json ids = update.value("message_ids", Json::array());
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            if (!watched_.count(chatId)) {
+                return;
+            }
+            for (const Json& id : ids) {
+                if (id.is_number_integer()) {
+                    deleted_[chatId].push_back(id.get<std::int64_t>());
+                }
+            }
+        }
+        cv_.notify_all();
+        return;
+    }
     if (typeOf(update) != "updateNewMessage") {
         return;
     }
@@ -259,6 +288,7 @@ void ChannelSync::run() {
         // asienten los mensajes nuevos recibidos en tiempo real
         bool full = false;
         std::set<std::int64_t> realtime;
+        std::map<std::int64_t, std::vector<std::int64_t>> deletions;
         {
             std::unique_lock<std::mutex> lock(mutex_);
             for (;;) {
@@ -274,12 +304,21 @@ void ChannelSync::run() {
                     realtime.swap(pending_);
                     break;
                 }
+                if (!deleted_.empty()) {
+                    deletions.swap(deleted_);
+                    break;
+                }
                 cv_.wait_until(lock, pending_.empty() ? nextRound : std::min(nextRound, realtimeDeadline()));
             }
             syncRequested_ = false;
             if (full) {
                 pending_.clear();  // La ronda completa los incluye
             }
+        }
+
+        applyDeletions(deletions);
+        if (!full && realtime.empty()) {
+            continue;  // Solo había borrados
         }
 
         const std::vector<DbManager::Channel> channels = db_.listChannels();
@@ -303,7 +342,11 @@ void ChannelSync::run() {
                 continue;
             }
             syncingChatId_ = channel.id;
-            const Result result = syncChannel(channel, full);
+            Result result = syncChannel(channel, full);
+            // En la ronda completa, también un tramo del repaso de borrados (con el historial ya leído)
+            if (full && result == Result::Ok && channel.historyComplete) {
+                result = auditChannel(channel);
+            }
             syncingChatId_ = 0;
             if (result == Result::Stopped) {
                 return;
@@ -547,5 +590,93 @@ ChannelSync::Result ChannelSync::syncTopics(std::int64_t chatId) {
         std::cout << "[Sync] Chat " << chatId << ": " << topics.size() << " temas" << std::endl;
         onChannelChanged_(chatId);
     }
+    return Result::Ok;
+}
+
+void ChannelSync::applyDeletions(const std::map<std::int64_t, std::vector<std::int64_t>>& deletions) {
+    for (const auto& [chatId, ids] : deletions) {
+        const int deleted = db_.deleteMessages(chatId, ids);
+        if (deleted > 0) {
+            std::cout << "[Sync] Chat " << chatId << ": " << deleted << " mensajes borrados en Telegram" << std::endl;
+            onChannelChanged_(chatId);
+        }
+    }
+}
+
+ChannelSync::Result ChannelSync::auditChannel(const DbManager::Channel& channel) {
+    const std::int64_t chatId = channel.id;
+    auto cursor = auditCursor_.find(chatId);
+    if (cursor == auditCursor_.end()) {
+        cursor = auditCursor_.emplace(chatId, std::numeric_limits<std::int64_t>::max()).first;
+    }
+    std::vector<std::int64_t> gone;
+    std::size_t checked = 0;
+    for (int batch = 0; batch < kAuditBatches;) {
+        const std::vector<std::int64_t> ids = db_.messageIdsBefore(chatId, cursor->second, kBatchSize);
+        if (ids.empty()) {
+            cursor->second = std::numeric_limits<std::int64_t>::max();  // Vuelta completa: se empieza otra
+            break;
+        }
+        const auto response = telegram_.request(
+            {{"@type", "getMessages"}, {"chat_id", chatId}, {"message_ids", ids}}, kRequestTimeout);
+        if (stopping()) {
+            return Result::Stopped;
+        }
+        if (response && typeOf(*response) == "error") {
+            if (const auto wait = floodWaitSeconds(*response)) {
+                if (!sleepFor(std::chrono::seconds(*wait + 1))) {
+                    return Result::Stopped;
+                }
+                continue;  // El mismo lote
+            }
+        }
+        const Json messages =
+            response && typeOf(*response) == "messages" ? response->value("messages", Json()) : Json();
+        if (!messages.is_array() || messages.size() != ids.size()) {
+            // Sin respuesta clara no se quita nada; se sigue en la próxima ronda desde aquí
+            std::cerr << "[Sync] No se pudo repasar el canal " << chatId << ": "
+                      << (response ? response->value("message", "respuesta inesperada") : std::string("sin respuesta"))
+                      << std::endl;
+            break;
+        }
+        std::vector<std::int64_t> missing;
+        for (std::size_t i = 0; i < ids.size(); ++i) {
+            if (messages[i].is_null()) {
+                missing.push_back(ids[i]);
+            }
+        }
+        // Un mensaje quitado por error ya no se volvería a leer: uno de los que faltan se comprueba por
+        // separado, y Telegram tiene que confirmar que no existe (404)
+        if (!missing.empty()) {
+            const auto single = telegram_.request(
+                {{"@type", "getMessage"}, {"chat_id", chatId}, {"message_id", missing.front()}}, kRequestTimeout);
+            if (stopping()) {
+                return Result::Stopped;
+            }
+            if (!single || typeOf(*single) != "error" || single->value("code", 0) != 404) {
+                std::cerr << "[Sync] " << channel.title << ": Telegram no confirma que el mensaje " << missing.front()
+                          << " esté borrado; no se quita nada en este repaso" << std::endl;
+                return Result::Ok;
+            }
+            gone.insert(gone.end(), missing.begin(), missing.end());
+        }
+        checked += ids.size();
+        cursor->second = ids.back();
+        ++batch;
+        if (!sleepFor(kBatchDelay)) {
+            return Result::Stopped;
+        }
+    }
+    if (gone.empty()) {
+        return Result::Ok;
+    }
+    const bool tooMany = gone.size() > kAuditMaxGone &&
+                         static_cast<double>(gone.size()) > kAuditMaxGoneShare * static_cast<double>(checked);
+    if (tooMany) {
+        std::cerr << "[Sync] " << channel.title << ": Telegram no encuentra " << gone.size() << " de " << checked
+                  << " mensajes repasados. Parece un fallo, no un borrado: no se quita nada" << std::endl;
+        return Result::Ok;
+    }
+    applyDeletions({{chatId, gone}});
     return Result::Ok;
 }

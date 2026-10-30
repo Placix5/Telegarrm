@@ -64,6 +64,7 @@ Formato: **Contexto** (qué problema había), **Decisión**, **Alternativas desc
 | [D-056](#d-056-temporadas-en-un-archivo) | Temporadas en un archivo | Vigente; el contenido de los ZIP, por su índice (D-057) |
 | [D-057](#d-057-qué-hay-dentro-de-los-comprimidos) | Qué hay dentro de los comprimidos | Vigente |
 | [D-058](#d-058-resubidas-de-la-misma-versión) | Resubidas de la misma versión | Vigente |
+| [D-059](#d-059-mensajes-borrados-en-los-canales) | Mensajes borrados en los canales | Vigente |
 
 ---
 
@@ -1066,3 +1067,28 @@ Formato: **Contexto** (qué problema había), **Decisión**, **Alternativas desc
 - **Consecuencias**:
   - Una temporada resubida entera se vuelve a descargar entera.
   - Lo que no se sigue no cambia: en su ficha salen las dos versiones, y se puede descargar la nueva a mano. Al importarla, sustituye a la anterior del mismo episodio (D-041).
+
+## D-059: Mensajes borrados en los canales
+*30/10/2026*
+
+- **Contexto**: `ChannelSync` (D-015, D-036) solo añadía mensajes: lo que el canal borraba seguía en el catálogo para siempre. Al pasar *Misiones Legendarias* de «Series en emisión» a «Series» (D-058), el canal borró los episodios antiguos, pero la ficha seguía mostrándolos. Plácido: «No tiene sentido conservarlo».
+- **Decisión**:
+  - **Al momento**: con los canales abiertos (D-036), TDLib avisa con `updateDeleteMessages`. Si es un borrado de verdad (`is_permanent` y no `from_cache`, que es TDLib olvidando su caché), se quitan esos mensajes y se recalcula el catálogo del canal.
+  - **Repaso**: lo borrado con Telegarrm apagado, o antes de esta versión, no llega por aviso. En cada ronda completa (cada 15 min), con el historial del canal ya leído, se piden a Telegram con `getMessages` 30 lotes de 100 mensajes guardados, de los más recientes a los más antiguos (donde más se borra), y se sigue en la ronda siguiente. Con unos 50 000 mensajes, una vuelta completa tarda unas 4 h y vuelve a empezar.
+  - **Salvaguardas del repaso**: un mensaje quitado por error no se vuelve a leer, porque la sincronización solo trae lo nuevo. Por eso:
+    - en cada lote con mensajes que faltan, se pide uno de ellos con `getMessage` y Telegram tiene que responder 404; si lo devuelve o da otro error, no se quita nada en ese repaso;
+    - si faltan más de 100 y más del 30 % de lo repasado, se avisa en el registro y no se quita nada;
+    - una respuesta incompleta o un error detienen el repaso de ese canal hasta la ronda siguiente.
+  - **Qué se quita**: el mensaje y lo que se sabía de su archivo (índice del comprimido, D-057, y calidad comprobada, D-042). Las descargas y la biblioteca no se tocan.
+  - **Resubidas** (D-058): lo descargado de un mensaje borrado ya no tiene su archivo en el catálogo. Para saber de dónde salió, cada archivo de la biblioteca colocado por una descarga lleva el tamaño de su archivo del canal y su fecha de publicación o, si el mensaje ya no está, la fecha de la descarga, que fue después (`tracking::libraryOrigins`).
+- **Alternativas descartadas**:
+  - **Volver a leer el historial entero** periódicamente: 650 peticiones seguidas por canal para lo mismo que el repaso hace poco a poco.
+  - **Solo el aviso al momento**: se pierden los borrados con Telegarrm apagado y los anteriores a esta versión, como los de *Misiones Legendarias*.
+  - **Marcar como borrados en vez de quitarlos**: no aportan nada en el catálogo y habría que filtrarlos en todas partes.
+- **Verificación**:
+  - Tests: 729 comprobaciones: borrado en la BD con su índice, repaso de lo más reciente a lo más antiguo, y la resubida cuando el mensaje antiguo ya no está.
+  - Instancia de prueba con una copia de la BD y credenciales falsas: el bucle de sincronización espera sin gastar CPU (0,75 % en reposo) y se para ordenadamente.
+  - Sin probar contra Telegram: la sesión de la Pi es la del contenedor. En el registro del servidor se verá como «[Sync] Chat …: N mensajes borrados en Telegram».
+- **Consecuencias**:
+  - Unas 120 peticiones `getMessages` por hora y canal, de 100 mensajes cada una.
+  - Si se quitara un mensaje que sí existe, solo se recuperaría volviendo a leer el historial del canal (quitarlo y añadirlo de nuevo en *Canales*).

@@ -501,8 +501,23 @@ library::WorkInfo workInfo(const Catalog::Item& item, const MetadataService& met
     return work;
 }
 
+LibraryOrigins libraryOrigins(const Catalog& catalog, const std::vector<DbManager::Download>& downloads) {
+    LibraryOrigins origins;
+    for (const DbManager::Download& download : downloads) {
+        if (download.status != "completed" || download.totalSize <= 0) {
+            continue;
+        }
+        const auto ref = catalog.findRelease(download.chatId, download.messageId);
+        const std::int64_t published = ref ? ref->release->date : download.createdAt;
+        for (const std::string& file : download.libraryFiles) {
+            origins[file] = {download.totalSize, published};
+        }
+    }
+    return origins;
+}
+
 std::vector<Owned> ownedVersions(const Catalog::Item& item, const OwnedByItem& downloads,
-                                 const std::vector<library::DiskVideo>& disk) {
+                                 const std::vector<library::DiskVideo>& disk, const LibraryOrigins& origins) {
     std::vector<Owned> owned;
     const auto it = downloads.find({item.chatId, item.anchorMessageId});
     if (it != downloads.end()) {
@@ -512,10 +527,15 @@ std::vector<Owned> ownedVersions(const Catalog::Item& item, const OwnedByItem& d
         Owned version{0, "completed", versionRank(video.quality, video.hdr, {}),
                       library::versionLabel(video.quality, video.hdr, {}), video.season, video.episode,
                       video.episodeEnd};
-        // Un vídeo que no venía comprimido mide lo mismo que su archivo del canal: así se sabe de cuál salió
-        // (D-058), aunque no haya descarga (otra instalación, o se copió a mano)
+        // De qué archivo del canal salió (D-058): el de la descarga que lo colocó o, si no la hay (otra
+        // instalación, o copiado a mano), el que mide lo mismo, si no venía comprimido
+        const auto origin = origins.find(video.path);
+        if (origin != origins.end()) {
+            version.size = origin->second.first;
+            version.published = origin->second.second;
+        }
         for (const Release& release : item.releases) {
-            if (!release.archive && release.size == video.size && video.size > 0) {
+            if (version.size == 0 && !release.archive && release.size == video.size && video.size > 0) {
                 version.size = release.size;
                 version.published = release.date;
                 break;
@@ -682,8 +702,10 @@ bool Tracker::evaluate() {
         });
     };
 
-    // Versiones que se tienen de cada obra (por su identificador en el catálogo)
+    // Versiones que se tienen de cada obra (por su identificador en el catálogo), y de qué archivo del
+    // canal salió cada archivo de la biblioteca
     const tracking::OwnedByItem ownedByItem = tracking::ownedByItem(catalog_, downloads);
+    const tracking::LibraryOrigins origins = tracking::libraryOrigins(catalog_, downloads);
 
     bool waiting = false;
     const std::int64_t now = nowSeconds();
@@ -715,7 +737,7 @@ bool Tracker::evaluate() {
         // Lo descargado y lo que ya está en la biblioteca (aunque venga de un canal que ya no se vigila)
         const std::string root = item.kind == "series" ? settings.seriesDir : settings.moviesDir;
         const std::vector<tracking::Owned> owned = tracking::ownedVersions(
-            item, ownedByItem, library::videosOnDisk(root, tracking::workInfo(item, metadata_)));
+            item, ownedByItem, library::videosOnDisk(root, tracking::workInfo(item, metadata_)), origins);
 
         // Antes de decidir, la calidad real de lo que podría pedir (D-042): leer el principio de cada
         // archivo cuesta un segundo y evita fiarse del nombre

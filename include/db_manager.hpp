@@ -231,6 +231,12 @@ public:
     std::vector<Message> listMessages(std::int64_t chatId, int limit, int offset);
     // Todos los mensajes de un canal en orden cronológico (para construir el catálogo)
     std::vector<Message> channelMessages(std::int64_t chatId);
+    // Mensajes borrados en Telegram (D-059): se quitan, con lo que se sabía de sus archivos (índice y
+    // calidad comprobada). Devuelve cuántos había guardados.
+    int deleteMessages(std::int64_t chatId, const std::vector<std::int64_t>& messageIds);
+    // Identificadores guardados de un canal menores que beforeId, del más reciente hacia atrás (repaso
+    // de borrados, D-059)
+    std::vector<std::int64_t> messageIdsBefore(std::int64_t chatId, std::int64_t beforeId, int limit);
 
     // Sustituye la lista de temas de un chat (se lee entera de Telegram en cada sincronización)
     bool replaceTopics(std::int64_t chatId, const std::vector<Topic>& topics);

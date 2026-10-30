@@ -2,6 +2,12 @@
 
 Del más reciente al más antiguo. Los números D-0XX enlazan al [registro de decisiones](DECISIONS.md), que explica el porqué de cada cambio. Los canales reales de las pruebas aparecen con nombres genéricos (*Canal Principal*, Canal Anime).
 
+## Mensajes borrados
+- Lo que se borra en un canal desaparece del catálogo ([D-059](DECISIONS.md)): al momento, por el aviso de Telegram, y lo que se borró con Telegarrm apagado (o antes de esta versión), en el repaso que hace en cada ronda, de lo más reciente a lo más antiguo (unos 3000 mensajes por canal cada 15 minutos).
+- Antes de quitar nada en el repaso, Telegram tiene que confirmar el borrado de uno de los mensajes; si no, o si faltan demasiados de golpe, no se quita nada.
+- Lo descargado de un mensaje borrado sigue contando para las resubidas: su descarga recuerda el tamaño y la fecha.
+- Tests: 729 comprobaciones.
+
 ## Resubidas
 - Al seguir una obra, si se vuelve a publicar algo que tienes en la misma calidad, más tarde y con un archivo más grande, se descarga y sustituye al que tenías ([D-058](DECISIONS.md)). Caso real: *Hora de Aventuras: Misiones Legendarias* pasó de «Series en emisión» a «Series» con los episodios un 2-8 % más grandes.
 - Lo que tienes se reconoce por su descarga o, si no la hay, por el tamaño del vídeo.

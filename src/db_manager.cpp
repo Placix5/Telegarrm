@@ -781,6 +781,60 @@ std::vector<DbManager::Message> DbManager::channelMessages(std::int64_t chatId) 
     return queryMessages(chatId, "ORDER BY message_id ASC", -1, 0);
 }
 
+int DbManager::deleteMessages(std::int64_t chatId, const std::vector<std::int64_t>& messageIds) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!db_ || messageIds.empty()) {
+        return 0;
+    }
+    Transaction tx(db_.get());
+    static const char* const kStatements[] = {
+        "DELETE FROM messages WHERE chat_id = ?1 AND message_id = ?2;",
+        "DELETE FROM archive_listings WHERE chat_id = ?1 AND message_id = ?2;",
+        "DELETE FROM release_probes WHERE chat_id = ?1 AND message_id = ?2;",
+    };
+    int deleted = 0;
+    for (std::size_t i = 0; i < 3; ++i) {
+        StmtPtr stmt = prepare(db_.get(), kStatements[i]);
+        if (!stmt || !tx.ok()) {
+            return 0;
+        }
+        for (const std::int64_t id : messageIds) {
+            sqlite3_reset(stmt.get());
+            sqlite3_bind_int64(stmt.get(), 1, chatId);
+            sqlite3_bind_int64(stmt.get(), 2, id);
+            if (sqlite3_step(stmt.get()) != SQLITE_DONE) {
+                logError(db_.get(), "borrar mensajes");
+                return 0;
+            }
+            if (i == 0) {
+                deleted += sqlite3_changes(db_.get());
+            }
+        }
+    }
+    return tx.commit() ? deleted : 0;
+}
+
+std::vector<std::int64_t> DbManager::messageIdsBefore(std::int64_t chatId, std::int64_t beforeId, int limit) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    std::vector<std::int64_t> ids;
+    if (!db_) {
+        return ids;
+    }
+    StmtPtr stmt = prepare(db_.get(), R"SQL(
+        SELECT message_id FROM messages WHERE chat_id = ?1 AND message_id < ?2 ORDER BY message_id DESC LIMIT ?3;
+    )SQL");
+    if (!stmt) {
+        return ids;
+    }
+    sqlite3_bind_int64(stmt.get(), 1, chatId);
+    sqlite3_bind_int64(stmt.get(), 2, beforeId);
+    sqlite3_bind_int(stmt.get(), 3, limit);
+    while (sqlite3_step(stmt.get()) == SQLITE_ROW) {
+        ids.push_back(sqlite3_column_int64(stmt.get(), 0));
+    }
+    return ids;
+}
+
 std::vector<DbManager::Message> DbManager::queryMessages(std::int64_t chatId, const char* orderAndLimit, int limit,
                                                          int offset) {
     std::lock_guard<std::mutex> lock(mutex_);

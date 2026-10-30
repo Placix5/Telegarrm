@@ -14,6 +14,7 @@ Todas las series y películas de los canales que vigilas, con portada, año, cal
 - **Buscar y filtrar**: por título, género o canal; por tipo (series, películas, en emisión, en seguimiento) y por canal. Se puede ordenar por título o por novedades.
 - **«Añadidas recientemente»**: arriba, lo último que se ha publicado.
 - **La misma obra en varios canales**: sale una sola vez. Telegarrm la reconoce por su ficha de TMDB, aunque se llame distinto en cada canal (por ejemplo, *Boku no Hero Academia* y *My Hero Academia*).
+- **Lo borrado en el canal desaparece**: al momento, si Telegarrm está en marcha; si no, en las horas siguientes, cuando repasa los mensajes guardados. Lo que ya descargaste se queda en tu biblioteca.
 
 ### Ficha de una obra
 - **Datos**: sinopsis, géneros, idiomas, enlaces a TMDB e IMDb y la ficha original de Telegram.
