@@ -208,6 +208,30 @@ std::string versionLabel(const std::string& quality, bool hdr, const std::vector
     return label;
 }
 
+std::vector<std::string> restoreNames(const std::vector<std::string>& files) {
+    // "Nombre (2).ext" o "Nombre (2).Idioma.srt": el número que añade place()
+    static const std::regex kCopy(R"(^(.+?) \(([2-9]|[1-9][0-9])\)(\.[^()]*)$)");
+    std::vector<std::string> result;
+    for (const std::string& file : files) {
+        const fs::path path(file);
+        const std::string name = path.filename().string();
+        std::smatch match;
+        std::error_code ec;
+        if (std::regex_match(name, match, kCopy)) {
+            const fs::path clean = path.parent_path() / (match[1].str() + match[3].str());
+            if (!fs::exists(clean, ec) && fs::is_regular_file(path, ec)) {
+                fs::rename(path, clean, ec);
+                if (!ec) {
+                    result.push_back(clean.string());
+                    continue;
+                }
+            }
+        }
+        result.push_back(file);
+    }
+    return result;
+}
+
 std::size_t removeFiles(const std::vector<std::string>& files, const std::vector<std::string>& roots,
                         const std::vector<std::string>& keep) {
     std::error_code ec;
@@ -612,6 +636,7 @@ std::vector<DiskVideo> videosOnDisk(const std::string& root, const WorkInfo& wor
         }
         DiskVideo video;
         video.path = it->path().string();
+        video.size = static_cast<std::int64_t>(it->file_size(ec));
         if (const auto episode = media::parseEpisode(name)) {
             video.season = episode->season;
             video.episode = episode->episode;

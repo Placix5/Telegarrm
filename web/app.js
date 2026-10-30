@@ -1135,6 +1135,7 @@ async function refreshDownloads() {
 // Icono y estilo de cada tipo de entrada del historial
 const ACTIVITY_STYLE = {
   queued_episode: ["+", "queued"], queued_movie: ["+", "queued"], queued_upgrade: ["↑", "queued"],
+  queued_repost: ["↻", "queued"],
   completed: ["✓", "done"], upgraded: ["↑", "done"], replaced: ["↻", "done"], failed: ["!", "failed"],
   follow: ["●", "user"], unfollow: ["○", "user"], deleted: ["×", "user"],
 };

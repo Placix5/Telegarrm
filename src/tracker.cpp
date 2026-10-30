@@ -115,14 +115,45 @@ Plan plan(const Catalog::Item& item, const Rule& rule, const std::vector<Owned>&
         if (!best) {
             continue;
         }
+        bool repost = false;
         if (have.empty()) {
             // Un episodio que ya estaba publicado antes de seguir la serie no es nuevo (aunque se vuelva a
             // subir, ej. con la temporada completa)
             if (series && slot.firstSeen < rule.since) {
                 continue;
             }
-        } else if (bestRank <= ownedRank) {
-            continue;  // Lo que se tiene es igual o mejor
+        } else if (bestRank < ownedRank) {
+            continue;  // Lo que se tiene es mejor
+        } else if (bestRank == ownedRank) {
+            // Resubida (D-058): la misma versión, publicada después y más grande que la que se tiene. Al
+            // juntar una temporada en emisión, el canal suele subirla otra vez con mejor compresión.
+            // Solo si se sabe de qué archivo salió lo que se tiene.
+            const Release* newest = nullptr;
+            for (const std::size_t index : slot.releases) {
+                const Release& release = item.releases[index];
+                if (release.date < rule.since || !withinQuality(release.quality, rule.maxQuality) ||
+                    hasTag(release.tags, "3D") || handled(release) ||
+                    versionRank(release.quality, release.hdr, release.tags) != bestRank) {
+                    continue;
+                }
+                const auto order = [](const Release& version) { return std::make_pair(version.date, version.size); };
+                if (!newest || order(release) > order(*newest)) {
+                    newest = &release;
+                    bestIndex = index;
+                }
+            }
+            bool newer = newest != nullptr;
+            for (const Owned* version : have) {
+                if (version->rank == ownedRank) {
+                    newer = newer && version->size > 0 && version->published > 0 &&
+                            newest->date > version->published && newest->size > version->size;
+                }
+            }
+            if (!newer) {
+                continue;  // Lo que se tiene es igual
+            }
+            best = newest;
+            repost = true;
         }
         // Si la mejor versión aún se está publicando, se espera por ella en vez de bajar una peor
         if (!releaseComplete(*best, now)) {
@@ -133,7 +164,10 @@ Plan plan(const Catalog::Item& item, const Rule& rule, const std::vector<Owned>&
         }
 
         Action action;
-        action.type = !have.empty() ? Action::Type::Upgrade : series ? Action::Type::NewEpisode : Action::Type::NewMovie;
+        action.type = repost           ? Action::Type::Repost
+                      : !have.empty() ? Action::Type::Upgrade
+                      : series        ? Action::Type::NewEpisode
+                                      : Action::Type::NewMovie;
         action.release = bestIndex;
         int previousRank = -1;
         for (const Owned* version : have) {
@@ -426,7 +460,7 @@ OwnedByItem ownedByItem(const Catalog& catalog, const std::vector<DbManager::Dow
             continue;
         }
         owned.push_back({download.id, download.status, rank, label, download.season, download.episode,
-                         download.episodeEnd});
+                         download.episodeEnd, ref->release->size, ref->release->date});
     }
     return result;
 }
@@ -475,9 +509,19 @@ std::vector<Owned> ownedVersions(const Catalog::Item& item, const OwnedByItem& d
         owned = it->second;
     }
     for (const library::DiskVideo& video : disk) {
-        owned.push_back({0, "completed", versionRank(video.quality, video.hdr, {}),
-                         library::versionLabel(video.quality, video.hdr, {}), video.season, video.episode,
-                         video.episodeEnd});
+        Owned version{0, "completed", versionRank(video.quality, video.hdr, {}),
+                      library::versionLabel(video.quality, video.hdr, {}), video.season, video.episode,
+                      video.episodeEnd};
+        // Un vídeo que no venía comprimido mide lo mismo que su archivo del canal: así se sabe de cuál salió
+        // (D-058), aunque no haya descarga (otra instalación, o se copió a mano)
+        for (const Release& release : item.releases) {
+            if (!release.archive && release.size == video.size && video.size > 0) {
+                version.size = release.size;
+                version.published = release.date;
+                break;
+            }
+        }
+        owned.push_back(std::move(version));
     }
     return owned;
 }
@@ -733,6 +777,9 @@ void Tracker::enqueue(const DbManager::Follow& follow, const Catalog::Item& item
             message += ": mejor que la versión que tienes" +
                        (action.previousLabel.empty() ? std::string() : " (" + action.previousLabel + ")") + ", en cola.";
             break;
+        case tracking::Action::Type::Repost:
+            message += ": publicada otra vez, más reciente y más grande que la que tienes, en cola. La sustituirá.";
+            break;
     }
     // La versión peor que esperaba en cola ya no hace falta
     for (const std::int64_t id : action.cancel) {
@@ -744,6 +791,7 @@ void Tracker::enqueue(const DbManager::Follow& follow, const Catalog::Item& item
     }
 
     const char* type = action.type == tracking::Action::Type::Upgrade      ? "queued_upgrade"
+                       : action.type == tracking::Action::Type::Repost     ? "queued_repost"
                        : action.type == tracking::Action::Type::NewEpisode ? "queued_episode"
                                                                             : "queued_movie";
     db_.addActivity({0, 0, type, message, download.chatId, download.messageId, follow.id, added.id});

@@ -63,6 +63,7 @@ Formato: **Contexto** (qué problema había), **Decisión**, **Alternativas desc
 | [D-055](#d-055-compose-sencillo-de-copiar-y-pegar) | Compose sencillo de copiar y pegar | Vigente |
 | [D-056](#d-056-temporadas-en-un-archivo) | Temporadas en un archivo | Vigente; el contenido de los ZIP, por su índice (D-057) |
 | [D-057](#d-057-qué-hay-dentro-de-los-comprimidos) | Qué hay dentro de los comprimidos | Vigente |
+| [D-058](#d-058-resubidas-de-la-misma-versión) | Resubidas de la misma versión | Vigente |
 
 ---
 
@@ -1045,3 +1046,23 @@ Formato: **Contexto** (qué problema había), **Decisión**, **Alternativas desc
 - **Consecuencias**:
   - Unas 1.500 descargas pequeñas (64 kB) la primera vez, y después una por cada comprimido nuevo de una serie.
   - Los RAR y 7z siguen como en D-056: por el nombre y la ficha.
+
+## D-058: Resubidas de la misma versión
+*30/10/2026*
+
+- **Contexto**: en *Canal Principal*, *Hora de Aventuras: Misiones Legendarias* se publicó por episodios en «Series en emisión» (06/10 a 19/10) y, terminada la temporada, entera en «Series» (26/10). Plácido la sigue y tenía los 16 primeros. La web mostraba cada episodio dos veces, el de la biblioteca y el nuevo. Los nuevos tienen el mismo nombre y la misma calidad, pero son entre un 2 % y un 8 % más grandes. Plácido: si se publica otra vez algo que ya está en la biblioteca, con la misma calidad, se debería bajar el más reciente y borrar el anterior, porque al agruparlos suelen mejorar la compresión o el bitrate.
+- **Decisión**:
+  - **El seguimiento** (D-035) también sustituye lo que se tiene por una **resubida**: la misma versión (mismo rango: resolución, HDR y REMUX), publicada después de seguir la obra, más reciente que el archivo del que salió lo que se tiene y más grande que él. Entre varias, la más reciente. Se registra como `queued_repost` («publicada otra vez, más reciente y más grande»), y al terminar sustituye a la anterior como cualquier mejora (D-041).
+  - **De qué archivo salió lo que se tiene** (`Owned::size` y `published`): el de su descarga o, si no la hay (otra instalación, o copiado a mano), el archivo del canal sin comprimir que mide exactamente lo mismo que el vídeo. Si no se sabe, no se sustituye nada.
+  - **Más grande** como salvaguarda: una resubida más pequeña de la misma calidad puede ser peor (otra fuente o menos pistas de audio) y no se baja.
+  - **Nombres**: la versión nueva, con el mismo nombre que la anterior, se colocaba como «Serie S01E01 - 1080p (2).mkv». Al borrarse la anterior, recupera el nombre limpio (`library::restoreNames`), también sus subtítulos. Si en *Ajustes* se conservan las sustituidas, se quedan las dos.
+- **Alternativas descartadas**:
+  - **Para todo lo de la biblioteca, no solo lo seguido**: descargaría solo cosas que no se han pedido seguir. Seguir una obra es lo que autoriza a Telegarrm a descargar por su cuenta (D-035).
+  - **Solo la más reciente, sin mirar el tamaño**: cualquier resubida bajaría otra vez una temporada entera, aunque fuera peor.
+  - **Comparar el bitrate real con ffprobe**: haría falta leer el principio de cada archivo para una diferencia que el tamaño ya indica.
+- **Verificación**:
+  - Tests: 714 comprobaciones, con los nombres y tamaños reales de *Misiones Legendarias*: la resubida más grande sustituye y la más pequeña no; sin saber de qué archivo salió lo que se tiene, nada; una vez bajada, no se repite; el vídeo de la biblioteca reconocido por su tamaño; y el nombre «(2)» recuperado.
+  - Con una copia de la BD y la biblioteca de la Pi: el seguimiento de *Misiones Legendarias* pediría las 16 resubidas (episodios 1 a 16, unos 14,3 GB), cada una en lugar de la anterior. *Presidente Curtis*, nada.
+- **Consecuencias**:
+  - Una temporada resubida entera se vuelve a descargar entera.
+  - Lo que no se sigue no cambia: en su ficha salen las dos versiones, y se puede descargar la nueva a mano. Al importarla, sustituye a la anterior del mismo episodio (D-041).

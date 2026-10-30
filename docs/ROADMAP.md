@@ -1,6 +1,6 @@
 # Hoja de ruta de Telegarrm
 
-*Estado al 30/10/2026: Fases 1 a 4.1 completadas; canales de anime (D-047), obras agrupadas por TMDB (D-048), temporadas con ficha propia (D-049) películas con otro nombre en TMDB (D-050), revisión de la biblioteca (D-051), pestaña «Biblioteca» (D-052), contraseña para la web (D-053), imagen de Docker (D-054), compose sencillo (D-055), temporadas en un archivo (D-056) y lo que hay dentro de los comprimidos (D-057).*
+*Estado al 30/10/2026: Fases 1 a 4.1 completadas; canales de anime (D-047), obras agrupadas por TMDB (D-048), temporadas con ficha propia (D-049) películas con otro nombre en TMDB (D-050), revisión de la biblioteca (D-051), pestaña «Biblioteca» (D-052), contraseña para la web (D-053), imagen de Docker (D-054), compose sencillo (D-055), temporadas en un archivo (D-056), lo que hay dentro de los comprimidos (D-057) y resubidas (D-058).*
 
 Documento vivo con el plan de implementación; los motivos de cada decisión están en [DECISIONS.md](DECISIONS.md) y cómo está construido, en [arquitectura.md](arquitectura.md). Lo mantiene Claude Code (desarrollo y plan técnico); Gemini revisa el código y la documentación; Plácido decide prioridades y valida en uso real.
 

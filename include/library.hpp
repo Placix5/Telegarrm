@@ -66,6 +66,7 @@ struct DiskVideo {
     int episodeEnd = 0;
     std::string quality; // De la etiqueta del nombre ("- 720p") o, si no la lleva, del propio vídeo
     bool hdr = false;
+    std::int64_t size = 0;  // Bytes
 };
 
 // Carpeta de una obra en la biblioteca: la que lleve su "[tmdbid-N]" o, si no, la de su nombre.
@@ -86,6 +87,11 @@ ImportResult importRelease(const ImportRequest& request, const std::function<voi
 // quita las carpetas que hayan quedado vacías, sin llegar a la raíz. Devuelve cuántos ha borrado.
 std::size_t removeFiles(const std::vector<std::string>& files, const std::vector<std::string>& roots,
                         const std::vector<std::string>& keep);
+
+// Una versión nueva con el mismo nombre que la anterior se colocó como "Serie S01E01 - 1080p (2).mkv" (y
+// "... (2).Spanish.srt"). Borrada la anterior, recupera el nombre limpio si está libre (D-058). Devuelve
+// la lista de archivos con los nombres que quedan.
+std::vector<std::string> restoreNames(const std::vector<std::string>& files);
 
 // --- Contenido de la biblioteca (pestaña «Biblioteca», D-052) ---
 

@@ -2,6 +2,12 @@
 
 Del más reciente al más antiguo. Los números D-0XX enlazan al [registro de decisiones](DECISIONS.md), que explica el porqué de cada cambio. Los canales reales de las pruebas aparecen con nombres genéricos (*Canal Principal*, Canal Anime).
 
+## Resubidas
+- Al seguir una obra, si se vuelve a publicar algo que tienes en la misma calidad, más tarde y con un archivo más grande, se descarga y sustituye al que tenías ([D-058](DECISIONS.md)). Caso real: *Hora de Aventuras: Misiones Legendarias* pasó de «Series en emisión» a «Series» con los episodios un 2-8 % más grandes.
+- Lo que tienes se reconoce por su descarga o, si no la hay, por el tamaño del vídeo.
+- La versión nueva con el mismo nombre que la anterior ya no se queda como «… (2).mkv»: al borrarse la anterior, recupera el nombre.
+- Tests: 714 comprobaciones.
+
 ## Qué hay dentro de los comprimidos
 - Telegarrm lee el índice de los ZIP de las series pidiendo a Telegram solo su final (unos kB), y sabe qué vídeos lleva cada uno sin descargarlo ([D-057](DECISIONS.md)). Lo hace solo, de uno en uno y sin prisa; la primera vez, unos 160 comprimidos (10-15 minutos).
 - Con eso, un pack muestra los episodios exactos que trae; un comprimido con un solo episodio pasa a ser ese episodio; y una «Serie Completa» con varias temporadas sale en «Varias temporadas en un archivo» y cuenta en las temporadas y episodios de la serie.

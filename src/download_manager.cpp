@@ -733,6 +733,11 @@ std::string DownloadManager::replaceOlder(const DbManager::Download& download, c
         unknownFiles = std::any_of(older.begin(), older.end(),
                                    [](const DbManager::Download& old) { return old.libraryFiles.empty(); });
         removed = library::removeFiles(files, {settings.moviesDir, settings.seriesDir}, download.libraryFiles);
+        // Si la anterior tenía el mismo nombre, la nueva se llamaba "... (2)": recupera el nombre (D-058)
+        const std::vector<std::string> named = library::restoreNames(download.libraryFiles);
+        if (named != download.libraryFiles) {
+            db_.setDownloadLibrary(download.id, download.libraryPath, named);
+        }
     }
     for (const DbManager::Download& old : older) {
         db_.setDownloadStatus(old.id, "replaced");

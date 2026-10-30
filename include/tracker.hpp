@@ -42,6 +42,9 @@ struct Owned {
     int season = 0;
     int episode = 0;
     int episodeEnd = 0;
+    // Archivo del canal del que salió, si se sabe (D-058): su tamaño y cuándo se publicó (0 = no se sabe)
+    std::int64_t size = 0;
+    std::int64_t published = 0;
 };
 
 struct Rule {
@@ -50,7 +53,8 @@ struct Rule {
 };
 
 struct Action {
-    enum class Type { NewEpisode, NewMovie, Upgrade };
+    // Repost: la misma versión, publicada otra vez más tarde y más grande (D-058)
+    enum class Type { NewEpisode, NewMovie, Upgrade, Repost };
     Type type = Type::NewEpisode;
     std::size_t release = 0;              // Índice en item.releases
     std::vector<std::int64_t> replaces;   // Descargas que sustituye cuando termine (en la biblioteca o bajándose)

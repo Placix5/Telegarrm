@@ -42,6 +42,7 @@ El botón «Seguir» de una ficha:
 - **En una serie**: cada episodio nuevo se descarga solo, poco después de publicarse.
 - **En una película**: se descarga la primera versión que se publique.
 - **Mejoras**: si llega una versión mejor de algo que tienes (más resolución, HDR o REMUX), se descarga y sustituye a la anterior. En *Ajustes* puedes elegir conservar las dos.
+- **Resubidas**: si se vuelve a publicar algo que tienes en la misma calidad, más tarde y con un archivo más grande, también lo sustituye. Pasa, por ejemplo, cuando el canal pasa una temporada de «en emisión» a «series» y la sube otra vez con mejor compresión. Si no se sabe de qué archivo del canal salió lo que tienes, no se toca.
 - **Calidad máxima**: para no descargar, por ejemplo, 4K si no lo quieres.
 
 Solo cuenta lo publicado después de empezar a seguir: para lo anterior están los botones de temporada y de serie completa. Una temporada publicada en un solo archivo también se descarga sola, salvo que ya tengas alguno de sus episodios o que esa temporada tenga episodios sueltos (los de una serie en emisión, que se bajan uno a uno). Si un archivo está troceado, se espera a que estén todas sus partes.

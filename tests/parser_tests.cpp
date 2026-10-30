@@ -2678,6 +2678,74 @@ void testTrackingPacks() {
     CHECK(packIds(tracking::plan(monk, {1'600'000, ""}, {}, handledIds({}), now)).empty());
 }
 
+// D-058: la misma versión publicada otra vez, más reciente y más grande, sustituye a la que se tiene
+// (Canal Principal, 26/10/2026: Hora de Aventuras: Misiones Legendarias pasa de «Series en emisión» a «Series»)
+void testTrackingReposts() {
+    const std::int64_t since = 1'000'000;
+    const std::int64_t now = 3'000'000;
+    const std::vector<Message> messages = {
+        inTopic(at(photo(1, "Hora de Aventuras: Misiones Legendarias - Temporada 1 (1080p)"), 1'100'000), 335),
+        inTopic(at(video(2, "Hora_de_aventuras_Misiones_legendarias_S01E01_Ballestabros_1080pDolby.mkv", 850702013),
+                   1'100'000), 335),
+        inTopic(at(video(3, "Hora_de_aventuras_Misiones_legendarias_S01E02_Bichos_pijos_1080pDolby.mkv", 847419074),
+                   1'100'000), 335),
+        inTopic(at(photo(4, "Hora de Aventuras: Misiones Legendarias - Temporada 1 (1080p)"), 2'000'000), 4),
+        inTopic(at(video(5, "Hora_de_aventuras_Misiones_legendarias_S01E01_Ballestabros_1080pDolby.mkv", 872364099),
+                   2'000'000), 4),
+        inTopic(at(video(6, "Hora_de_aventuras_Misiones_legendarias_S01E02_Bichos_pijos_1080pDolby.mkv", 800000000),
+                   2'000'000), 4),
+    };
+    const auto items = build(-500, "Canal Principal", messages, kTopics);
+    CHECK_EQ(static_cast<int>(items.size()), 1);
+    if (items.size() != 1) {
+        return;
+    }
+    const Catalog::Item& series = items[0];
+    const auto rank = tracking::versionRank("1080p", false, {});
+    // Los dos episodios descargados de «Series en emisión»
+    const std::vector<tracking::Owned> owned = {{10, "completed", rank, "1080p", 1, 1, 0, 850702013, 1'100'000},
+                                                {11, "completed", rank, "1080p", 1, 2, 0, 847419074, 1'100'000}};
+    const tracking::Plan plan = tracking::plan(series, {since, ""}, owned, handledIds({2, 3}), now);
+    // El 1x01 resubido es más grande: lo sustituye. El 1x02 resubido es más pequeño: se queda el que hay
+    CHECK(plan.actions.size() == 1 && series.releases[plan.actions[0].release].parts.front().messageId == 5 &&
+          plan.actions[0].type == tracking::Action::Type::Repost &&
+          plan.actions[0].replaces == (std::vector<std::int64_t>{10}));
+    // Si no se sabe de qué archivo salió lo que se tiene, no se toca
+    const std::vector<tracking::Owned> unknown = {{0, "completed", rank, "1080p", 1, 1, 0}, owned[1]};
+    CHECK(tracking::plan(series, {since, ""}, unknown, handledIds({2, 3}), now).actions.empty());
+    // Una vez descargada, la resubida es lo que se tiene: no se repite
+    const std::vector<tracking::Owned> after = {{12, "completed", rank, "1080p", 1, 1, 0, 872364099, 2'000'000},
+                                                owned[1]};
+    CHECK(tracking::plan(series, {since, ""}, after, handledIds({2, 3, 5}), now).actions.empty());
+
+    // Un vídeo de la biblioteca sin descarga se reconoce por su tamaño (no venía comprimido)
+    library::DiskVideo disk;
+    disk.path = "/srv/media/series/Hora de Aventuras/Season 01/x S01E01 - 1080p.mkv";
+    disk.season = 1;
+    disk.episode = 1;
+    disk.quality = "1080p";
+    disk.size = 850702013;
+    const auto versions = tracking::ownedVersions(series, {}, {disk});
+    CHECK(versions.size() == 1 && versions[0].size == 850702013 && versions[0].published == 1'100'000);
+
+    // La nueva, colocada como "(2)", recupera el nombre al borrarse la anterior
+    namespace fs = std::filesystem;
+    const fs::path base = fs::temp_directory_path() / ("telegarrm_nombres_" + std::to_string(::getpid()));
+    fs::remove_all(base);
+    writeFile(base / "Serie S01E01 - 1080p (2).mkv", 10, 'a');
+    writeFile(base / "Serie S01E01 - 1080p (2).Spanish.srt", 10, 'b');
+    writeFile(base / "Serie S01E02 - 1080p (2).mkv", 10, 'c');
+    writeFile(base / "Serie S01E02 - 1080p.mkv", 10, 'd');  // La anterior se conserva (Ajustes): no se toca
+    const auto names = library::restoreNames({(base / "Serie S01E01 - 1080p (2).mkv").string(),
+                                              (base / "Serie S01E01 - 1080p (2).Spanish.srt").string(),
+                                              (base / "Serie S01E02 - 1080p (2).mkv").string()});
+    CHECK(names == (std::vector<std::string>{(base / "Serie S01E01 - 1080p.mkv").string(),
+                                             (base / "Serie S01E01 - 1080p.Spanish.srt").string(),
+                                             (base / "Serie S01E02 - 1080p (2).mkv").string()}));
+    CHECK(fs::exists(base / "Serie S01E01 - 1080p.mkv") && !fs::exists(base / "Serie S01E01 - 1080p (2).mkv"));
+    fs::remove_all(base);
+}
+
 int main() {
     testEpisodes();
     testFichas();
@@ -2729,6 +2797,7 @@ int main() {
     testArchiveIndex();
     testCatalogArchiveListings();
     testTrackingPacks();
+    testTrackingReposts();
 
     std::cout << (checks - failures) << "/" << checks << " comprobaciones correctas" << std::endl;
     return failures == 0 ? 0 : 1;
