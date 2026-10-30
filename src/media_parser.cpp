@@ -482,9 +482,11 @@ std::optional<SeasonPack> parseSeasonPack(const std::string& fileName) {
     // "Clarence T01", "Padre made in USA - T10", "Código Lyoko T3 + Preludio", "Bluey S01" (no "T1E3",
     // "S01E03" ni "S2 01", que son episodios)
     static const std::regex kShort(R"((?:^|[\s\-_.\[(])[TS]0?(\d{1,2})(?![0-9EeXx])(?!\s*-?\s*\d))");
+    // "1ª Temporada", "2º temporada" (Canal Anime)
+    static const std::regex kOrdinal(R"((?:^|[^0-9])(\d{1,2})\s*(?:ª|º|a)\s*temporada\b)", kIcase);
     std::smatch match;
     SeasonPack pack;
-    if (std::regex_search(clean, match, kWord)) {
+    if (std::regex_search(clean, match, kWord) || std::regex_search(clean, match, kOrdinal)) {
         pack.season = std::stoi(match[1].str());
     } else if (std::regex_search(clean, match, kShort)) {
         pack.season = std::stoi(match[1].str());
@@ -507,6 +509,41 @@ std::optional<SeasonPack> parseSeasonPack(const std::string& fileName) {
         }
     }
     return pack;
+}
+
+std::optional<EpisodeInfo> episodeInArchive(const std::string& path, int packSeason) {
+    std::vector<std::string> pieces;
+    std::string piece;
+    for (const char c : path) {
+        if (c == '/' || c == '\\') {
+            pieces.push_back(piece);
+            piece.clear();
+        } else {
+            piece += c;
+        }
+    }
+    const std::string& name = piece;
+    if (auto episode = parseEpisode(name)) {
+        return episode;
+    }
+    // Solo el número ("03 - Título.mkv"): la temporada, la de su carpeta ("Temporada 2/03.mkv", "S02/")
+    // o la del pack
+    int season = packSeason;
+    for (auto it = pieces.rbegin(); it != pieces.rend(); ++it) {
+        if (const auto folder = parseSeasonPack(*it)) {
+            season = folder->season;
+            break;
+        }
+    }
+    auto episode = parseEpisode(name, true);  // También los formatos del anime ("S2 - 01")
+    if (!episode || !episode->absolute) {
+        return episode;
+    }
+    if (season == 0) {
+        return std::nullopt;
+    }
+    episode->season = season;
+    return episode;
 }
 
 namespace {

@@ -40,6 +40,8 @@ endif()
 # Todo salvo main(): lo comparten el ejecutable y los tests
 add_library(telegarrm_core STATIC
     src/api.cpp
+    src/archive_index.cpp
+    src/archive_lister.cpp
     src/auth.cpp
     src/catalog.cpp
     src/channel_sync.cpp

@@ -61,7 +61,8 @@ Formato: **Contexto** (qué problema había), **Decisión**, **Alternativas desc
 | [D-053](#d-053-contraseña-para-la-web-y-la-api) | Contraseña para la web y la API | Vigente |
 | [D-054](#d-054-imagen-de-docker-sin-secretos) | Imagen de Docker sin secretos | Vigente; el compose principal, sustituido por D-055 |
 | [D-055](#d-055-compose-sencillo-de-copiar-y-pegar) | Compose sencillo de copiar y pegar | Vigente |
-| [D-056](#d-056-temporadas-en-un-archivo) | Temporadas en un archivo | Vigente |
+| [D-056](#d-056-temporadas-en-un-archivo) | Temporadas en un archivo | Vigente; el contenido de los ZIP, por su índice (D-057) |
+| [D-057](#d-057-qué-hay-dentro-de-los-comprimidos) | Qué hay dentro de los comprimidos | Vigente |
 
 ---
 
@@ -994,8 +995,8 @@ Formato: **Contexto** (qué problema había), **Decisión**, **Alternativas desc
   - **Canal Anime**: «Serie - S2 01 [1080p]» es la temporada 2, episodio 1.
 - **Alternativas descartadas**:
   - **Pack como rango de episodios** (`episode` 1 y `episodeEnd` 26): el seguimiento y las sustituciones lo habrían tratado como un episodio más, y una cuenta de episodios equivocada en la ficha habría hecho bajar o sustituir lo que no tocaba.
-  - **Leer qué hay dentro del comprimido**: haría falta descargar el principio de cada parte; la ficha y el nombre bastan para la mayoría.
-  - **Seguir packs**: una temporada entera suele pesar decenas de GB y casi siempre es de una serie terminada. Se descarga a mano desde la ficha.
+  - **Leer qué hay dentro del comprimido**: haría falta descargar el principio de cada parte; la ficha y el nombre bastan para la mayoría. *Sustituida en D-057: en los ZIP basta con su final.*
+  - **Seguir packs**: una temporada entera suele pesar decenas de GB y casi siempre es de una serie terminada. Se descarga a mano desde la ficha. *Sustituida en D-057: sabiendo qué trae cada pack, se puede seguir sin repetir episodios.*
 - **Verificación**:
   - Tests: 659 comprobaciones, con nombres y fichas reales (*Hora de Aventuras*, *Twin Peaks*, *Futurama*, *Mi feliz matrimonio*) y una importación de un pack con 7-Zip.
   - Catálogo de una copia de la BD del 30/10/2026, antes y después:
@@ -1007,3 +1008,40 @@ Formato: **Contexto** (qué problema había), **Decisión**, **Alternativas desc
   - Los archivos con una serie entera de varias temporadas («Serie Completa») siguen en «Otros archivos».
   - Si un pack trae los vídeos sin número reconocible, van a `extras` de la serie, como antes.
   - Pendiente: probar una descarga real de un pack en el contenedor.
+
+## D-057: Qué hay dentro de los comprimidos
+*30/10/2026*
+
+- **Contexto**: con D-056, un pack de temporada se reconocía por su nombre y la ficha. Quedaban fuera las «Serie Completa» de varias temporadas (*Las Supernenas*, *Trigun*, *Monster*), los comprimidos sin marcador con un solo episodio y los packs cuya ficha no dice cuántos episodios trae. Plácido: lo ideal sería mirar qué contiene cada comprimido de una serie, si es un episodio o son varios.
+- **Datos** (copia de la BD del 30/10/2026): en *Canal Principal*, unos 2.700 comprimidos lógicos son ZIP, casi todos troceados (`.zip.001`), frente a unos 220 RAR, que son sobre todo películas, y 6 7z. Las series que interesan son unos 150 ZIP con unas 1.500 partes. En Canal Anime, los packs son RAR («1ª Temporada.partN.rar»).
+- **Decisión**:
+  - **El índice de un ZIP está al final** (el directorio central): con los últimos 64 kB del archivo entero, de su última parte o de las dos últimas, se saben las rutas y tamaños de todo lo que lleva. Si el índice no cabe, se pide lo que diga su final, hasta 4 MB. Admite ZIP64, nombres en UTF-8 (también el campo extra de Info-ZIP) y, sin la marca de UTF-8, en la página de códigos 437. Es código puro (`archive::readZipIndex`), probado con ZIP reales de 7-Zip, también troceados.
+  - **`ArchiveLister`**, en su propio hilo, pide a Telegram ese final de los ZIP de las series sin episodio en el nombre y con todas sus partes publicadas:
+    - de uno en uno, con 3 s de pausa y prioridad 1, por debajo de las descargas (16) y de la calidad (8);
+    - no toca un archivo que se está descargando, y el trozo no se queda en el búfer, como en D-042;
+    - lo guarda en `archive_listings` (migración 10) con el tamaño del archivo: si cambia, se vuelve a leer;
+    - un fallo del propio archivo (no es un ZIP, índice dañado) se recuerda; uno de red se reintenta en una hora;
+    - cada 10 índices, y al acabar, recalcula el catálogo del canal. Despierta cuando cambia un canal y cada 6 h.
+  - **El catálogo** usa el índice, y manda sobre el nombre:
+    - los vídeos (sin las muestras) se leen con `media::episodeInArchive`: su marcador o, si solo dicen el número, la temporada de su carpeta («Temporada 2/03.mkv»), la del nombre del comprimido, la de la ficha o, en el anime, la 1;
+    - un solo vídeo con episodio: el comprimido es ese episodio;
+    - varios: un pack con exactamente esos episodios (`packEpisodes`, ahora una lista de temporada y episodio en vez de un rango). Si son de varias temporadas, `season` es 0;
+    - sin nada reconocible, o en una película, se queda como diga el nombre.
+  - **«Descargar lo que falta»**: los packs de una temporada antes que los de varias, y uno solo si aún falta algún episodio suyo. La serie completa no se baja si las temporadas sueltas ya lo cubren.
+  - **Seguimiento**: un pack publicado después de seguir la serie se descarga si no se tiene ninguno de sus episodios y su temporada no tiene episodios sueltos (los de la emisión, que van por su lado). Entre packs que se solapan, los de una temporada primero. Una descarga de pack cuenta como cada uno de sus episodios, pero sin poder sustituirse ni cancelarse en bloque: si llega una versión mejor de un episodio, la importación cambia ese vídeo y no borra el pack entero.
+  - **Importación**: la misma lectura de cada vídeo, con su carpeta dentro del comprimido.
+  - **Web**: los episodios exactos de cada pack («Episodios 1 a 25 (según su índice)») y una sección «Varias temporadas en un archivo».
+- **Alternativas descartadas**:
+  - **Leer el principio de cada parte**: en un ZIP, cada vídeo lleva delante su cabecera con su nombre, pero habría que pedir un trozo por vídeo. El final basta.
+  - **RAR**: no tiene un índice al final; habría que ir de cabecera en cabecera por todo el archivo, un trozo por vídeo y volumen. En las series de *Canal Principal* casi no hay RAR. Pendiente, con un RAR real con el que probarlo.
+  - **Leer todos los comprimidos, también los de las películas**: no cambian nada.
+  - **Leerlos al abrir la ficha**: tardaría segundos en cada una; leídos de antemano, el catálogo ya cuenta bien las temporadas.
+- **Verificación**:
+  - Tests: 707 comprobaciones, con ZIP reales de 7-Zip (carpetas, nombres con tildes, troceado, índice que no cabe), el catálogo con índices (*Las Supernenas*, *Hora de Aventuras*, *Futurama*, una película y un índice antiguo), lo que falta, el seguimiento con packs y una importación de varias temporadas.
+  - Catálogo de una copia de la BD, sin índices leídos: *Canal Principal*, idéntico al de D-056. En Canal Anime, *Sargento Keroro* pasa de 7 «películas» («2ª Temporada»…, packs RAR) a una serie con 7 temporadas, por la forma «1ª Temporada».
+  - Instancia de prueba con la copia de la BD y credenciales falsas: migración 10, el catálogo igual que el de la herramienta de comparación y parada ordenada con el hilo nuevo.
+  - La primera vez habría que leer 153 comprimidos de *Canal Principal* y 6 de Canal Anime: unos 10-15 minutos.
+  - Sin probar contra Telegram: la sesión de la Pi es la del contenedor. Pendiente de verlo en el registro del servidor (`[Comprimidos]`).
+- **Consecuencias**:
+  - Unas 1.500 descargas pequeñas (64 kB) la primera vez, y después una por cada comprimido nuevo de una serie.
+  - Los RAR y 7z siguen como en D-056: por el nombre y la ficha.

@@ -148,6 +148,107 @@ Plan plan(const Catalog::Item& item, const Rule& rule, const std::vector<Owned>&
         }
         result.actions.push_back(std::move(action));
     }
+
+    // Packs de temporada (D-057) publicados después de seguir la serie: el mejor de cada contenido, si no
+    // se tiene ninguno de sus episodios y su temporada no tiene episodios sueltos (esos van por su lado).
+    // Al terminar una temporada en emisión, el canal suele subirla entera: se tiene, así que no se repite.
+    if (series) {
+        std::set<int> looseSeasons;
+        for (const Release& release : item.releases) {
+            if (release.episode > 0) {
+                looseSeasons.insert(release.season);
+            }
+        }
+        std::map<std::pair<int, std::vector<std::pair<int, int>>>, std::size_t> bestPacks;
+        for (std::size_t i = 0; i < item.releases.size(); ++i) {
+            const Release& release = item.releases[i];
+            if (!release.seasonPack || release.date < rule.since || !withinQuality(release.quality, rule.maxQuality) ||
+                hasTag(release.tags, "3D") || handled(release)) {
+                continue;
+            }
+            std::set<int> seasons;
+            if (release.season > 0) {
+                seasons.insert(release.season);
+            }
+            for (const auto& episode : release.packEpisodes) {
+                seasons.insert(episode.first);
+            }
+            const bool ownedAny = std::any_of(owned.begin(), owned.end(), [&](const Owned& version) {
+                if (release.packEpisodes.empty()) {
+                    return seasons.count(version.season) > 0;  // Sin saber qué trae: nada de su temporada
+                }
+                return std::any_of(release.packEpisodes.begin(), release.packEpisodes.end(),
+                                   [&](const std::pair<int, int>& episode) {
+                                       return coversEpisode(version, episode.first, episode.second);
+                                   });
+            });
+            const bool withLoose =
+                std::any_of(seasons.begin(), seasons.end(), [&](int season) { return looseSeasons.count(season) > 0; });
+            if (seasons.empty() || ownedAny || withLoose) {
+                continue;
+            }
+            const auto key = std::make_pair(release.season, release.packEpisodes);
+            const auto it = bestPacks.find(key);
+            const auto rankOf = [](const Release& version) {
+                return versionRank(version.quality, version.hdr, version.tags);
+            };
+            if (it == bestPacks.end() || rankOf(release) > rankOf(item.releases[it->second])) {
+                bestPacks[key] = i;
+            }
+        }
+        // Primero los de una temporada; uno que se solape con otro ya elegido («Serie Completa» y las
+        // temporadas sueltas) sobra
+        std::vector<std::size_t> packs;
+        for (const auto& [key, index] : bestPacks) {
+            packs.push_back(index);
+        }
+        std::stable_sort(packs.begin(), packs.end(), [&item](std::size_t a, std::size_t b) {
+            return (item.releases[a].season == 0) < (item.releases[b].season == 0);
+        });
+        std::set<std::pair<int, int>> chosenEpisodes;
+        std::set<int> chosenSeasons;
+        std::set<int> chosenWholeSeasons;  // De packs que no se sabe qué traen
+        for (const std::size_t index : packs) {
+            const Release& release = item.releases[index];
+            std::set<int> seasons;
+            if (release.season > 0) {
+                seasons.insert(release.season);
+            }
+            for (const auto& episode : release.packEpisodes) {
+                seasons.insert(episode.first);
+            }
+            const auto inAny = [&seasons](const std::set<int>& chosen) {
+                return std::any_of(seasons.begin(), seasons.end(),
+                                   [&chosen](int season) { return chosen.count(season) > 0; });
+            };
+            const auto episodeChosen = [&chosenEpisodes](const std::pair<int, int>& episode) {
+                return chosenEpisodes.count(episode) > 0;
+            };
+            const bool overlaps =
+                release.packEpisodes.empty()
+                    ? inAny(chosenSeasons)
+                    : inAny(chosenWholeSeasons) ||
+                          std::any_of(release.packEpisodes.begin(), release.packEpisodes.end(), episodeChosen);
+            if (overlaps) {
+                continue;
+            }
+            chosenEpisodes.insert(release.packEpisodes.begin(), release.packEpisodes.end());
+            chosenSeasons.insert(seasons.begin(), seasons.end());
+            if (release.packEpisodes.empty()) {
+                chosenWholeSeasons.insert(seasons.begin(), seasons.end());
+            }
+            if (!releaseComplete(release, now)) {
+                if (now - release.date < kGiveUpSeconds) {
+                    result.waiting = true;
+                }
+                continue;
+            }
+            Action action;
+            action.type = Action::Type::NewEpisode;
+            action.release = index;
+            result.actions.push_back(std::move(action));
+        }
+    }
     return result;
 }
 
@@ -206,14 +307,29 @@ std::vector<std::size_t> missingEpisodes(const Catalog::Item& item, const std::v
     for (const auto& [key, index] : best) {
         seasonsWithEpisodes.insert(key.first);
     }
-    std::map<std::tuple<int, int, int>, std::size_t> bestPacks;  // (temporada, primero, último) -> pack
+    // Temporadas de un pack: la suya o, si trae varias, las de sus episodios (D-057)
+    const auto packSeasons = [](const Release& release) {
+        std::set<int> seasons;
+        if (release.season > 0) {
+            seasons.insert(release.season);
+        }
+        for (const auto& episode : release.packEpisodes) {
+            seasons.insert(episode.first);
+        }
+        return seasons;
+    };
+    // El mejor pack de cada contenido (mismos episodios): (temporada, episodios) -> pack
+    std::map<std::pair<int, std::vector<std::pair<int, int>>>, std::size_t> bestPacks;
     for (std::size_t i = 0; i < item.releases.size(); ++i) {
         const Release& release = item.releases[i];
-        if (!release.seasonPack || seasonsWithEpisodes.count(release.season) ||
-            !withinQuality(release.quality, maxQuality) || hasTag(release.tags, "3D")) {
+        const std::set<int> seasons = packSeasons(release);
+        if (!release.seasonPack || seasons.empty() || !withinQuality(release.quality, maxQuality) ||
+            hasTag(release.tags, "3D") || std::any_of(seasons.begin(), seasons.end(), [&](int season) {
+                return seasonsWithEpisodes.count(season) > 0;
+            })) {
             continue;
         }
-        const auto key = std::make_tuple(release.season, release.packFirst, release.packLast);
+        const auto key = std::make_pair(release.season, release.packEpisodes);
         const auto it = bestPacks.find(key);
         if (it == bestPacks.end() || versionRank(release.quality, release.hdr, release.tags) >
                                          versionRank(item.releases[it->second].quality, item.releases[it->second].hdr,
@@ -221,14 +337,22 @@ std::vector<std::size_t> missingEpisodes(const Catalog::Item& item, const std::v
             bestPacks[key] = i;
         }
     }
+    // Primero los de una temporada; los de varias («Serie Completa»), solo si aún falta algo suyo
+    std::vector<std::size_t> packs;
     for (const auto& [key, index] : bestPacks) {
+        packs.push_back(index);
+    }
+    std::stable_sort(packs.begin(), packs.end(), [&item](std::size_t a, std::size_t b) {
+        return (item.releases[a].season == 0) < (item.releases[b].season == 0);
+    });
+    for (const std::size_t index : packs) {
         const Release& release = item.releases[index];
         bool missing = true;
-        if (release.packFirst > 0) {
-            missing = false;
-            for (int episode = release.packFirst; episode <= release.packLast; ++episode) {
-                missing = missing || !covered.count({release.season, episode});
-            }
+        if (!release.packEpisodes.empty()) {
+            const auto uncovered = [&covered](const std::pair<int, int>& episode) {
+                return covered.count(episode) == 0;
+            };
+            missing = std::any_of(release.packEpisodes.begin(), release.packEpisodes.end(), uncovered);
         } else {
             for (const auto& [season, episode] : covered) {
                 missing = missing && season != release.season;
@@ -237,16 +361,17 @@ std::vector<std::size_t> missingEpisodes(const Catalog::Item& item, const std::v
         if (!missing) {
             continue;
         }
-        for (int episode = release.packFirst; release.packFirst > 0 && episode <= release.packLast; ++episode) {
-            covered.emplace(release.season, episode);
-        }
+        covered.insert(release.packEpisodes.begin(), release.packEpisodes.end());
         chosen.push_back(index);
     }
-    // Los packs, en su sitio: por temporada y, dentro de ella, por su primer episodio
+    // Los packs, en su sitio: por su primer episodio
     std::stable_sort(chosen.begin(), chosen.end(), [&item](std::size_t a, std::size_t b) {
         const auto position = [&item](std::size_t i) {
             const Release& release = item.releases[i];
-            return std::make_pair(release.season, release.seasonPack ? release.packFirst : release.episode);
+            if (release.seasonPack) {
+                return release.packEpisodes.empty() ? std::make_pair(release.season, 0) : release.packEpisodes.front();
+            }
+            return std::make_pair(release.season, release.episode);
         };
         return position(a) < position(b);
     });
@@ -255,7 +380,7 @@ std::vector<std::size_t> missingEpisodes(const Catalog::Item& item, const std::v
 
 int releaseEpisodeCount(const Release& release) {
     if (release.seasonPack) {
-        return release.packFirst > 0 ? release.packLast - release.packFirst + 1 : 0;
+        return static_cast<int>(release.packEpisodes.size());
     }
     return release.episode > 0 ? std::max(release.episode, release.episodeEnd) - release.episode + 1 : 0;
 }
@@ -267,10 +392,7 @@ EpisodeCount countEpisodes(const Catalog::Item& item, const std::vector<Owned>& 
              ++episode) {
             known.emplace(release.season, episode);
         }
-        for (int episode = release.packFirst; release.seasonPack && release.packFirst > 0 && episode <= release.packLast;
-             ++episode) {
-            known.emplace(release.season, episode);
-        }
+        known.insert(release.packEpisodes.begin(), release.packEpisodes.end());
     }
     const std::set<std::pair<int, int>> have = ownedEpisodes(owned);
     EpisodeCount count;
@@ -292,10 +414,19 @@ OwnedByItem ownedByItem(const Catalog& catalog, const std::vector<DbManager::Dow
         if (!ref) {
             continue;
         }
-        result[{ref->item->chatId, ref->item->anchorMessageId}].push_back(
-            {download.id, download.status, versionRank(download.quality, download.hdr, download.tags),
-             library::versionLabel(download.quality, download.hdr, download.tags), download.season, download.episode,
-             download.episodeEnd});
+        auto& owned = result[{ref->item->chatId, ref->item->anchorMessageId}];
+        const int rank = versionRank(download.quality, download.hdr, download.tags);
+        const std::string label = library::versionLabel(download.quality, download.hdr, download.tags);
+        // Un pack (D-057) tiene cada uno de sus episodios. Sin su descarga (0): mejorar un episodio no puede
+        // sustituir ni cancelar el pack entero; lo sustituye la importación, vídeo a vídeo (D-041)
+        if (download.episode == 0 && ref->release->seasonPack && !ref->release->packEpisodes.empty()) {
+            for (const auto& [season, episode] : ref->release->packEpisodes) {
+                owned.push_back({0, download.status, rank, label, season, episode, 0});
+            }
+            continue;
+        }
+        owned.push_back({download.id, download.status, rank, label, download.season, download.episode,
+                         download.episodeEnd});
     }
     return result;
 }
@@ -317,7 +448,7 @@ std::vector<std::size_t> candidateReleases(const Catalog::Item& item, const Rule
     std::vector<std::size_t> candidates;
     for (std::size_t i = 0; i < item.releases.size(); ++i) {
         const Release& release = item.releases[i];
-        if ((item.kind == "series" && release.episode == 0) || release.date < rule.since ||
+        if ((item.kind == "series" && release.episode == 0 && !release.seasonPack) || release.date < rule.since ||
             hasTag(release.tags, "3D") || handled(release)) {
             continue;
         }

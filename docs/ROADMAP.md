@@ -1,6 +1,6 @@
 # Hoja de ruta de Telegarrm
 
-*Estado al 30/10/2026: Fases 1 a 4.1 completadas; canales de anime (D-047), obras agrupadas por TMDB (D-048), temporadas con ficha propia (D-049) películas con otro nombre en TMDB (D-050), revisión de la biblioteca (D-051), pestaña «Biblioteca» (D-052), contraseña para la web (D-053), imagen de Docker (D-054), compose sencillo (D-055) y temporadas en un archivo (D-056).*
+*Estado al 30/10/2026: Fases 1 a 4.1 completadas; canales de anime (D-047), obras agrupadas por TMDB (D-048), temporadas con ficha propia (D-049) películas con otro nombre en TMDB (D-050), revisión de la biblioteca (D-051), pestaña «Biblioteca» (D-052), contraseña para la web (D-053), imagen de Docker (D-054), compose sencillo (D-055), temporadas en un archivo (D-056) y lo que hay dentro de los comprimidos (D-057).*
 
 Documento vivo con el plan de implementación; los motivos de cada decisión están en [DECISIONS.md](DECISIONS.md) y cómo está construido, en [arquitectura.md](arquitectura.md). Lo mantiene Claude Code (desarrollo y plan técnico); Gemini revisa el código y la documentación; Plácido decide prioridades y valida en uso real.
 
@@ -116,8 +116,8 @@ Por decidir con Plácido; ninguno está empezado.
 - **Copia de seguridad de `db/`**: la sesión de Telegram, la BD y las carátulas. Con cuidado: la sesión da acceso a la cuenta.
 
 ### Mejoras pendientes
-- Archivos con una serie entera de varias temporadas («Las Supernenas - Serie Completa.zip», *Trigun*, *Monster*): siguen en «Otros archivos», porque no se sabe qué temporada trae cada uno (D-056).
-- Seguir una serie no descarga sola una temporada publicada en un solo archivo (D-056).
+- Leer qué hay dentro de los RAR y los 7z (D-057): hoy solo los ZIP. En *Canal Principal* casi todos los de las series son ZIP; en Canal Anime, los packs «1ª Temporada.partN.rar» son RAR.
+- Comprobar en el servidor la lectura de los índices y una descarga real de un pack (D-057).
 - Usar TMDB para separar *remakes* que el catálogo une (ej. *Vaiana* de 2016 y de 2026).
 - Calidad real de los MP4 que van dentro de un comprimido con el índice al final: hoy no se pueden leer sin descargarlos enteros (D-042).
 - Notificaciones (Telegram o correo) de lo descargado.

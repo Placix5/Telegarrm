@@ -12,6 +12,7 @@
 #include <tuple>
 #include <utility>
 
+#include "archive_index.hpp"
 #include "media_parser.hpp"
 
 namespace {
@@ -216,6 +217,7 @@ struct Catalog::Block {
     std::string caption;
     media::Ficha ficha;
     std::vector<Release> releases;
+    std::map<std::size_t, std::vector<std::string>> archiveVideos;  // Release -> vídeos de su índice (D-057)
     std::vector<std::string> fileSeriesNames;  // Nombre de la serie según cada archivo
     std::vector<std::string> matchKeys;        // Títulos con los que debe encajar un archivo para unirse
     // Calculados al cerrar el bloque
@@ -307,19 +309,65 @@ void finishBlock(Block& block) {
         }
     }
 
-    const bool hasEpisodes = std::any_of(block.releases.begin(), block.releases.end(),
-                                         [](const Release& release) { return release.episode > 0; });
-
-    // Packs de temporada (D-056): "HDA - Temporada 1.zip" o, en la ficha de una temporada sin episodios
-    // sueltos, un comprimido sin marcador. Trae los episodios que diga su nombre ("Episodios 1 a 11") o,
-    // si no, los que diga la ficha de esa temporada ("(26 episodios)").
-    const bool seriesBlock = seriesContext || hasEpisodes;
     // Una miniserie es una sola temporada ("Adolescencia - Miniserie")
     static const std::regex kMiniseries(R"(\bminiserie\b)", std::regex::icase);
     const int fichaSeason = ficha.season > 0 ? ficha.season : std::regex_search(ficha.title, kMiniseries) ? 1 : 0;
     bool hasPacks = false;
+
+    // Comprimidos con el índice leído (D-057): un solo vídeo es ese episodio; varios episodios, un pack
+    // con exactamente esos. Manda sobre lo que diga el nombre. Los vídeos que solo dicen su número son de
+    // la temporada de su carpeta, del nombre del comprimido o de la ficha (en el anime, la 1).
+    for (const auto& [index, videos] : block.archiveVideos) {
+        Release& release = block.releases[index];
+        if (release.episode > 0 || videos.empty()) {
+            continue;  // El nombre ya dice el episodio ("Futurama 8x01.zip")
+        }
+        const auto namePack = media::parseSeasonPack(release.name);
+        const int packSeason = namePack && (!namePack->shortForm || seriesContext) ? namePack->season
+                               : fichaSeason > 0                                  ? fichaSeason
+                               : block.anime                                      ? 1
+                                                                                  : 0;
+        std::set<std::pair<int, int>> inside;
+        std::optional<media::EpisodeInfo> last;
+        for (const std::string& video : videos) {
+            if (const auto episode = media::episodeInArchive(video, packSeason)) {
+                const int lastNumber = std::max(episode->episode, episode->episodeEnd);
+                for (int number = episode->episode; number <= lastNumber; ++number) {
+                    inside.emplace(episode->season, number);
+                }
+                last = episode;
+            }
+        }
+        if (inside.empty() || (!seriesContext && inside.size() < 2)) {
+            continue;  // Nada reconocible (o una película): decide el nombre
+        }
+        if (videos.size() == 1) {
+            release.season = last->season;
+            release.episode = last->episode;
+            release.episodeEnd = last->episodeEnd;
+            release.episodeTitle = last->episodeTitle;
+            continue;
+        }
+        std::set<int> seasons;
+        for (const auto& episode : inside) {
+            seasons.insert(episode.first);
+        }
+        hasPacks = true;
+        release.seasonPack = true;
+        release.listed = true;
+        release.season = seasons.size() == 1 ? *seasons.begin() : 0;
+        release.packEpisodes.assign(inside.begin(), inside.end());
+    }
+
+    const bool hasEpisodes = std::any_of(block.releases.begin(), block.releases.end(),
+                                         [](const Release& release) { return release.episode > 0; });
+
+    // Packs de temporada por su nombre (D-056): "HDA - Temporada 1.zip" o, en la ficha de una temporada sin
+    // episodios sueltos, un comprimido sin marcador. Trae los episodios que diga su nombre ("Episodios 1 a
+    // 11") o, si no, los que diga la ficha de esa temporada ("(26 episodios)").
+    const bool seriesBlock = seriesContext || hasEpisodes;
     for (Release& release : block.releases) {
-        if (release.episode > 0) {
+        if (release.episode > 0 || release.seasonPack) {
             continue;
         }
         std::optional<media::SeasonPack> pack = media::parseSeasonPack(release.name);
@@ -335,11 +383,14 @@ void finishBlock(Block& block) {
         hasPacks = true;
         release.seasonPack = true;
         release.season = pack->season;
-        release.packFirst = pack->firstEpisode;
-        release.packLast = pack->lastEpisode;
-        if (release.packFirst == 0 && ficha.episodeCount > 0 && fichaSeason == pack->season) {
-            release.packFirst = 1;
-            release.packLast = ficha.episodeCount;
+        int first = pack->firstEpisode;
+        int last = pack->lastEpisode;
+        if (first == 0 && ficha.episodeCount > 0 && fichaSeason == pack->season) {
+            first = 1;
+            last = ficha.episodeCount;
+        }
+        for (int episode = first; first > 0 && episode <= last; ++episode) {
+            release.packEpisodes.emplace_back(pack->season, episode);
         }
     }
     block.kind = (hasEpisodes || hasPacks || ficha.season > 0 || block.attachToSeries) ? "series"
@@ -593,6 +644,7 @@ void joinContinuations(std::vector<Block>& blocks, bool anime) {
 
 std::vector<Block> buildBlocks(std::int64_t chatId, const std::string& channelTitle,
                                const std::vector<Message>& messages, const std::vector<DbManager::Topic>& topics,
+                               const std::map<std::int64_t, DbManager::ArchiveListing>& listings,
                                Catalog::ParseCache& cache) {
     std::map<std::int64_t, std::string> topicNames;
     for (const DbManager::Topic& topic : topics) {
@@ -734,6 +786,21 @@ std::vector<Block> buildBlocks(std::int64_t chatId, const std::string& channelTi
             const auto name = topicNames.find(topicId);
             block.topicName = name != topicNames.end() ? name->second : "";
             block.channelTitle = channelTitle;
+            // Vídeos de los comprimidos con el índice leído, si sigue siendo el mismo archivo (D-057)
+            for (std::size_t i = 0; i < block.releases.size(); ++i) {
+                const Release& release = block.releases[i];
+                const auto listing = listings.find(release.parts.front().messageId);
+                if (release.archive && listing != listings.end() && listing->second.error.empty() &&
+                    listing->second.archiveSize == release.size) {
+                    std::vector<archive::Entry> entries;
+                    for (const auto& [name, size] : listing->second.entries) {
+                        entries.push_back({name, size});
+                    }
+                    for (const archive::Entry& video : archive::videoEntries(entries)) {
+                        block.archiveVideos[i].push_back(video.name);
+                    }
+                }
+            }
             finishBlock(block);
             blocks.push_back(std::move(block));
         }
@@ -922,9 +989,12 @@ Item buildItem(std::vector<const Block*> group) {
                 episodes.emplace(release.season, episode);
             }
         } else if (release.seasonPack) {
-            seasons.insert(release.season);
-            for (int episode = release.packFirst; release.packFirst > 0 && episode <= release.packLast; ++episode) {
-                episodes.emplace(release.season, episode);
+            if (release.season > 0) {
+                seasons.insert(release.season);
+            }
+            for (const auto& episode : release.packEpisodes) {
+                seasons.insert(episode.first);
+                episodes.insert(episode);
             }
         }
     }
@@ -1033,7 +1103,8 @@ std::vector<Catalog::Item> Catalog::buildItems(const std::vector<ChannelInput>& 
     std::vector<Block> all;
     for (const ChannelInput& channel : channels) {
         ParseCache cache;  // Los id de mensaje solo son únicos dentro de un chat
-        for (Block& block : buildBlocks(channel.chatId, channel.title, channel.messages, channel.topics, cache)) {
+        for (Block& block :
+             buildBlocks(channel.chatId, channel.title, channel.messages, channel.topics, channel.listings, cache)) {
             all.push_back(std::move(block));
         }
     }
@@ -1055,7 +1126,8 @@ void Catalog::rebuildChannel(std::int64_t chatId) {
     if (!cache) {
         cache = std::make_unique<ParseCache>();
     }
-    blocks_[chatId] = buildBlocks(chatId, channel->title, db_.channelMessages(chatId), db_.listTopics(chatId), *cache);
+    blocks_[chatId] = buildBlocks(chatId, channel->title, db_.channelMessages(chatId), db_.listTopics(chatId),
+                                  db_.archiveListings(chatId), *cache);
     publish();
 
     const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - started);

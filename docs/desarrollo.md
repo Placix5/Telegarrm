@@ -24,6 +24,7 @@ Cómo está hecho Telegarrm y cómo trabajar en él. La explicación técnica de
   - `download_manager.cpp`: cola de descargas, importación a la biblioteca y sustitución de versiones.
   - `library.cpp`: descompresión, calidad real con ffprobe, nombres para Jellyfin y borrado seguro.
   - `release_prober.cpp`: calidad real de un archivo leyendo solo su principio.
+  - `archive_index.cpp`, `archive_lister.cpp`: qué vídeos lleva cada ZIP, leyendo solo su final.
   - `tracker.cpp`: seguimiento de series y películas.
   - `settings.cpp`, `db_manager.cpp`, `process.cpp`, `signal_watcher.cpp`: ajustes y claves, SQLite, procesos externos y señales.
 - `web/`: la interfaz (`index.html`, `style.css`, `app.js`).

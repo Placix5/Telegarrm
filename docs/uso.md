@@ -19,7 +19,7 @@ Todas las series y películas de los canales que vigilas, con portada, año, cal
 - **Datos**: sinopsis, géneros, idiomas, enlaces a TMDB e IMDb y la ficha original de Telegram.
 - **Canales**: si la obra está en varios, arriba se elige de cuál ver los archivos. Cada canal tiene los suyos, y lo que descargues de cualquiera va a la misma carpeta de tu biblioteca.
 - **Episodios** (series), por temporada, con el título de cada uno y sus versiones. Lo que ya tienes en la biblioteca aparece marcado.
-- **Temporadas en un archivo**: muchos canales publican una temporada entera en un comprimido («Serie - Temporada 1.zip»). Sale dentro de su temporada, con los episodios que trae si la ficha o el nombre lo dicen. Al descargarlo, cada episodio va a su sitio en la biblioteca.
+- **Temporadas en un archivo**: muchos canales publican una temporada entera en un comprimido («Serie - Temporada 1.zip»). Sale dentro de su temporada, con los episodios que trae. Telegarrm lo sabe leyendo el índice del final de los ZIP, sin descargarlos (unos minutos después de que se publiquen); si no, por lo que digan el nombre o la ficha. Un comprimido con un solo episodio se trata como ese episodio, y uno con varias temporadas («Serie Completa») sale aparte, en «Varias temporadas en un archivo». Al descargarlo, cada episodio va a su sitio en la biblioteca.
 - **Versiones** (películas), de mejor a peor calidad.
 - **Calidad real**: el botón «?» de una versión lee el principio del archivo y dice su resolución y si tiene HDR, sin descargarlo entero. «Comprobar calidades» lo hace con una temporada entera. Es útil porque los nombres a veces no dicen la verdad.
 - **Se actualiza sola**: si se publica algo nuevo de la obra mientras la miras, aparece un aviso y la fila nueva se ilumina.
@@ -44,7 +44,7 @@ El botón «Seguir» de una ficha:
 - **Mejoras**: si llega una versión mejor de algo que tienes (más resolución, HDR o REMUX), se descarga y sustituye a la anterior. En *Ajustes* puedes elegir conservar las dos.
 - **Calidad máxima**: para no descargar, por ejemplo, 4K si no lo quieres.
 
-Solo cuenta lo publicado después de empezar a seguir: para lo anterior están los botones de temporada y de serie completa. Las temporadas publicadas en un solo archivo no se descargan solas: se descargan desde la ficha. Si un archivo está troceado, se espera a que estén todas sus partes.
+Solo cuenta lo publicado después de empezar a seguir: para lo anterior están los botones de temporada y de serie completa. Una temporada publicada en un solo archivo también se descarga sola, salvo que ya tengas alguno de sus episodios o que esa temporada tenga episodios sueltos (los de una serie en emisión, que se bajan uno a uno). Si un archivo está troceado, se espera a que estén todas sus partes.
 
 ## Biblioteca
 Lo que hay de verdad en tus carpetas de películas y series, con el tamaño, las temporadas y los episodios de cada obra, y un enlace a su ficha.

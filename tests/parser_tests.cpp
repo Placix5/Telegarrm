@@ -19,6 +19,8 @@
 
 #include <unistd.h>
 
+#include "archive_index.hpp"
+#include "archive_lister.hpp"
 #include "auth.hpp"
 #include "catalog.hpp"
 #include "download_manager.hpp"
@@ -2341,7 +2343,8 @@ void testSeasonPacks() {
         CHECK_EQ(static_cast<int>(adventure->releases.size()), 5);
         // Por temporada, con los packs; el especial suelto, al final
         const auto& r = adventure->releases;
-        CHECK(r.size() == 5 && r[0].seasonPack && r[0].season == 1 && r[0].packFirst == 1 && r[0].packLast == 26 &&
+        CHECK(r.size() == 5 && r[0].seasonPack && r[0].season == 1 && r[0].packEpisodes.size() == 26 &&
+              r[0].packEpisodes.front() == std::make_pair(1, 1) && r[0].packEpisodes.back() == std::make_pair(1, 26) &&
               r[0].parts.size() == 3 && r[1].seasonPack && r[1].season == 2 && r[2].seasonPack && r[2].season == 3 &&
               !r[3].seasonPack && r[3].season == 4 && r[3].episode == 1 && !r[4].seasonPack && r[4].episode == 0);
         CHECK_EQ(tracking::countEpisodes(*adventure, {}).known, 26 * 3 + 1);
@@ -2357,13 +2360,14 @@ void testSeasonPacks() {
     }
     const Catalog::Item* peaks = find("Twin Peaks");
     CHECK(peaks && peaks->seasonCount == 1 && peaks->episodeCount == 22 && peaks->releases.size() == 2 &&
-          peaks->releases[1].packFirst == 11 && peaks->releases[1].packLast == 22);
+          peaks->releases[1].packEpisodes.front() == std::make_pair(2, 11) &&
+          peaks->releases[1].packEpisodes.back() == std::make_pair(2, 22));
     if (peaks) {
         // Las dos mitades hacen falta; con la primera entera, solo la segunda
         CHECK_EQ(static_cast<int>(tracking::missingEpisodes(*peaks, {}, "").size()), 2);
         const std::vector<tracking::Owned> half = {{0, "completed", 20, "1080p", 2, 1, 11}};
         const auto missing = tracking::missingEpisodes(*peaks, half, "");
-        CHECK(missing.size() == 1 && peaks->releases[missing[0]].packFirst == 11);
+        CHECK(missing.size() == 1 && peaks->releases[missing[0]].packEpisodes.front().second == 11);
     }
     const Catalog::Item* trainspotting = find("T2 Trainspotting");
     CHECK(trainspotting && trainspotting->kind == "movie" && !trainspotting->releases.front().seasonPack);
@@ -2403,6 +2407,275 @@ void testSeasonPacks() {
     CHECK(fs::exists(work / "Season 03" / "Hora de Aventuras S03E02.mkv"));
     CHECK(fs::exists(work / "extras" / "Detrás de las cámaras.mkv"));
     fs::remove_all(base);
+}
+
+// D-057: qué hay dentro de los comprimidos, por el índice del final de los ZIP
+namespace {
+
+std::string readWhole(const std::filesystem::path& path) {
+    std::ifstream in(path, std::ios::binary);
+    return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+}
+
+DbManager::ArchiveListing listingOf(std::int64_t messageId, std::int64_t size, const std::vector<std::string>& names) {
+    DbManager::ArchiveListing listing;
+    listing.messageId = messageId;
+    listing.archiveSize = size;
+    for (const std::string& name : names) {
+        listing.entries.emplace_back(name, 1000);
+    }
+    return listing;
+}
+
+}  // namespace
+
+void testArchiveIndex() {
+    namespace fs = std::filesystem;
+    // Nombres de dentro: con marcador, solo el número con la carpeta o el pack, y lo que no es episodio
+    const auto at = [](const std::string& path, int season) { return media::episodeInArchive(path, season); };
+    CHECK(at("Hora de Aventuras 1x05.mkv", 0) && at("Hora de Aventuras 1x05.mkv", 0)->episode == 5);
+    CHECK(at("Temporada 2/03 - El cazador.mkv", 0) && at("Temporada 2/03 - El cazador.mkv", 0)->season == 2 &&
+          at("Temporada 2/03 - El cazador.mkv", 0)->episode == 3);
+    CHECK(at("Las Supernenas/S04/Las Supernenas - 07.avi", 1) && at("Las Supernenas/S04/Las Supernenas - 07.avi", 1)->season == 4);
+    CHECK(at("HDA - 12.mkv", 1) && at("HDA - 12.mkv", 1)->season == 1 && at("HDA - 12.mkv", 1)->episode == 12);
+    CHECK(!at("HDA - 12.mkv", 0));                  // Solo el número y sin saber la temporada
+    CHECK(!at("Extras/Detrás de las cámaras.mkv", 3));
+    CHECK(media::parseSeasonPack("1ª Temporada.part1.rar") && media::parseSeasonPack("1ª Temporada.part1.rar")->season == 1);
+    CHECK(archive::cp437ToUtf8("Cap\xa1tulo \xa4") == "Capítulo ñ");
+    CHECK(archive::isZipName("HDA - Temporada 1.zip.007") && archive::isZipName("Serie.ZIP") &&
+          !archive::isZipName("Serie.part1.rar") && !archive::isZipName("Serie.7z.001"));
+    const auto videos = archive::videoEntries({{"Serie 1x01.mkv", 5000}, {"Serie 1x02.mkv", 5000}, {"sample.mkv", 100},
+                                               {"info.nfo", 10}, {"Subs/Serie 1x01.srt", 10}});
+    CHECK(videos.size() == 2);
+
+    // Lo que hay que pedir para tener el final de un archivo troceado
+    const std::vector<Catalog::Part> parts = {{1, "a.zip.001", 1000, 1}, {2, "a.zip.002", 1000, 2}, {3, "a.zip.003", 300, 3}};
+    const auto ranges = archive::tailRanges(parts, 500);
+    CHECK(ranges.size() == 2 && ranges[0].part == 1 && ranges[0].offset == 800 && ranges[0].length == 200 &&
+          ranges[1].part == 2 && ranges[1].offset == 0 && ranges[1].length == 300);
+    CHECK(archive::tailRanges(parts, 100).size() == 1);
+
+    // El índice de ZIP reales, hechos con 7-Zip, leyendo solo su final
+    const std::string sevenZip = library::findSevenZip();
+    if (sevenZip.empty()) {
+        std::cout << "(7-Zip no está instalado: se omite la lectura de índices de ZIP)" << std::endl;
+        return;
+    }
+    const fs::path base = fs::temp_directory_path() / ("telegarrm_indice_" + std::to_string(::getpid()));
+    fs::remove_all(base);
+    const fs::path source = base / "origen";
+    writeFile(source / "Las Supernenas" / "Temporada 1" / "Las Supernenas 1x01.avi", 200000, 'a');
+    writeFile(source / "Las Supernenas" / "Temporada 1" / "Las Supernenas 1x02.avi", 200000, 'b');
+    writeFile(source / "Las Supernenas" / "Temporada 2" / "Capítulo 01.avi", 200000, 'c');
+    writeFile(source / "Las Supernenas" / "Léeme.txt", 100, 'd');
+    const fs::path zip = base / "Las Supernenas - Serie Completa.zip";
+    const process::Result packed = process::run(
+        {sevenZip, "a", "-tzip", "-mx0", zip.string(), (source / "Las Supernenas").string()}, nullptr, nullptr);
+    CHECK_EQ(packed.exitCode, 0);
+    const std::string whole = readWhole(zip);
+    const archive::ZipIndex index = archive::readZipIndex(whole.substr(whole.size() - 65536));
+    CHECK(index.ok);
+    std::set<std::string> names;
+    for (const archive::Entry& entry : index.entries) {
+        names.insert(entry.name);
+    }
+    CHECK(names.count("Las Supernenas/Temporada 2/Capítulo 01.avi") == 1);
+    CHECK(names.count("Las Supernenas/Léeme.txt") == 1 && names.size() == 4);  // Sin las carpetas
+    CHECK(std::any_of(index.entries.begin(), index.entries.end(),
+                      [](const archive::Entry& entry) { return entry.size == 200000; }));
+    // Con muy poco del final no cabe el índice: dice cuánto hace falta, y con eso basta
+    const archive::ZipIndex shortIndex = archive::readZipIndex(whole.substr(whole.size() - 40));
+    CHECK(!shortIndex.ok && shortIndex.needTail > 40 && shortIndex.needTail < 2000);
+    CHECK(archive::readZipIndex(whole.substr(whole.size() - static_cast<std::size_t>(shortIndex.needTail))).ok);
+    CHECK(!archive::readZipIndex(std::string(5000, 'x')).ok);
+    // Troceado como en los canales (.zip.001, .zip.002...): el final está en la última parte
+    const process::Result split = process::run(
+        {sevenZip, "a", "-tzip", "-mx0", "-v150k", (base / "Troceado.zip").string(), (source / "Las Supernenas").string()},
+        nullptr, nullptr);
+    CHECK_EQ(split.exitCode, 0);
+    std::vector<fs::path> volumes;
+    for (const auto& entry : fs::directory_iterator(base)) {
+        if (entry.path().filename().string().rfind("Troceado.zip.", 0) == 0) {
+            volumes.push_back(entry.path());
+        }
+    }
+    std::sort(volumes.begin(), volumes.end());
+    CHECK(volumes.size() > 2);
+    std::vector<Catalog::Part> volumeParts;
+    for (std::size_t i = 0; i < volumes.size(); ++i) {
+        volumeParts.push_back({static_cast<std::int64_t>(i + 1), volumes[i].filename().string(),
+                               static_cast<std::int64_t>(fs::file_size(volumes[i])), static_cast<int>(i + 1)});
+    }
+    std::string tail;
+    for (const archive::PartRange& range : archive::tailRanges(volumeParts, 65536)) {
+        tail += readWhole(volumes[range.part]).substr(static_cast<std::size_t>(range.offset),
+                                                      static_cast<std::size_t>(range.length));
+    }
+    const archive::ZipIndex splitIndex = archive::readZipIndex(tail);
+    CHECK(splitIndex.ok && splitIndex.entries.size() == 4);
+
+    // Guardado en la BD
+    {
+        DbManager db((base / "test.db").string());
+        CHECK(db.open());
+        DbManager::ArchiveListing listing = listingOf(7, 1234, {"Temporada 1/Serie 1x01.mkv", "Serie\xff.mkv"});
+        listing.chatId = -500;
+        CHECK(db.saveArchiveListing(listing));
+        const auto stored = db.archiveListings(-500);
+        CHECK(stored.size() == 1 && stored.count(7) && stored.at(7).archiveSize == 1234 &&
+              stored.at(7).entries.size() == 2 && stored.at(7).entries[0].first == "Temporada 1/Serie 1x01.mkv");
+        CHECK(db.archiveListings(-600).empty());
+    }
+
+    // Importación de un pack de varias temporadas: cada vídeo a la temporada de su carpeta
+    library::ImportRequest request;
+    request.id = 4;
+    request.kind = "series";
+    request.work = {"Las Supernenas", 1998, 0};
+    request.archive = true;
+    request.parts = {zip.string()};
+    request.libraryRoot = (base / "series").string();
+    const library::ImportResult imported = library::importRelease(request, nullptr, nullptr);
+    CHECK(imported.ok);
+    const fs::path work = base / "series" / "Las Supernenas (1998)";
+    CHECK(fs::exists(work / "Season 01" / "Las Supernenas S01E02.avi"));
+    CHECK(fs::exists(work / "Season 02" / "Las Supernenas S02E01.avi"));
+    fs::remove_all(base);
+}
+
+// D-057: el catálogo con lo que dice el índice de cada comprimido
+void testCatalogArchiveListings() {
+    std::vector<Message> messages = {
+        // Una serie entera en un archivo, con varias temporadas
+        inTopic(photo(1, "Las Supernenas - Serie Completa (DVDRip)\n\nSolo Castellano"), 4),
+        inTopic(video(2, "Las Supernenas - Serie Completa (DVDRip).zip.001", 1000, "", "application/zip"), 4),
+        inTopic(video(3, "Las Supernenas - Serie Completa (DVDRip).zip.002", 500, "", "application/zip"), 4),
+        // Un pack de temporada con 25 episodios dentro, aunque la ficha diga 26
+        inTopic(photo(4, "Hora de Aventuras - Temporada 1 (1080p)\n\n(26 episodios - Son 7 partes en zip)"), 4),
+        inTopic(video(5, "HDA - Temporada 1.zip", 3000, "", "application/zip"), 4),
+        // Un comprimido sin marcador con un solo episodio dentro
+        inTopic(photo(6, "Futurama - Temporada 8 (1080p)"), 4),
+        inTopic(video(7, "Futurama 8x01.zip", 100, "", "application/zip"), 4),
+        inTopic(video(8, "Futurama (1080p).zip", 100, "", "application/zip"), 4),
+        // Película: un vídeo dentro no la cambia
+        inTopic(photo(9, "Shin Chan: Aventuras en Henderland (1996)"), 2),
+        inTopic(video(10, "Shin Chan Henderland.zip", 2000, "", "application/zip"), 2),
+        // El índice es de cuando el archivo tenía otro tamaño: no vale
+        inTopic(photo(11, "Monk - Temporada 1 (1080p)"), 4),
+        inTopic(video(12, "Monk - Temporada 01.zip", 999, "", "application/zip"), 4),
+    };
+    std::vector<std::string> adventure;
+    for (int n = 1; n <= 25; ++n) {
+        adventure.push_back("HDA - " + std::string(n < 10 ? "0" : "") + std::to_string(n) + " [1080p].mkv");
+    }
+    Catalog::ChannelInput channel{-500, "Canal Principal", messages, kTopics, {}};
+    channel.listings[2] = listingOf(2, 1500, {"Las Supernenas/Temporada 1/Las Supernenas 1x01.avi",
+                                              "Las Supernenas/Temporada 1/Las Supernenas 1x02.avi",
+                                              "Las Supernenas/Temporada 2/Las Supernenas 2x01.avi", "Léeme.txt"});
+    channel.listings[5] = listingOf(5, 3000, adventure);
+    channel.listings[8] = listingOf(8, 100, {"Futurama 8x02 (1080p).mkv"});
+    channel.listings[10] = listingOf(10, 2000, {"Shin Chan 1x01.mkv"});
+    channel.listings[12] = listingOf(12, 1000, {"Monk 1x01.mkv", "Monk 1x02.mkv"});
+    const std::vector<Catalog::Item> items = Catalog::buildItems({channel});
+    const auto find = [&items](const std::string& title) -> const Catalog::Item* {
+        for (const Catalog::Item& item : items) {
+            if (item.title == title) {
+                return &item;
+            }
+        }
+        return nullptr;
+    };
+    const Catalog::Item* girls = find("Las Supernenas");
+    CHECK(girls && girls->kind == "series" && girls->seasonCount == 2 && girls->episodeCount == 3);
+    if (girls) {
+        const Catalog::Release& pack = girls->releases.front();
+        CHECK(pack.seasonPack && pack.listed && pack.season == 0 && pack.packEpisodes.size() == 3);
+        CHECK_EQ(static_cast<int>(tracking::missingEpisodes(*girls, {}, "").size()), 1);
+    }
+    const Catalog::Item* adventureItem = find("Hora de Aventuras");
+    CHECK(adventureItem && adventureItem->episodeCount == 25 && adventureItem->releases.front().listed &&
+          adventureItem->releases.front().season == 1);
+    const Catalog::Item* futurama = find("Futurama");
+    CHECK(futurama && futurama->episodeCount == 2 && futurama->releases.size() == 2 &&
+          futurama->releases[1].episode == 2 && !futurama->releases[1].seasonPack);
+    const Catalog::Item* shinChan = find("Shin Chan: Aventuras en Henderland");
+    CHECK(shinChan && shinChan->kind == "movie" && shinChan->releases.front().episode == 0);
+    const Catalog::Item* monk = find("Monk");
+    CHECK(monk && monk->releases.front().seasonPack && !monk->releases.front().listed &&
+          monk->releases.front().packEpisodes.empty());
+
+    // Qué leer: los ZIP de las series sin episodio en el nombre, completos
+    if (girls && futurama && shinChan) {
+        CHECK(archive::shouldList(*girls, girls->releases.front(), 2'000'000'000));
+        CHECK(!archive::shouldList(*futurama, futurama->releases[0], 2'000'000'000));  // "8x01" en el nombre
+        CHECK(!archive::shouldList(*shinChan, shinChan->releases.front(), 2'000'000'000));
+    }
+
+    // Lo que falta con un pack de cada temporada y la serie completa: los de cada temporada
+    std::vector<Message> both = messages;
+    both.push_back(inTopic(photo(20, "Las Supernenas - Temporada 1"), 4));
+    both.push_back(inTopic(video(21, "Las Supernenas - Temporada 1.zip", 700, "", "application/zip"), 4));
+    both.push_back(inTopic(photo(22, "Las Supernenas - Temporada 2"), 4));
+    both.push_back(inTopic(video(23, "Las Supernenas - Temporada 2.zip", 700, "", "application/zip"), 4));
+    Catalog::ChannelInput bothChannel = channel;
+    bothChannel.messages = both;
+    bothChannel.listings[21] = listingOf(21, 700, {"Las Supernenas 1x01.avi", "Las Supernenas 1x02.avi"});
+    bothChannel.listings[23] = listingOf(23, 700, {"Las Supernenas 2x01.avi", "Las Supernenas 2x02.avi"});
+    const std::vector<Catalog::Item> withSeasons = Catalog::buildItems({bothChannel});
+    for (const Catalog::Item& item : withSeasons) {
+        if (item.title == "Las Supernenas") {
+            CHECK_EQ(item.episodeCount, 4);
+            const auto missing = tracking::missingEpisodes(item, {}, "");
+            CHECK(missing.size() == 2 && item.releases[missing[0]].season == 1 && item.releases[missing[1]].season == 2);
+        }
+    }
+}
+
+// D-057: seguir una serie también baja las temporadas nuevas publicadas en un archivo
+void testTrackingPacks() {
+    const std::int64_t since = 1'000'000;
+    const std::int64_t now = 2'000'000;
+    const auto zip = [](std::int64_t id, const std::string& name, std::int64_t size) {
+        return inTopic(at(video(id, name, size, "", "application/zip"), 1'500'000), 4);
+    };
+    std::vector<Message> messages = {
+        inTopic(at(photo(1, "Monk - Temporada 1"), 500'000), 4),
+        inTopic(at(video(2, "Monk 1x01.mkv", 100), 500'000), 4),
+        inTopic(at(photo(3, "Monk - Temporada 2 (1080p)"), 1'500'000), 4),
+        zip(4, "Monk - Temporada 02 (1080p).zip", 3000),
+        zip(5, "Monk - Temporada 02 (4K).zip", 9000),
+        inTopic(at(photo(6, "Monk - Serie Completa"), 1'500'000), 4),
+        zip(7, "Monk - Serie Completa.zip", 20000),
+    };
+    Catalog::ChannelInput channel{-500, "Canal Principal", messages, kTopics, {}};
+    channel.listings[4] = listingOf(4, 3000, {"Monk 2x01.mkv", "Monk 2x02.mkv"});
+    channel.listings[5] = listingOf(5, 9000, {"Monk 2x01.mkv", "Monk 2x02.mkv"});
+    channel.listings[7] = listingOf(7, 20000, {"Monk 1x01.mkv", "Monk 2x01.mkv", "Monk 2x02.mkv", "Monk 3x01.mkv"});
+    const auto items = Catalog::buildItems({channel});
+    CHECK_EQ(static_cast<int>(items.size()), 1);
+    if (items.size() != 1) {
+        return;
+    }
+    const Catalog::Item& monk = items[0];
+    const auto packIds = [&monk](const tracking::Plan& plan) {
+        std::vector<std::int64_t> ids;
+        for (const tracking::Action& action : plan.actions) {
+            ids.push_back(monk.releases[action.release].parts.front().messageId);
+        }
+        return ids;
+    };
+    // La temporada 2 en la mejor versión. La serie completa trae la 1, que tiene episodios sueltos: no
+    const tracking::Rule rule{since, ""};
+    CHECK(packIds(tracking::plan(monk, rule, {}, handledIds({}), now)) == (std::vector<std::int64_t>{5}));
+    // Hasta 1080p, la otra
+    CHECK(packIds(tracking::plan(monk, {since, "1080p"}, {}, handledIds({}), now)) == (std::vector<std::int64_t>{4}));
+    // Con un episodio suyo ya en la biblioteca, no se baja el pack
+    const std::vector<tracking::Owned> owned = {{0, "completed", 20, "1080p", 2, 2, 0}};
+    CHECK(packIds(tracking::plan(monk, rule, owned, handledIds({}), now)).empty());
+    // Ya puesto en cola: nunca se repite
+    CHECK(packIds(tracking::plan(monk, rule, {}, handledIds({5}), now)) == (std::vector<std::int64_t>{4}));
+    // Publicado antes de seguirla: no es nuevo
+    CHECK(packIds(tracking::plan(monk, {1'600'000, ""}, {}, handledIds({}), now)).empty());
 }
 
 int main() {
@@ -2453,6 +2726,9 @@ int main() {
     testAuth();
     testSecrets();
     testSeasonPacks();
+    testArchiveIndex();
+    testCatalogArchiveListings();
+    testTrackingPacks();
 
     std::cout << (checks - failures) << "/" << checks << " comprobaciones correctas" << std::endl;
     return failures == 0 ? 0 : 1;

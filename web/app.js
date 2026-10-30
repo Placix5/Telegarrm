@@ -550,15 +550,29 @@ function seasonActions(releases, onProbed) {
 }
 
 // Películas y archivos sueltos: una fila por versión
+// Lo que trae un pack de temporada (D-056, D-057): "Episodios 1 a 26", "12 episodios (1 a 14)" o, con
+// varias temporadas, "Temporada 1: episodios 1 a 13 · Temporada 2: ..."
+function packContents(release) {
+  const bySeason = new Map();
+  for (const [season, episode] of release.pack_episodes) bySeason.set(season, [...(bySeason.get(season) || []), episode]);
+  const parts = [];
+  for (const [season, numbers] of bySeason) {
+    const first = Math.min(...numbers);
+    const last = Math.max(...numbers);
+    const range = numbers.length === 1 ? `episodio ${first}` : numbers.length === last - first + 1 ? `episodios ${first} a ${last}`
+      : `${plural(numbers.length, "episodio", "episodios")} (del ${first} al ${last})`;
+    parts.push(bySeason.size > 1 ? `Temporada ${season}: ${range}` : range.charAt(0).toUpperCase() + range.slice(1));
+  }
+  return parts.join(" · ") + (release.pack_listed ? " (según su índice)" : "");
+}
+
 function versionsTable(releases) {
   const node = table([["Versión"], ["Archivo"], ["Publicado"], ["Tamaño", "num"], [""]], "versions-table");
   for (const release of releases) {
     const row = el("tr");
     const name = el("td", "", release.name);
     name.title = release.parts.map((part) => part.file_name).join("\n");
-    if (release.pack_episodes) {
-      name.append(el("div", "hint", `Episodios ${release.pack_episodes[0]} a ${release.pack_episodes[1]}`));
-    }
+    if (release.pack_episodes) name.append(el("div", "hint", packContents(release)));
     const parts = release.parts.length > 1 ? ` · ${release.parts.length} partes` : "";
     const action = el("td");
     action.append(downloadButton(release, false));
@@ -697,9 +711,17 @@ function renderDetail(item) {
   if (item.kind === "series") {
     const bySeason = new Map();
     const loose = [];
+    const multiSeason = [];  // Packs con varias temporadas («Serie Completa», D-057)
     for (const release of item.releases) {
-      if (release.season === null) loose.push(release);
-      else bySeason.set(release.season, [...(bySeason.get(release.season) || []), release]);
+      if (release.season !== null) bySeason.set(release.season, [...(bySeason.get(release.season) || []), release]);
+      else if (release.season_pack) multiSeason.push(release);
+      else loose.push(release);
+    }
+    if (multiSeason.length) {
+      const seasons = new Set();
+      for (const release of multiSeason) for (const pair of release.pack_episodes || []) seasons.add(pair[0]);
+      files.append(el("h3", "", `Varias temporadas en un archivo · ${plural(seasons.size, "temporada", "temporadas")}`),
+        versionsTable(multiSeason));
     }
     for (const [season, releases] of bySeason) {
       // Packs de temporada (D-056): la temporada (o parte) en un archivo, aparte de los episodios sueltos
@@ -707,8 +729,11 @@ function renderDetail(item) {
       const episodes = releases.filter((release) => !release.season_pack);
       const numbers = new Set();
       for (const release of releases) {
-        const range = release.season_pack ? release.pack_episodes || [0, 0] : [release.episode, release.episode_end || release.episode];
-        for (let episode = range[0]; episode > 0 && episode <= range[1]; episode++) numbers.add(episode);
+        if (release.season_pack) {
+          for (const pair of release.pack_episodes || []) numbers.add(pair[1]);
+        } else {
+          for (let episode = release.episode; episode <= (release.episode_end || release.episode); episode++) numbers.add(episode);
+        }
       }
       const size = releases.reduce((sum, release) => sum + release.size, 0);
       const header = [`Temporada ${season}`];
@@ -717,7 +742,7 @@ function renderDetail(item) {
       files.append(el("h3", "", header.join(" · ")));
       if (packs.length) {
         const onDiskCount = [...onDisk.keys()].filter((key) => key.startsWith(`${season}:`)).length;
-        const parts = new Set(packs.map((release) => String(release.pack_episodes))).size;
+        const parts = new Set(packs.map((release) => JSON.stringify(release.pack_episodes))).size;
         files.append(el("p", "hint", parts > 1 ? "La temporada en varios archivos, cada uno con una parte:"
           : packs.length > 1 ? "La temporada en un archivo, en varias versiones:" : "La temporada en un archivo:"));
         if (onDiskCount) files.append(el("p", "on-disk", `✓ ${plural(onDiskCount, "episodio", "episodios")} de esta temporada en tu biblioteca`));
@@ -1285,7 +1310,8 @@ function describeNews(event) {
   if (episodes.length > 4) return `Acaban de publicarse ${episodes.length} episodios.`;
   const packs = event.releases.filter((release) => release.season_pack);
   if (packs.length) {
-    const seasons = [...new Set(packs.map((release) => release.season))];
+    const seasons = [...new Set(packs.map((release) => release.season).filter((season) => season !== null))];
+    if (!seasons.length) return "Acaba de publicarse la serie en un archivo.";
     return seasons.length === 1 ? `Acaba de publicarse la temporada ${seasons[0]} en un archivo${packs.length === 1 ? label(packs[0]) : ""}.`
       : `Acaban de publicarse las temporadas ${seasons.slice(0, -1).join(", ")} y ${seasons[seasons.length - 1]}.`;
   }

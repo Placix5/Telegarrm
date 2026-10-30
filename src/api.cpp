@@ -90,9 +90,16 @@ Json nullable(const std::string& value) {
     return value.empty() ? Json(nullptr) : Json(value);
 }
 
-// Pack de temporada (D-056): [primero, último] de los episodios que trae, o null si no se sabe
+// Pack de temporada (D-056): [[temporada, episodio], ...] que trae, o null si no se sabe
 Json packEpisodesJson(const Catalog::Release& release) {
-    return release.seasonPack && release.packFirst > 0 ? Json::array({release.packFirst, release.packLast}) : Json(nullptr);
+    if (!release.seasonPack || release.packEpisodes.empty()) {
+        return nullptr;
+    }
+    Json episodes = Json::array();
+    for (const auto& [season, episode] : release.packEpisodes) {
+        episodes.push_back({season, episode});
+    }
+    return episodes;
 }
 
 bool requireTelegramReady(TelegramClient& telegram, httplib::Response& res) {
@@ -222,12 +229,13 @@ void registerStatusRoutes(httplib::Server& server, DbManager& db, TelegramClient
             Json releases = Json::array();
             for (const Catalog::Release& release : event.releases) {
                 const bool isEpisode = release.episode > 0;
+                const bool hasSeason = isEpisode || (release.seasonPack && release.season > 0);
                 releases.push_back({{"message_id", release.parts.front().messageId},
                                     {"name", release.name},
                                     {"quality", nullable(release.quality)},
                                     {"hdr", release.hdr},
                                     {"tags", release.tags},
-                                    {"season", isEpisode || release.seasonPack ? Json(release.season) : Json(nullptr)},
+                                    {"season", hasSeason ? Json(release.season) : Json(nullptr)},
                                     {"episode", isEpisode ? Json(release.episode) : Json(nullptr)},
                                     {"episode_end", release.episodeEnd > 0 ? Json(release.episodeEnd) : Json(nullptr)},
                                     {"season_pack", release.seasonPack},
@@ -521,6 +529,7 @@ Json itemDetailJson(const Catalog::Item& item, const InfoPtr& info, const DbMana
                              {"number", part.number}});
         }
         const bool isEpisode = release.episode > 0;
+        const bool hasSeason = isEpisode || (release.seasonPack && release.season > 0);
         // Título del episodio: el de TMDB en castellano; si no hay, el del nombre del fichero
         const auto tmdbEpisode = episodes.find({release.season, release.episode});
         const DbManager::MetadataEpisode* episode = tmdbEpisode != episodes.end() ? tmdbEpisode->second : nullptr;
@@ -533,11 +542,12 @@ Json itemDetailJson(const Catalog::Item& item, const InfoPtr& info, const DbMana
                             {"tags", release.tags},
                             {"size", release.size},
                             {"archive", release.archive},
-                            {"season", isEpisode || release.seasonPack ? Json(release.season) : Json(nullptr)},
+                            {"season", hasSeason ? Json(release.season) : Json(nullptr)},
                             {"episode", isEpisode ? Json(release.episode) : Json(nullptr)},
                             {"episode_end", release.episodeEnd > 0 ? Json(release.episodeEnd) : Json(nullptr)},
                             {"season_pack", release.seasonPack},
                             {"pack_episodes", packEpisodesJson(release)},
+                            {"pack_listed", release.listed},
                             {"episode_title", nullable(episodeTitle)},
                             {"episode_overview", episode ? nullable(episode->overview) : Json(nullptr)},
                             {"air_date", episode ? nullable(episode->airDate) : Json(nullptr)},

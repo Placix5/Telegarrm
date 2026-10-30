@@ -7,6 +7,8 @@
 #include <iostream>
 #include <system_error>
 
+#include "nlohmann/json.hpp"
+
 namespace {
 
 // Migraciones del esquema, en orden. PRAGMA user_version guarda la última aplicada.
@@ -195,6 +197,18 @@ constexpr Migration kMigrations[] = {
             created_at   INTEGER NOT NULL,
             last_used_at INTEGER NOT NULL,
             expires_at   INTEGER NOT NULL
+        ) WITHOUT ROWID;
+    )SQL"},
+    {10, R"SQL(
+        -- Qué hay dentro de cada comprimido, leído de su índice sin descargarlo (D-057)
+        CREATE TABLE archive_listings (
+            chat_id      INTEGER NOT NULL,
+            message_id   INTEGER NOT NULL,  -- Primera parte
+            archive_size INTEGER NOT NULL,  -- Suma de las partes: si cambia, hay que volver a leerlo
+            entries      TEXT    NOT NULL DEFAULT '[]',  -- JSON: [[nombre, bytes], ...]
+            error        TEXT    NOT NULL DEFAULT '',    -- Si no se pudo leer
+            listed_at    INTEGER NOT NULL,
+            PRIMARY KEY (chat_id, message_id)
         ) WITHOUT ROWID;
     )SQL"},
 };
@@ -1612,4 +1626,70 @@ bool DbManager::isDownloadingMessage(std::int64_t chatId, std::int64_t messageId
     sqlite3_bind_int64(stmt.get(), 1, chatId);
     sqlite3_bind_int64(stmt.get(), 2, messageId);
     return sqlite3_step(stmt.get()) == SQLITE_ROW;
+}
+
+// --- Índice de los comprimidos (D-057) ---
+
+bool DbManager::saveArchiveListing(const ArchiveListing& listing) {
+    nlohmann::json entries = nlohmann::json::array();
+    for (const auto& [name, size] : listing.entries) {
+        entries.push_back({name, size});
+    }
+    // Nombres de dentro de un comprimido: pueden traer bytes que no son UTF-8 (se sustituyen)
+    const std::string text = entries.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace);
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!db_) {
+        return false;
+    }
+    StmtPtr stmt = prepare(db_.get(), R"SQL(
+        INSERT OR REPLACE INTO archive_listings (chat_id, message_id, archive_size, entries, error, listed_at)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6);
+    )SQL");
+    if (!stmt) {
+        return false;
+    }
+    sqlite3_bind_int64(stmt.get(), 1, listing.chatId);
+    sqlite3_bind_int64(stmt.get(), 2, listing.messageId);
+    sqlite3_bind_int64(stmt.get(), 3, listing.archiveSize);
+    bindText(stmt.get(), 4, text);
+    bindText(stmt.get(), 5, listing.error);
+    sqlite3_bind_int64(stmt.get(), 6, listing.listedAt > 0 ? listing.listedAt : now());
+    if (sqlite3_step(stmt.get()) != SQLITE_DONE) {
+        logError(db_.get(), "guardar el índice de un comprimido");
+        return false;
+    }
+    return true;
+}
+
+std::map<std::int64_t, DbManager::ArchiveListing> DbManager::archiveListings(std::int64_t chatId) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    std::map<std::int64_t, ArchiveListing> listings;
+    if (!db_) {
+        return listings;
+    }
+    StmtPtr stmt = prepare(db_.get(), R"SQL(
+        SELECT message_id, archive_size, entries, error, listed_at FROM archive_listings WHERE chat_id = ?1;
+    )SQL");
+    if (!stmt) {
+        return listings;
+    }
+    sqlite3_bind_int64(stmt.get(), 1, chatId);
+    while (sqlite3_step(stmt.get()) == SQLITE_ROW) {
+        ArchiveListing listing;
+        listing.chatId = chatId;
+        listing.messageId = sqlite3_column_int64(stmt.get(), 0);
+        listing.archiveSize = sqlite3_column_int64(stmt.get(), 1);
+        const nlohmann::json entries = nlohmann::json::parse(columnText(stmt.get(), 2), nullptr, false);
+        if (entries.is_array()) {
+            for (const nlohmann::json& entry : entries) {
+                if (entry.is_array() && entry.size() == 2 && entry[0].is_string() && entry[1].is_number_integer()) {
+                    listing.entries.emplace_back(entry[0].get<std::string>(), entry[1].get<std::int64_t>());
+                }
+            }
+        }
+        listing.error = columnText(stmt.get(), 3);
+        listing.listedAt = sqlite3_column_int64(stmt.get(), 4);
+        listings.emplace(listing.messageId, std::move(listing));
+    }
+    return listings;
 }

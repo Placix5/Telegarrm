@@ -172,6 +172,16 @@ public:
         std::int64_t probedAt = 0;
     };
 
+    // Qué hay dentro de un comprimido, leído de su índice (D-057)
+    struct ArchiveListing {
+        std::int64_t chatId = 0;
+        std::int64_t messageId = 0;    // Primera parte
+        std::int64_t archiveSize = 0;  // Suma de las partes cuando se leyó
+        std::vector<std::pair<std::string, std::int64_t>> entries;  // Ruta dentro y bytes
+        std::string error;             // Si no se pudo leer
+        std::int64_t listedAt = 0;
+    };
+
     struct AddDownloadResult {
         bool ok = false;
         bool duplicate = false;  // Ya está en la cola, descargándose o descargado
@@ -257,6 +267,10 @@ public:
     // Calidad real de los archivos (chat, primera parte)
     bool saveProbe(const Probe& probe);
     std::map<std::pair<std::int64_t, std::int64_t>, Probe> listProbes();
+
+    // Índice de los comprimidos de un canal, por su primera parte
+    bool saveArchiveListing(const ArchiveListing& listing);
+    std::map<std::int64_t, ArchiveListing> archiveListings(std::int64_t chatId);
 
     // Seguimiento
     std::optional<std::int64_t> addFollow(const Follow& follow);

@@ -64,6 +64,11 @@ bool isAnimeNumbered(const std::string& fileName);
 // temporada en un archivo. nullopt si es un episodio o dice varias temporadas ("Temporadas 1-3").
 std::optional<SeasonPack> parseSeasonPack(const std::string& fileName);
 
+// Episodio de un vídeo de dentro de un comprimido, por su ruta (D-057): su marcador ("Serie 2x01.mkv")
+// o, si solo dice el número ("Temporada 2/03 - Título.mkv"), el número con la temporada de su carpeta
+// o la del pack (packSeason; 0 = no se sabe). nullopt si no es un episodio.
+std::optional<EpisodeInfo> episodeInArchive(const std::string& path, int packSeason);
+
 // Interpreta el pie de una ficha. Admite el formato por líneas "emoji | valor" y el texto libre.
 // animeFormats: temporadas al estilo del anime ("S2", "Final Season") y título alternativo en la 2.ª línea
 Ficha parseFicha(const std::string& caption, bool animeFormats = false);

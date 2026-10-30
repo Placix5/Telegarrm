@@ -10,6 +10,7 @@
 #include <utility>
 
 #include "api.hpp"
+#include "archive_lister.hpp"
 #include "auth.hpp"
 #include "catalog.hpp"
 #include "channel_sync.hpp"
@@ -173,12 +174,20 @@ int main(int argc, char** argv) {
     ReleaseProber prober(db, telegram);
     // Seguimiento: pone en cola los episodios nuevos y las versiones mejores de lo que se sigue
     Tracker tracker(db, catalog, metadata, downloads, prober);
-    // Cada cambio en los mensajes de un canal (también los que llegan en tiempo real) recalcula su parte
-    // del catálogo, busca lo nuevo en TMDB y revisa las obras seguidas
-    ChannelSync sync(db, telegram, [&catalog, &metadata, &tracker](std::int64_t chatId) {
+    // Qué hay dentro de los comprimidos de las series, leyendo solo su índice (D-057); lo que aprende
+    // recalcula el catálogo del canal
+    ArchiveLister lister(db, telegram, catalog, [&catalog, &metadata, &tracker](std::int64_t chatId) {
         catalog.rebuildChannel(chatId);
         metadata.requestRun();
         tracker.requestRun();
+    });
+    // Cada cambio en los mensajes de un canal (también los que llegan en tiempo real) recalcula su parte
+    // del catálogo, busca lo nuevo en TMDB, revisa las obras seguidas y mira los comprimidos nuevos
+    ChannelSync sync(db, telegram, [&catalog, &metadata, &tracker, &lister](std::int64_t chatId) {
+        catalog.rebuildChannel(chatId);
+        metadata.requestRun();
+        tracker.requestRun();
+        lister.requestRun();
     });
 
     // Inicializar el servidor HTTP
@@ -221,6 +230,7 @@ int main(int argc, char** argv) {
     metadata.start();
     downloads.start();
     tracker.start();
+    lister.start();
 
     std::cout << "Servidor web escuchando en http://localhost:" << port << std::endl;
 
@@ -234,6 +244,7 @@ int main(int argc, char** argv) {
     // descargas, y esta y la sincronización usan TelegramClient: se paran antes. La BD se cierra en
     // su destructor.
     signals.stop();
+    lister.stop();
     tracker.stop();
     downloads.stop();
     metadata.stop();

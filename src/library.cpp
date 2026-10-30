@@ -910,15 +910,11 @@ ImportResult importRelease(const ImportRequest& request, const std::function<voi
             if (!episode && videos.size() == 1 && request.episode > 0) {
                 episode = media::EpisodeInfo{request.season, request.episode, request.episodeEnd, "", ""};
             }
-            // Pack de temporada (D-056): un vídeo que solo dice el número ("03 - Título.mkv",
-            // "Serie - 03.mkv") es de la temporada del pack
-            if (!episode && request.episode == 0 && request.season > 0) {
-                episode = media::parseEpisode(video.filename().string(), true);
-                if (episode && episode->absolute) {
-                    episode->season = request.season;
-                } else {
-                    episode.reset();
-                }
+            // Pack de temporada (D-056, D-057): un vídeo que solo dice el número ("03 - Título.mkv") es de
+            // la temporada de su carpeta dentro del comprimido ("Temporada 2/") o de la del pack. Igual que
+            // lo lee el catálogo en el índice del comprimido.
+            if (!episode && request.archive && request.episode == 0) {
+                episode = media::episodeInArchive(video.lexically_relative(temporary).generic_string(), request.season);
             }
             target = episode ? workDir / seasonFolderName(episode->season) /
                                    episodeFileName(request.work, episode->season, episode->episode, episode->episodeEnd,

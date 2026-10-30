@@ -1,6 +1,6 @@
 # Arquitectura de Telegarrm
 
-*Actualizada el 15/10/2026: canales de anime (D-047), obras agrupadas por TMDB (D-048), temporadas con ficha propia (D-049) películas con otro nombre en TMDB (D-050), revisión de la biblioteca (D-051) pestaña «Biblioteca» (D-052), contraseña para la web (D-053), imagen de Docker (D-054), compose sencillo (D-055) y temporadas en un archivo (D-056).*
+*Actualizada el 15/10/2026: canales de anime (D-047), obras agrupadas por TMDB (D-048), temporadas con ficha propia (D-049) películas con otro nombre en TMDB (D-050), revisión de la biblioteca (D-051) pestaña «Biblioteca» (D-052), contraseña para la web (D-053), imagen de Docker (D-054), compose sencillo (D-055), temporadas en un archivo (D-056) y lo que hay dentro de los comprimidos (D-057).*
 
 El plan inicial (de Gemini) preveía una tabla `media` con las series y películas. No llegó a existir: el catálogo se calcula en memoria a partir de los mensajes guardados (D-020), así que una mejora del parser se aplica sin migraciones. Los motivos de cada decisión están en [DECISIONS.md](DECISIONS.md) y el plan, en [ROADMAP.md](ROADMAP.md).
 
@@ -15,6 +15,8 @@ Telegram ⇄ TDLib ⇄ TelegramClient (hilo receptor: respuestas y actualizacion
                      │  (historial, ronda cada 15 min                │
                      │   y mensajes nuevos al momento)               ├─► MetadataService ⇄ TMDB
                      │                                               │
+                     ├─ ArchiveLister ─────► tabla archive_listings ─┤
+                     │  (final de los ZIP → qué vídeos llevan)       │
                      ├─ ReleaseProber ◄──── Tracker (seguimiento) ◄──┘
                      │  (primeros MB → ffprobe)    │
                      │                             ▼
@@ -48,10 +50,11 @@ El catálogo distingue dos tipos de canal, que detecta solo por los nombres de s
 | `MetadataService` | Busca en TMDB las obras nuevas del catálogo (D-029, D-030). Si cambia el criterio, vuelve a buscarlas todas, mostrando mientras los datos anteriores (D-048) | Cuando cambia el catálogo y cada 6 h |
 | `DownloadManager` | Cola de descargas, de una en una; importa cada una a la biblioteca (D-031, D-034) | Con algo en cola |
 | `Tracker` | Revisa las obras seguidas y pone en cola lo nuevo o mejor (D-035) | Cuando cambia el catálogo; cada 5 min si hay algo a medio publicar |
+| `ArchiveLister` | Lee el índice de los ZIP de las series sin episodio en el nombre, pidiendo solo su final, y recalcula el catálogo del canal cada 10 (D-057) | Cuando cambia el catálogo, de uno en uno con 3 s de pausa; cada 6 h |
 
 `ReleaseProber` (D-042) no tiene hilo propio: lo llaman la API y el `Tracker`, y sus comprobaciones van de una en una. Las herramientas externas (7-Zip y ffprobe) se lanzan con `posix_spawn`, sin shell (D-018).
 
-**Orden de parada**: vigilante de señales, seguimiento, descargas, metadatos, sincronización y TDLib (que guarda su estado con `close`). Lo que se estaba descargando vuelve a la cola al arrancar.
+**Orden de parada**: vigilante de señales, lector de comprimidos, seguimiento, descargas, metadatos, sincronización y TDLib (que guarda su estado con `close`). Lo que se estaba descargando vuelve a la cola al arrancar.
 
 ## Recorrido de un episodio nuevo de una serie seguida
 
@@ -69,7 +72,7 @@ El catálogo distingue dos tipos de canal, que detecta solo por los nombres de s
 
 ## Datos
 
-**SQLite** (`db/telegarrm.db`): WAL, una conexión con mutex y migraciones con `PRAGMA user_version`. Va por la versión 9 (D-014).
+**SQLite** (`db/telegarrm.db`): WAL, una conexión con mutex y migraciones con `PRAGMA user_version`. Va por la versión 10 (D-014).
 
 | Tabla | Contenido |
 | --- | --- |
@@ -81,6 +84,7 @@ El catálogo distingue dos tipos de canal, que detecta solo por los nombres de s
 | `activity` | Historial de lo que hace el sistema solo (las 5000 entradas más recientes) |
 | `release_probes` | Calidad real de cada archivo, comprobada antes de descargarlo o al importarlo |
 | `sessions` | Sesiones de la web: SHA-256 del token, uso y caducidad (D-053) |
+| `archive_listings` | Qué hay dentro de cada comprimido (rutas y tamaños), leído de su índice, con el tamaño del archivo cuando se leyó (D-057) |
 
 **Fuera de SQLite**:
 - `db/tdlib/`: sesión de Telegram (permisos `0700`).
@@ -102,6 +106,7 @@ El catálogo distingue dos tipos de canal, que detecta solo por los nombres de s
 | `download_manager.cpp` | Cola de descargas, importación, sustitución de versiones, historial de descargas, revisión de la biblioteca (D-051) y borrado desde la web (D-052) |
 | `library.cpp` | Descompresión, ffprobe, nombres para Jellyfin, vídeos y contenido de la biblioteca (pestaña «Biblioteca», D-052) y borrado seguro |
 | `release_prober.cpp` | Calidad real de un archivo sin descargarlo entero |
+| `archive_index.cpp`, `archive_lister.cpp` | Índice de un ZIP a partir de su final y el hilo que lo pide a Telegram (D-057) |
 | `tracker.cpp` | Seguimiento: reglas puras (`tracking::`) y su hilo (`Tracker`) |
 | `settings.cpp` | Ajustes, comprobación de rutas y lectura de claves por variable o archivo (D-054) |
 | `auth.cpp` | Contraseña de la web (scrypt), sesiones y límite de intentos (D-053) |
@@ -109,7 +114,7 @@ El catálogo distingue dos tipos de canal, que detecta solo por los nombres de s
 | `db_manager.cpp` | SQLite |
 | `signal_watcher.cpp` | Parada ordenada |
 
-Las reglas de decisión (parser, catálogo, seguimiento, episodios que faltan, nombres, borrado seguro, novedades) son funciones puras o casi. Se prueban en `tests/parser_tests.cpp` con ejemplos reales de los canales (614 comprobaciones; D-022). `tools/catalog_dump.cpp` calcula el catálogo de una copia de la BD para comparar un cambio del parser obra por obra (D-047) y, con `--tmdb`, la coincidencia de TMDB guardada y la del criterio actual (D-048).
+Las reglas de decisión (parser, catálogo, seguimiento, episodios que faltan, nombres, borrado seguro, novedades) son funciones puras o casi. Se prueban en `tests/parser_tests.cpp` con ejemplos reales de los canales (707 comprobaciones; D-022). `tools/catalog_dump.cpp` calcula el catálogo de una copia de la BD para comparar un cambio del parser obra por obra (D-047) y, con `--tmdb`, la coincidencia de TMDB guardada y la del criterio actual (D-048).
 
 ## Web
 

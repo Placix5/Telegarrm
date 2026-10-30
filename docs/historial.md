@@ -2,6 +2,15 @@
 
 Del más reciente al más antiguo. Los números D-0XX enlazan al [registro de decisiones](DECISIONS.md), que explica el porqué de cada cambio. Los canales reales de las pruebas aparecen con nombres genéricos (*Canal Principal*, Canal Anime).
 
+## Qué hay dentro de los comprimidos
+- Telegarrm lee el índice de los ZIP de las series pidiendo a Telegram solo su final (unos kB), y sabe qué vídeos lleva cada uno sin descargarlo ([D-057](DECISIONS.md)). Lo hace solo, de uno en uno y sin prisa; la primera vez, unos 160 comprimidos (10-15 minutos).
+- Con eso, un pack muestra los episodios exactos que trae; un comprimido con un solo episodio pasa a ser ese episodio; y una «Serie Completa» con varias temporadas sale en «Varias temporadas en un archivo» y cuenta en las temporadas y episodios de la serie.
+- «Descargar lo que falta» elige los packs de cada temporada antes que la serie completa, y no repite episodios.
+- Seguir una serie también baja las temporadas nuevas publicadas en un archivo, si no tienes ninguno de sus episodios.
+- La importación lleva cada vídeo a la temporada de su carpeta dentro del comprimido («Temporada 2/03.mkv»).
+- «1ª Temporada» se reconoce como temporada 1: en Canal Anime, *Sargento Keroro* deja de salir como 7 películas sueltas.
+- Tests: 707 comprobaciones.
+
 ## Temporadas en un archivo
 - Las temporadas publicadas en un comprimido («HDA - Temporada 1.zip», «Futurama - Temporada 9 (4K).zip.001», «Clarence T01», «Bluey S01») salen dentro de su temporada y no en «Otros archivos» ([D-056](DECISIONS.md)). Traen los episodios que dice su nombre («Episodios 1 a 11») o la ficha («(26 episodios)»).
 - *Canal Principal*: 49 series ganan temporadas, entre ellas *Hora de Aventuras* (de 0 a 10), *Futurama* (de 8 a 10), *Monk*, *Colombo*, *Twin Peaks*, *Vikingos*, *Steven Universe* y *Stranger Things*.
