@@ -269,7 +269,8 @@ std::string cleanTitle(const std::string& raw) {
         std::regex(R"(\btmdb[-_ ]?id[-_= ]?\d+)", kIcase),                                     // tmdbid_8078
         std::regex(R"((cr(?:é|É|e)ditos?|credits?)\b.*$)", kIcase),                        // Créditos y lo que siga
         std::regex(R"(@\S+|https?://\S+|t\.me/\S+)", kIcase),                            // Usuarios y enlaces
-        std::regex(R"(\b(?:temporadas?|seasons?)\s*\d+(?:\s*(?:-|a|al|y|&)\s*\d+)*)", kIcase),
+        // "Temporada 3" y lo que se le añada al final: "Temporada 3 + Preludio", "Temporada 1 + OVA" (D-056)
+        std::regex(R"(\b(?:temporadas?|seasons?)\s*\d+(?:\s*(?:-|a|al|y|&)\s*\d+)*(?:\s*\+.*$)?)", kIcase),
         std::regex(R"(\b(?:serie\s+)?complet[ao]\b|\bfin de serie\b)", kIcase),
         std::regex(R"(\b(?:2160p|4k|uhd|1080[pi]|720p|576p|480p|360p)\b)", kIcase),
         std::regex(R"(\b(?:hdr(?:10)?\+?|dolby ?vision|x26[45]|h\.?26[45]|hevc|avc|10 ?bits?|web-?dl|web-?rip|blu-?ray|bdrip|brrip|hdrip|dvdrip|hdtv|remux|aac|ac3|e?ac-?3|dts|ddp?\s?5\.1|5\.1|2\.0)\b)", kIcase),
@@ -380,7 +381,7 @@ bool takeFinalSeason(std::string& name) {
 }
 
 // Formatos del anime (canal Canal Anime, 08/10/2026). Primero los que dicen la temporada ("T2 - 01",
-// "S2 - 08", "S3 EP11"); después la numeración absoluta, que no la dice
+// "S2 - 08", "S3 EP11", "S2 01"); después la numeración absoluta, que no la dice
 std::optional<EpisodeInfo> parseAnimeEpisode(const std::string& clean) {
     // Guiones bajos como espacios: "One_Piece_Capitulo_8_Título"
     std::string text = clean;
@@ -394,6 +395,8 @@ std::optional<EpisodeInfo> parseAnimeEpisode(const std::string& clean) {
     static const Pattern kPatterns[] = {
         {std::regex(R"((?:^|\s)[TS](\d{1,2})\s*-\s*(\d{1,4})(?:v\d)?(?![0-9]|p\b))", kIcase), true},
         {std::regex(R"((?:^|\s)S(\d{1,2})\s*EP?\s*(\d{1,4})(?![0-9]))", kIcase), true},
+        // "Mi feliz matrimonio - S2 01 [1080p] Multi-Audio" (D-056)
+        {std::regex(R"((?:^|\s)[TS](\d{1,2})\s+(\d{1,3})(?:v\d)?(?=\s|\.|\[|\(|$))", kIcase), true},
         // "Kimetsu no Yaiba S3 - Katanakaji no Sato Hen - 01 [1080p]": temporada, arco y episodio (D-049)
         {std::regex(R"((?:^|\s)[TS](\d{1,2})\s+-\s+([^\d\s\[\(][^\[\(]*?)\s+-\s*(\d{1,4})(?:v\d)?(?=\s|\.|\[|\(|$))",
                     kIcase),
@@ -466,6 +469,44 @@ bool isAnimeNumbered(const std::string& fileName) {
     const std::string clean = removeExtension(fileName);
     // Sin marcador "normal" (S01E01, 1x01...) y con uno del anime
     return !parseEpisode(fileName, false) && parseAnimeEpisode(clean).has_value();
+}
+
+std::optional<SeasonPack> parseSeasonPack(const std::string& fileName) {
+    if (parseEpisode(fileName)) {
+        return std::nullopt;
+    }
+    const std::string clean = removeExtension(fileName);
+    // "Temporada 1", "Season 2", "Temporada 01"; no "Temporadas 1-3" ni "Temporada 1 y 2" (varias), pero
+    // sí "Temporada 1 - 1080p"
+    static const std::regex kWord(R"((?:\btemporada|\bseason)\s*0?(\d{1,2})(?![0-9])(?!\s*(?:-|a|al|y|&)\s*\d{1,2}(?![0-9])))", kIcase);
+    // "Clarence T01", "Padre made in USA - T10", "Código Lyoko T3 + Preludio", "Bluey S01" (no "T1E3",
+    // "S01E03" ni "S2 01", que son episodios)
+    static const std::regex kShort(R"((?:^|[\s\-_.\[(])[TS]0?(\d{1,2})(?![0-9EeXx])(?!\s*-?\s*\d))");
+    std::smatch match;
+    SeasonPack pack;
+    if (std::regex_search(clean, match, kWord)) {
+        pack.season = std::stoi(match[1].str());
+    } else if (std::regex_search(clean, match, kShort)) {
+        pack.season = std::stoi(match[1].str());
+        pack.shortForm = true;
+    } else {
+        return std::nullopt;
+    }
+    if (pack.season == 0) {
+        return std::nullopt;
+    }
+    // Solo una parte de la temporada: "Twin Peaks - Temporada 2 Episodios 1 a 11", "Silo - Temporada 2
+    // (Episodios 1 a 5)"
+    static const std::regex kRange(R"(\bep(?:isodios?|s?\.)?\s*(\d{1,3})\s*(?:a|al|-|y)\s*(\d{1,3})(?![0-9]))", kIcase);
+    if (std::regex_search(clean, match, kRange)) {
+        const int first = std::stoi(match[1].str());
+        const int last = std::stoi(match[2].str());
+        if (first > 0 && last >= first) {
+            pack.firstEpisode = first;
+            pack.lastEpisode = last;
+        }
+    }
+    return pack;
 }
 
 namespace {
@@ -616,6 +657,8 @@ Ficha parseFicha(const std::string& caption, bool animeFormats) {
 
     // Línea "Episodio 8" o "Episodios 2 y 3" (no la lista "Episodios: [Episodio 1] [...]")
     static const std::regex kEpisodeLine(R"(^episodios?\s*(\d{1,3})(?:\s*(?:y|-|al|a)\s*(\d{1,3}))?$)", kIcase);
+    // Línea "(26 episodios - Son 7 partes en zip)" o "10 capítulos": cuántos tiene la temporada
+    static const std::regex kEpisodeCountLine(R"(^\(?\s*(\d{1,3})\s+(?:episodios|cap(?:í|Í|i)tulos)\b)", kIcase);
     // "SINOPSIS:" seguido (tras líneas vacías) del párrafo de la sinopsis
     static const std::regex kSynopsisHeader(R"(^sinopsis\s*:?$)", kIcase);
     bool inSynopsis = false;
@@ -635,6 +678,8 @@ Ficha parseFicha(const std::string& caption, bool animeFormats) {
         }
         if (std::regex_match(value, kSynopsisHeader)) {
             inSynopsis = ficha.synopsis.empty();
+        } else if (!ficha.episodeCount && std::regex_search(value, match, kEpisodeCountLine)) {
+            ficha.episodeCount = std::stoi(match[1].str());
         } else if (!ficha.episode && std::regex_match(value, match, kEpisodeLine)) {
             ficha.episode = std::stoi(match[1].str());
             if (match[2].matched) {

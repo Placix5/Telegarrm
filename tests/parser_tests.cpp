@@ -2257,6 +2257,154 @@ void testWorkGroups() {
     CHECK(same.size() == 1 && same[0] == (std::vector<Catalog::ItemPtr>{named, boku, ova}));
 }
 
+// D-056: packs de temporada (una temporada en un archivo) y fichas «Temporada 3 + Especial» (Canal
+// Principal, 30/10/2026: Hora de Aventuras, Futurama, Monk, Twin Peaks...)
+void testSeasonPacks() {
+    // Nombres de archivo
+    const auto pack = [](const std::string& name) { return media::parseSeasonPack(name); };
+    const auto is = [&pack](const std::string& name, int season, int first, int last, bool shortForm) {
+        const auto parsed = pack(name);
+        return parsed && parsed->season == season && parsed->firstEpisode == first && parsed->lastEpisode == last &&
+               parsed->shortForm == shortForm;
+    };
+    CHECK(is("HDA - Temporada 1.zip", 1, 0, 0, false));
+    CHECK(is("Futurama - Temporada 10 (4K).zip", 10, 0, 0, false));
+    CHECK(is("Monk (2002) [tmdbid-1695] - Temporada 01.zip", 1, 0, 0, false));
+    CHECK(is("Monty Python's Flying Circus - Season 2.zip", 2, 0, 0, false));
+    CHECK(is("Colombo (1971) - Temporada 1 - Grupo.zip", 1, 0, 0, false));
+    CHECK(is("Serie - Temporada 1 - 1080p.zip", 1, 0, 0, false));
+    CHECK(is("Twin Peaks - Temporada 2 Episodios 11 a 22 (1080p).zip", 2, 11, 22, false));
+    CHECK(is("Silo - Temporada 2 (Episodios 1 a 5).zip", 2, 1, 5, false));
+    CHECK(is("Clarence T01.zip", 1, 0, 0, true));
+    CHECK(is("Padre Made in USA - T10.zip", 10, 0, 0, true));
+    CHECK(is("Código Lyoko T3 + Preludio.zip", 3, 0, 0, true));
+    CHECK(is("Bluey S01.zip", 1, 0, 0, true));
+    CHECK(!pack("Futurama 8x01.zip"));                                  // Un episodio
+    CHECK(!pack("Serie T1E03.mkv"));
+    CHECK(!pack("Mi feliz matrimonio - S2 01 [1080p] Multi-Audio.mkv"));  // Episodio del anime
+    CHECK(!pack("Serie - Temporadas 1-3.zip"));                         // Varias temporadas
+    CHECK(!pack("Serie - Temporada 1 y 2.zip"));
+    CHECK(!pack("Las Supernenas - Serie Completa (DVDRip).zip"));
+    CHECK(!pack("Season of the Witch (2011).mkv"));
+
+    // Fichas: número de episodios y título sin lo que se añade a la temporada
+    CHECK_EQ(media::parseFicha("Hora de Aventuras - Temporada 1 (1080p)\n\nCastellano e Inglés [VO] (sin subtítulos)\n\n"
+                               "(26 episodios - Son 7 partes en zip)\n\nTemporadas: [Temporada 1] [Temporada 2]")
+                 .episodeCount,
+             26);
+    const media::Ficha special = media::parseFicha("Colgados en Filadelfia - Temporada 16 + Especial de Navidad (1080p)");
+    CHECK_EQ(special.title, std::string("Colgados en Filadelfia"));
+    CHECK_EQ(special.season, 16);
+    CHECK_EQ(media::cleanTitle("Smiling Friends - Temporada 1 + Puppet Version + The Smiling Friends go to Brazil"),
+             std::string("Smiling Friends"));
+    CHECK_EQ(media::cleanTitle("Elemental + Documental de la película"), std::string("Elemental + Documental de la película"));
+    // Formato del anime con la temporada y el episodio separados por un espacio (Canal Anime)
+    const auto marriage = media::parseEpisode("Mi feliz matrimonio - S2 03 [1080p] Multi-Audio.mkv", true);
+    CHECK(marriage && marriage->season == 2 && marriage->episode == 3 && !marriage->absolute);
+
+    // Catálogo: los packs van a su temporada, con los episodios que dice la ficha o el nombre
+    const std::vector<Message> messages = {
+        inTopic(photo(1, "Hora de Aventuras - Temporada 1 (1080p)\n\n(26 episodios - Son 3 partes en zip)"), 4),
+        inTopic(video(2, "HDA - Temporada 1.zip.001", 1000, "", "application/zip"), 4),
+        inTopic(video(3, "HDA - Temporada 1.zip.002", 1000, "", "application/zip"), 4),
+        inTopic(video(4, "HDA - Temporada 1.zip.003", 500, "", "application/zip"), 4),
+        inTopic(photo(5, "Hora de Aventuras - Temporada 2 (1080p)\n\n(26 episodios)"), 4),
+        inTopic(video(6, "HDA - Temporada 2.zip", 3000, "", "application/zip"), 4),
+        // Sin marcador en el nombre: la temporada la dice la ficha
+        inTopic(photo(7, "Hora de Aventuras - Temporada 3 (1080p)\n\n(26 episodios)"), 4),
+        inTopic(video(8, "Hora de Aventuras (1080p).zip", 3000, "", "application/zip"), 4),
+        inTopic(photo(9, "Hora de Aventuras - Temporada 4 + Especial (1080p)"), 4),
+        inTopic(video(10, "Hora de Aventuras 4x01.mkv", 100), 4),
+        inTopic(video(11, "Hora de Aventuras - Especial.mkv", 100), 4),
+        inTopic(photo(12, "Twin Peaks - Temporada 2 (1080p)\n\n(22 episodios)"), 4),
+        inTopic(video(13, "Twin Peaks - Temporada 2 Episodios 1 a 11 (1080p).zip", 1000, "", "application/zip"), 4),
+        inTopic(video(14, "Twin Peaks - Temporada 2 Episodios 11 a 22 (1080p).zip", 1000, "", "application/zip"), 4),
+        // "T2" sin ficha de serie no es una temporada
+        inTopic(photo(15, "T2 Trainspotting (2017) (1080p)"), 2),
+        inTopic(video(16, "T2 Trainspotting (2017) (1080p).mkv", 2000), 2),
+    };
+    const auto items = build(-500, "Canal Principal", messages, kTopics);
+    const auto find = [&items](const std::string& title) -> const Catalog::Item* {
+        for (const Catalog::Item& item : items) {
+            if (item.title == title) {
+                return &item;
+            }
+        }
+        return nullptr;
+    };
+    CHECK_EQ(static_cast<int>(items.size()), 3);
+    const Catalog::Item* adventure = find("Hora de Aventuras");
+    CHECK(adventure != nullptr);
+    if (adventure) {
+        CHECK_EQ(adventure->seasonCount, 4);
+        CHECK_EQ(adventure->episodeCount, 26 * 3 + 1);
+        CHECK_EQ(static_cast<int>(adventure->releases.size()), 5);
+        // Por temporada, con los packs; el especial suelto, al final
+        const auto& r = adventure->releases;
+        CHECK(r.size() == 5 && r[0].seasonPack && r[0].season == 1 && r[0].packFirst == 1 && r[0].packLast == 26 &&
+              r[0].parts.size() == 3 && r[1].seasonPack && r[1].season == 2 && r[2].seasonPack && r[2].season == 3 &&
+              !r[3].seasonPack && r[3].season == 4 && r[3].episode == 1 && !r[4].seasonPack && r[4].episode == 0);
+        CHECK_EQ(tracking::countEpisodes(*adventure, {}).known, 26 * 3 + 1);
+        // Lo que falta: los tres packs y el 4x01. Con un episodio de la temporada 2 ya en la
+        // biblioteca, falta el resto de esa temporada: su pack sigue haciendo falta
+        CHECK_EQ(static_cast<int>(tracking::missingEpisodes(*adventure, {}, "").size()), 4);
+        const std::vector<tracking::Owned> owned = {{0, "completed", 20, "1080p", 2, 5, 0}};
+        CHECK_EQ(static_cast<int>(tracking::missingEpisodes(*adventure, owned, "").size()), 4);
+        // El seguimiento no baja packs: no son episodios
+        CHECK_EQ(tracking::releaseEpisodeCount(r[0]), 26);
+        // La descarga de un pack lleva su temporada; la de un extra, ninguna
+        CHECK(makeDownload(*adventure, r[0]).season == 1 && makeDownload(*adventure, r[4]).season == 0);
+    }
+    const Catalog::Item* peaks = find("Twin Peaks");
+    CHECK(peaks && peaks->seasonCount == 1 && peaks->episodeCount == 22 && peaks->releases.size() == 2 &&
+          peaks->releases[1].packFirst == 11 && peaks->releases[1].packLast == 22);
+    if (peaks) {
+        // Las dos mitades hacen falta; con la primera entera, solo la segunda
+        CHECK_EQ(static_cast<int>(tracking::missingEpisodes(*peaks, {}, "").size()), 2);
+        const std::vector<tracking::Owned> half = {{0, "completed", 20, "1080p", 2, 1, 11}};
+        const auto missing = tracking::missingEpisodes(*peaks, half, "");
+        CHECK(missing.size() == 1 && peaks->releases[missing[0]].packFirst == 11);
+    }
+    const Catalog::Item* trainspotting = find("T2 Trainspotting");
+    CHECK(trainspotting && trainspotting->kind == "movie" && !trainspotting->releases.front().seasonPack);
+
+    // Importación: los vídeos del pack que solo dicen su número van a la temporada del pack
+    namespace fs = std::filesystem;
+    const std::string sevenZip = library::findSevenZip();
+    if (sevenZip.empty()) {
+        std::cout << "(7-Zip no está instalado: se omite la importación de un pack)" << std::endl;
+        return;
+    }
+    const fs::path base = fs::temp_directory_path() / ("telegarrm_pack_" + std::to_string(::getpid()));
+    fs::remove_all(base);
+    const fs::path source = base / "origen";
+    writeFile(source / "01 - Slumber Party Panic.mkv", 6000, 'a');
+    writeFile(source / "Hora de Aventuras 3x02.mkv", 6000, 'b');
+    writeFile(source / "Detrás de las cámaras.mkv", 6000, 'c');
+    fs::create_directories(base / "descargas");
+    const fs::path archive = base / "descargas" / "HDA - Temporada 3.zip";
+    const process::Result packed = process::run(
+        {sevenZip, "a", "-tzip", "-mx0", archive.string(), (source / "01 - Slumber Party Panic.mkv").string(),
+         (source / "Hora de Aventuras 3x02.mkv").string(), (source / "Detrás de las cámaras.mkv").string()},
+        nullptr, nullptr);
+    CHECK_EQ(packed.exitCode, 0);
+    library::ImportRequest request;
+    request.id = 3;
+    request.kind = "series";
+    request.work = {"Hora de Aventuras", 2010, 0};
+    request.season = 3;
+    request.archive = true;
+    request.parts = {archive.string()};
+    request.libraryRoot = (base / "series").string();
+    const library::ImportResult imported = library::importRelease(request, nullptr, nullptr);
+    CHECK(imported.ok);
+    const fs::path work = base / "series" / "Hora de Aventuras (2010)";
+    CHECK(fs::exists(work / "Season 03" / "Hora de Aventuras S03E01.mkv"));
+    CHECK(fs::exists(work / "Season 03" / "Hora de Aventuras S03E02.mkv"));
+    CHECK(fs::exists(work / "extras" / "Detrás de las cámaras.mkv"));
+    fs::remove_all(base);
+}
+
 int main() {
     testEpisodes();
     testFichas();
@@ -2304,6 +2452,7 @@ int main() {
     testLibraryBrowseAndDelete();
     testAuth();
     testSecrets();
+    testSeasonPacks();
 
     std::cout << (checks - failures) << "/" << checks << " comprobaciones correctas" << std::endl;
     return failures == 0 ? 0 : 1;

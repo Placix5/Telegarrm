@@ -61,6 +61,7 @@ Formato: **Contexto** (qué problema había), **Decisión**, **Alternativas desc
 | [D-053](#d-053-contraseña-para-la-web-y-la-api) | Contraseña para la web y la API | Vigente |
 | [D-054](#d-054-imagen-de-docker-sin-secretos) | Imagen de Docker sin secretos | Vigente; el compose principal, sustituido por D-055 |
 | [D-055](#d-055-compose-sencillo-de-copiar-y-pegar) | Compose sencillo de copiar y pegar | Vigente |
+| [D-056](#d-056-temporadas-en-un-archivo) | Temporadas en un archivo | Vigente |
 
 ---
 
@@ -973,3 +974,36 @@ Formato: **Contexto** (qué problema había), **Decisión**, **Alternativas desc
   - `docker compose exec telegarrm cat db/codigo-acceso.txt` muestra el código, y la API responde que falta crear la contraseña.
   - Copia con el contenedor parado (`docker compose cp`), volumen borrado y restaurado con `docker compose cp -a`: los archivos vuelven con el usuario 1000 y Telegarrm arranca con ellos.
   - Todo lo de la prueba (contenedor, volumen, imagen y carpetas) se borró después. El contenedor real no se tocó.
+
+## D-056: Temporadas en un archivo
+*30/10/2026*
+
+- **Contexto**: Plácido, ya con Telegarrm en su servidor: en *Canal Principal*, *Hora de Aventuras* no tiene temporadas y sus temporadas salen en «Otros archivos»; a *Futurama* le pasa con algunas. El canal publica muchas temporadas enteras en un comprimido («HDA - Temporada 1.zip.001…007», «Futurama - Temporada 9 (4K).zip.001»). El catálogo solo conocía episodios: un archivo sin marcador de episodio era un extra. Le pasaba a unas 50 series del canal (*Monk*, *Colombo*, *Twin Peaks*, *Vikingos*, *Steven Universe*…).
+- **Decisión**:
+  - **Pack de temporada** (`Release::seasonPack`, con `packFirst` y `packLast`): un archivo sin episodio de una ficha de serie que es:
+    - por su nombre, una temporada: «Temporada 1», «Season 2», «Temporada 01» y, si la ficha es de una serie, «T01» o «S01» (`media::parseSeasonPack`). No valen varias temporadas («Temporadas 1-3») ni «S2 01», que es un episodio del anime;
+    - o, sin marcador, un comprimido de la ficha de una sola temporada («Temporada 3» o «Miniserie») sin episodios sueltos.
+  - **Qué episodios trae**: los del nombre («Temporada 2 Episodios 1 a 11») o, si no, los de la ficha de esa temporada («(26 episodios - Son 7 partes en zip)», `Ficha::episodeCount`). Si no consta, la temporada cuenta, pero sus episodios no.
+  - **`episode` sigue a 0**: todo lo que trata episodios (seguimiento, sustituciones, continuaciones de D-049) los sigue ignorando. Solo los tienen en cuenta, a propósito:
+    - el recuento de temporadas y episodios de la obra;
+    - la API (`season`, `season_pack`, `pack_episodes`);
+    - la web, que los muestra dentro de su temporada, antes de los episodios sueltos;
+    - «Descargar lo que falta» (`missingEpisodes`), solo en las temporadas sin episodios sueltos: el mejor pack de cada tramo si falta algún episodio suyo o, si no se sabe cuáles trae, si no se tiene ninguno de esa temporada.
+  - **Descarga e importación**: la descarga lleva la temporada del pack; la de un extra suelto ya no lleva ninguna (los extras del anime de D-051 la conservaban). Al importar, un vídeo del pack que solo dice su número («03 - Título.mkv») va a la temporada del pack; uno con marcador («3x02») va donde dice; el resto, a `extras`.
+  - **Títulos**: «Serie - Temporada 3 + Especial» se limpia como «Serie», igual que «Serie - Temporada 3». Antes quedaba «Serie - + Especial», una obra aparte.
+  - **Canal Anime**: «Serie - S2 01 [1080p]» es la temporada 2, episodio 1.
+- **Alternativas descartadas**:
+  - **Pack como rango de episodios** (`episode` 1 y `episodeEnd` 26): el seguimiento y las sustituciones lo habrían tratado como un episodio más, y una cuenta de episodios equivocada en la ficha habría hecho bajar o sustituir lo que no tocaba.
+  - **Leer qué hay dentro del comprimido**: haría falta descargar el principio de cada parte; la ficha y el nombre bastan para la mayoría.
+  - **Seguir packs**: una temporada entera suele pesar decenas de GB y casi siempre es de una serie terminada. Se descarga a mano desde la ficha.
+- **Verificación**:
+  - Tests: 659 comprobaciones, con nombres y fichas reales (*Hora de Aventuras*, *Twin Peaks*, *Futurama*, *Mi feliz matrimonio*) y una importación de un pack con 7-Zip.
+  - Catálogo de una copia de la BD del 30/10/2026, antes y después:
+    - *Canal Principal*: cambian 71 obras y ninguna película. 49 series ganan temporadas (*Hora de Aventuras* 0 → 10, *Futurama* 8 → 10, *Colgados en Filadelfia* 11 → 17, que son las que tiene). 10 obras «Serie - + Especial» se unen a su serie, y 3 títulos o alternativos pierden el « - + …».
+    - Canal Anime: 22 episodios de *Monogatari Series: Second Season* dejan de ser obras sueltas, y *My Happy Marriage* gana su temporada 2.
+  - TMDB (`--tmdb`): las obras unidas conservan su coincidencia. *Apocalipsis en el instituto* y *Panty & Stocking* ganan la suya, que antes no tenían.
+  - Instancia de prueba con la copia de la BD: la API y la web (en Node, con un DOM simulado) muestran *Hora de Aventuras* con sus 10 temporadas, *Twin Peaks* con sus dos mitades y *Futurama* con los packs 1080p y 4K de las temporadas 9 y 10.
+- **Consecuencias**:
+  - Los archivos con una serie entera de varias temporadas («Serie Completa») siguen en «Otros archivos».
+  - Si un pack trae los vídeos sin número reconocible, van a `extras` de la serie, como antes.
+  - Pendiente: probar una descarga real de un pack en el contenedor.

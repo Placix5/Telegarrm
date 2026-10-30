@@ -53,6 +53,11 @@ public:
         // Numeración absoluta del anime ("Serie - 01"): el nombre no dice la temporada (D-047)
         bool absoluteEpisode = false;
         bool finalSeason = false;          // "Serie - Final Season - 01"
+        // Pack de temporada (D-056): la temporada entera en un archivo ("HDA - Temporada 1.zip"), o sus
+        // episodios packFirst a packLast. episode sigue a 0: no es un episodio, y el seguimiento lo ignora.
+        bool seasonPack = false;
+        int packFirst = 0;                 // 0 = no se sabe qué episodios trae
+        int packLast = 0;
         std::int64_t date = 0;             // Unix, segundos (publicación de la última parte)
     };
 

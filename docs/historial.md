@@ -2,6 +2,14 @@
 
 Del más reciente al más antiguo. Los números D-0XX enlazan al [registro de decisiones](DECISIONS.md), que explica el porqué de cada cambio. Los canales reales de las pruebas aparecen con nombres genéricos (*Canal Principal*, Canal Anime).
 
+## Temporadas en un archivo
+- Las temporadas publicadas en un comprimido («HDA - Temporada 1.zip», «Futurama - Temporada 9 (4K).zip.001», «Clarence T01», «Bluey S01») salen dentro de su temporada y no en «Otros archivos» ([D-056](DECISIONS.md)). Traen los episodios que dice su nombre («Episodios 1 a 11») o la ficha («(26 episodios)»).
+- *Canal Principal*: 49 series ganan temporadas, entre ellas *Hora de Aventuras* (de 0 a 10), *Futurama* (de 8 a 10), *Monk*, *Colombo*, *Twin Peaks*, *Vikingos*, *Steven Universe* y *Stranger Things*.
+- Las fichas «Serie - Temporada 3 + Especial» ya no crean una obra aparte llamada «Serie - + Especial»: *Colgados en Filadelfia*, *BoJack Horseman*, *Código Lyoko*, *Dr. Stone*, *Hilda*, *Invencible*, *Mob Psycho 100*, *Sherlock*, *Smiling Friends* y *LEGO Monkie Kid* quedan en una sola obra.
+- Canal Anime: «Mi feliz matrimonio - S2 01» se lee como episodio. *Monogatari Series: Second Season* deja de salir en 23 obras sueltas.
+- «Descargar lo que falta» incluye esos archivos; al importarlos, un vídeo que solo dice su número («03 - Título.mkv») va a la temporada del archivo.
+- Tests: 659 comprobaciones.
+
 ## Docker
 - Compose sencillo en `deploy/docker/compose.yaml`: se copia, se ponen las claves y se arranca ([D-055](DECISIONS.md)). Los datos van en un volumen de Docker que se crea solo, y el código de la contraseña se lee con `docker compose exec`. La variante con Docker secrets pasa a `deploy/docker/con-secrets/`.
 - La web y el aviso de código incorrecto ya no hablan de «la Pi», sino del servidor.

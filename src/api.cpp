@@ -90,6 +90,11 @@ Json nullable(const std::string& value) {
     return value.empty() ? Json(nullptr) : Json(value);
 }
 
+// Pack de temporada (D-056): [primero, último] de los episodios que trae, o null si no se sabe
+Json packEpisodesJson(const Catalog::Release& release) {
+    return release.seasonPack && release.packFirst > 0 ? Json::array({release.packFirst, release.packLast}) : Json(nullptr);
+}
+
 bool requireTelegramReady(TelegramClient& telegram, httplib::Response& res) {
     if (typeOf(telegram.authorizationState()) != "authorizationStateReady") {
         sendError(res, 409, "Primero hay que iniciar sesión en Telegram");
@@ -222,9 +227,11 @@ void registerStatusRoutes(httplib::Server& server, DbManager& db, TelegramClient
                                     {"quality", nullable(release.quality)},
                                     {"hdr", release.hdr},
                                     {"tags", release.tags},
-                                    {"season", isEpisode ? Json(release.season) : Json(nullptr)},
+                                    {"season", isEpisode || release.seasonPack ? Json(release.season) : Json(nullptr)},
                                     {"episode", isEpisode ? Json(release.episode) : Json(nullptr)},
-                                    {"episode_end", release.episodeEnd > 0 ? Json(release.episodeEnd) : Json(nullptr)}});
+                                    {"episode_end", release.episodeEnd > 0 ? Json(release.episodeEnd) : Json(nullptr)},
+                                    {"season_pack", release.seasonPack},
+                                    {"pack_episodes", packEpisodesJson(release)}});
             }
             result.push_back({{"id", event.id},
                               {"at", event.at},
@@ -463,7 +470,7 @@ Json seriesLibraryJson(const Catalog::Item& item, const std::vector<tracking::Ow
         const std::vector<std::size_t> chosen = tracking::missingEpisodes(item, owned, maxQuality);
         for (const std::size_t index : chosen) {
             const Catalog::Release& release = item.releases[index];
-            episodes += std::max(release.episode, release.episodeEnd) - release.episode + 1;
+            episodes += tracking::releaseEpisodeCount(release);
             size += release.size;
         }
         missing[maxQuality] = {{"episodes", episodes}, {"files", chosen.size()}, {"size", size}};
@@ -526,9 +533,11 @@ Json itemDetailJson(const Catalog::Item& item, const InfoPtr& info, const DbMana
                             {"tags", release.tags},
                             {"size", release.size},
                             {"archive", release.archive},
-                            {"season", isEpisode ? Json(release.season) : Json(nullptr)},
+                            {"season", isEpisode || release.seasonPack ? Json(release.season) : Json(nullptr)},
                             {"episode", isEpisode ? Json(release.episode) : Json(nullptr)},
                             {"episode_end", release.episodeEnd > 0 ? Json(release.episodeEnd) : Json(nullptr)},
+                            {"season_pack", release.seasonPack},
+                            {"pack_episodes", packEpisodesJson(release)},
                             {"episode_title", nullable(episodeTitle)},
                             {"episode_overview", episode ? nullable(episode->overview) : Json(nullptr)},
                             {"air_date", episode ? nullable(episode->airDate) : Json(nullptr)},

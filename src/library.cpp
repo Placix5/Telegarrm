@@ -910,6 +910,16 @@ ImportResult importRelease(const ImportRequest& request, const std::function<voi
             if (!episode && videos.size() == 1 && request.episode > 0) {
                 episode = media::EpisodeInfo{request.season, request.episode, request.episodeEnd, "", ""};
             }
+            // Pack de temporada (D-056): un vídeo que solo dice el número ("03 - Título.mkv",
+            // "Serie - 03.mkv") es de la temporada del pack
+            if (!episode && request.episode == 0 && request.season > 0) {
+                episode = media::parseEpisode(video.filename().string(), true);
+                if (episode && episode->absolute) {
+                    episode->season = request.season;
+                } else {
+                    episode.reset();
+                }
+            }
             target = episode ? workDir / seasonFolderName(episode->season) /
                                    episodeFileName(request.work, episode->season, episode->episode, episode->episodeEnd,
                                                    versionLabel, extension)

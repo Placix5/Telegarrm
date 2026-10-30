@@ -69,7 +69,8 @@ DbManager::Download makeDownload(const Catalog::Item& item, const Catalog::Relea
     download.messageId = release.parts.front().messageId;
     download.title = item.title;
     download.kind = item.kind;
-    download.season = release.season;
+    // Temporada solo de episodios y packs (D-056): un extra suelto puede tenerla, pero no es de ella
+    download.season = release.episode > 0 || release.seasonPack ? release.season : 0;
     download.episode = release.episode;
     download.episodeEnd = release.episodeEnd;
     download.name = release.name;
@@ -89,6 +90,8 @@ std::string describeDownload(const DbManager::Download& download) {
     if (download.episode > 0) {
         text += " " + std::to_string(download.season) + "x" + pad2(download.episode) +
                 (download.episodeEnd > download.episode ? "-" + pad2(download.episodeEnd) : "");
+    } else if (download.kind == "series" && download.season > 0) {
+        text += " temporada " + std::to_string(download.season);  // Pack de temporada (D-056)
     }
     const std::string label = library::versionLabel(download.quality, download.hdr, download.tags);
     return text + " (" + (label.empty() ? "calidad desconocida" : label) + ")";

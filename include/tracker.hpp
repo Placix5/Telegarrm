@@ -70,8 +70,14 @@ Plan plan(const Catalog::Item& item, const Rule& rule, const std::vector<Owned>&
 
 // Episodios que faltan de una serie (D-040): la mejor versión de cada episodio que no se tiene ni
 // se está bajando, dentro de la calidad máxima y sin 3D. Índices en item.releases, por episodio.
+// Las temporadas que solo están en packs (D-056): el mejor pack, si falta algún episodio suyo (o, si no
+// se sabe cuáles trae, si no se tiene ninguno de esa temporada).
 std::vector<std::size_t> missingEpisodes(const Catalog::Item& item, const std::vector<Owned>& owned,
                                          const std::string& maxQuality);
+// Episodios que trae un archivo: 1, los de un rango (1x01-02) o los de un pack de temporada (D-056); 0 si
+// es un pack que no dice cuáles
+int releaseEpisodeCount(const Catalog::Release& release);
+
 // Episodios distintos de una serie y cuántos se tienen (o se están bajando)
 struct EpisodeCount {
     int known = 0;

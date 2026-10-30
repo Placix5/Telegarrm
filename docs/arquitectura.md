@@ -1,6 +1,6 @@
 # Arquitectura de Telegarrm
 
-*Actualizada el 15/10/2026: canales de anime (D-047), obras agrupadas por TMDB (D-048), temporadas con ficha propia (D-049) películas con otro nombre en TMDB (D-050), revisión de la biblioteca (D-051) pestaña «Biblioteca» (D-052), contraseña para la web (D-053), imagen de Docker (D-054) y compose sencillo (D-055).*
+*Actualizada el 15/10/2026: canales de anime (D-047), obras agrupadas por TMDB (D-048), temporadas con ficha propia (D-049) películas con otro nombre en TMDB (D-050), revisión de la biblioteca (D-051) pestaña «Biblioteca» (D-052), contraseña para la web (D-053), imagen de Docker (D-054), compose sencillo (D-055) y temporadas en un archivo (D-056).*
 
 El plan inicial (de Gemini) preveía una tabla `media` con las series y películas. No llegó a existir: el catálogo se calcula en memoria a partir de los mensajes guardados (D-020), así que una mejora del parser se aplica sin migraciones. Los motivos de cada decisión están en [DECISIONS.md](DECISIONS.md) y el plan, en [ROADMAP.md](ROADMAP.md).
 

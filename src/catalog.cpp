@@ -309,7 +309,41 @@ void finishBlock(Block& block) {
 
     const bool hasEpisodes = std::any_of(block.releases.begin(), block.releases.end(),
                                          [](const Release& release) { return release.episode > 0; });
-    block.kind = (hasEpisodes || ficha.season > 0 || block.attachToSeries) ? "series" : (hint.empty() ? "movie" : hint);
+
+    // Packs de temporada (D-056): "HDA - Temporada 1.zip" o, en la ficha de una temporada sin episodios
+    // sueltos, un comprimido sin marcador. Trae los episodios que diga su nombre ("Episodios 1 a 11") o,
+    // si no, los que diga la ficha de esa temporada ("(26 episodios)").
+    const bool seriesBlock = seriesContext || hasEpisodes;
+    // Una miniserie es una sola temporada ("Adolescencia - Miniserie")
+    static const std::regex kMiniseries(R"(\bminiserie\b)", std::regex::icase);
+    const int fichaSeason = ficha.season > 0 ? ficha.season : std::regex_search(ficha.title, kMiniseries) ? 1 : 0;
+    bool hasPacks = false;
+    for (Release& release : block.releases) {
+        if (release.episode > 0) {
+            continue;
+        }
+        std::optional<media::SeasonPack> pack = media::parseSeasonPack(release.name);
+        if (pack && pack->shortForm && !seriesBlock) {
+            pack.reset();  // "T2" suelto no basta: "T2 Trainspotting"
+        }
+        if (!pack && fichaSeason > 0 && release.archive && !hasEpisodes) {
+            pack = media::SeasonPack{fichaSeason, 0, 0, false};
+        }
+        if (!pack) {
+            continue;
+        }
+        hasPacks = true;
+        release.seasonPack = true;
+        release.season = pack->season;
+        release.packFirst = pack->firstEpisode;
+        release.packLast = pack->lastEpisode;
+        if (release.packFirst == 0 && ficha.episodeCount > 0 && fichaSeason == pack->season) {
+            release.packFirst = 1;
+            release.packLast = ficha.episodeCount;
+        }
+    }
+    block.kind = (hasEpisodes || hasPacks || ficha.season > 0 || block.attachToSeries) ? "series"
+                                                                                       : (hint.empty() ? "movie" : hint);
 
     // Título: ficha > nombre en los ficheros > (película) nombre del fichero > título del canal
     block.title = ficha.title;
@@ -869,7 +903,7 @@ Item buildItem(std::vector<const Block*> group) {
     // Películas: la mejor calidad primero. A igualdad, por orden de publicación.
     std::stable_sort(item.releases.begin(), item.releases.end(), [](const Release& a, const Release& b) {
         const auto key = [](const Release& r) {
-            return std::make_tuple(r.episode == 0, r.season, r.episode, -media::qualityRank(r.quality), !r.hdr,
+            return std::make_tuple(r.episode == 0 && !r.seasonPack, r.season, r.episode, -media::qualityRank(r.quality), !r.hdr,
                                    r.parts.front().messageId);
         };
         return key(a) < key(b);
@@ -885,6 +919,11 @@ Item buildItem(std::vector<const Block*> group) {
         if (release.episode > 0) {
             seasons.insert(release.season);
             for (int episode = release.episode; episode <= std::max(release.episode, release.episodeEnd); ++episode) {
+                episodes.emplace(release.season, episode);
+            }
+        } else if (release.seasonPack) {
+            seasons.insert(release.season);
+            for (int episode = release.packFirst; release.packFirst > 0 && episode <= release.packLast; ++episode) {
                 episodes.emplace(release.season, episode);
             }
         }

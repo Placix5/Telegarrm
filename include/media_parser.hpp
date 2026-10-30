@@ -32,9 +32,18 @@ struct Ficha {
     bool finalSeason = false;            // "Serie: Final Season" (la temporada es la última que haya)
     int episode = 0;                     // Línea "Episodio 8" (fichas de series en emisión)
     int episodeEnd = 0;                  // "Episodios 2 y 3"
+    int episodeCount = 0;                // Línea "(26 episodios)": los que tiene la temporada (0 = no consta)
     std::vector<std::string> genres;     // De los hashtags: #Acción -> "Acción"
     std::vector<std::string> languages;  // Ej. "Castellano", "Latino", "Inglés", "VOSE"
     std::string synopsis;                // Párrafo tras "SINOPSIS:"
+};
+
+// Temporada entera (o parte de ella) en un solo archivo, casi siempre comprimido (D-056)
+struct SeasonPack {
+    int season = 0;
+    int firstEpisode = 0;    // "Episodios 1 a 11"; 0 = no lo dice (la temporada entera)
+    int lastEpisode = 0;
+    bool shortForm = false;  // "T3" en vez de "Temporada 3": solo vale si la ficha es de una serie
 };
 
 // Fichero troceado: "Peli.zip.003" -> {"Peli.zip", 3}; "Serie.part2.rar" -> {"Serie.rar", 2}
@@ -50,6 +59,10 @@ struct PartInfo {
 std::optional<EpisodeInfo> parseEpisode(const std::string& text, bool animeFormats = false);
 // ¿Es un nombre con numeración del anime y sin marcador normal? (para detectar los canales de anime)
 bool isAnimeNumbered(const std::string& fileName);
+
+// "HDA - Temporada 1.zip", "Monk - Temporada 01", "Monty Python - Season 2", "Clarence T01": una
+// temporada en un archivo. nullopt si es un episodio o dice varias temporadas ("Temporadas 1-3").
+std::optional<SeasonPack> parseSeasonPack(const std::string& fileName);
 
 // Interpreta el pie de una ficha. Admite el formato por líneas "emoji | valor" y el texto libre.
 // animeFormats: temporadas al estilo del anime ("S2", "Final Season") y título alternativo en la 2.ª línea
