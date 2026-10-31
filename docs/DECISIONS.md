@@ -1092,3 +1092,24 @@ Formato: **Contexto** (qué problema había), **Decisión**, **Alternativas desc
 - **Consecuencias**:
   - Unas 120 peticiones `getMessages` por hora y canal, de 100 mensajes cada una.
   - Si se quitara un mensaje que sí existe, solo se recuperaría volviendo a leer el historial del canal (quitarlo y añadirlo de nuevo en *Canales*).
+
+## D-060: Qué hay dentro de los RAR y los 7z
+*31/10/2026*
+
+- **Contexto**: D-057 solo leía el índice de los ZIP. Plácido pidió seguir con los RAR y los 7z. En la copia de la BD del 31/10/2026, los packs de temporada en RAR por volúmenes («.part01.rar») están en los dos canales: en *Canal Principal*, *School Spirits* T3, *Carrie* T1, *Crystal Lake* T1 y *Código Lyoko* T1-T4; en Canal Anime, los «1ª Temporada.partN.rar» y algunos extras. Los 7z («.7z.001») son solo 6 películas de *Canal Principal*.
+- **Decisión**:
+  - **RAR**: no tiene índice. Cada archivo lleva su cabecera (nombre y tamaño) delante de sus datos, y de cabecera en cabecera se recorre el archivo, saltando los datos sin leerlos (`archive::listRar`). Admite RAR 5 y RAR 4 (con sus nombres en Unicode, o en la página de códigos OEM, como hace WinRAR). Funciona con volúmenes (cada uno empieza con su firma, y el trozo de un archivo que sigue del volumen anterior no se cuenta dos veces) y con un RAR cortado en trozos («.rar.001»). Se piden 16 kB de cada vez: unas pocas lecturas por volumen. Con los nombres cifrados no se puede, y se recuerda.
+  - **7z**: sus 32 primeros bytes dicen dónde está el índice, al final; casi siempre va comprimido con LZMA, y entonces se piden también sus datos comprimidos, que van justo antes. Con esos trozos (unos kB) se escribe en `/tmp` una copia dispersa del tamaño del archivo, que no ocupa más que ellos, y la lee 7-Zip con `7z l -slt`, sin shell (D-018). Los volúmenes «.7z.001» son un 7z cortado en trozos.
+  - **Lecturas comunes**: `ArchiveLister` da a cada formato un lector de cualquier trozo del archivo entero (`archive::Reader`), que lo reparte entre sus partes (`archive::spanRanges`). Lo demás de D-057 no cambia: prioridad 1, de uno en uno, sin tocar lo que se descarga, un fallo del archivo se recuerda y uno de red se reintenta.
+  - **Partes desordenadas**: el catálogo buscaba el índice por la primera parte *antes* de ordenarlas, y algunos canales publican las partes al revés (de la `.018` a la `.001`). El índice se guarda con la `.001`, así que no se encontraba. Ahora se ordenan antes de buscarlo.
+- **Alternativas descartadas**:
+  - **Leer el índice de los 7z sin 7-Zip**: habría que descomprimir LZMA (otra dependencia, `liblzma`) y entender todo el formato de su índice. 7-Zip ya es obligatorio para la importación (D-034).
+  - **Pasar también los RAR a 7-Zip con una copia dispersa**: para saber qué trozos copiar ya hay que recorrer las cabeceras, y con eso ya se tienen los nombres.
+  - **El registro de «apertura rápida» de RAR 5**: es opcional y solo lo llevan algunos archivos.
+- **Verificación**:
+  - Tests: 762 comprobaciones. Sin el programa `rar`, los RAR de prueba se construyen a mano (sin comprimir, con sus CRC), en volúmenes, en RAR 5 y RAR 4, con nombres en Unicode y en la página OEM, y 7-Zip los lista igual que nosotros (salvo el nombre OEM, que 7-Zip deja en bruto). Solo se leen las cabeceras, no los episodios. Los 7z, hechos con 7-Zip: índice comprimido y sin comprimir, en volúmenes y con los nombres cifrados. Y un pack RAR con las partes publicadas al revés.
+  - Catálogo de una copia de la BD: solo cambia *Colombo*, en *Canal Principal*. Pasa de 36 a 43 episodios, porque cuenta los 7 de la temporada 1, que se publicó al revés y cuyo índice ya estaba leído. Lo de los RAR cambiará cuando se lean, en el servidor.
+  - Sin probar contra Telegram: la sesión de la Pi es la del contenedor. En el registro saldrán como «[Comprimidos] Carrie (2026) - Temporada 1 (1080p): N vídeos».
+- **Consecuencias**:
+  - La primera vez, 29 RAR de series más (7 en *Canal Principal* y 22 en Canal Anime, entre ellos los 7 de *Sargento Keroro*), con unas decenas de lecturas pequeñas cada uno. Ningún 7z: los que hay son películas.
+  - Un 7z se lista con 7-Zip; si falta, se reintenta cada hora y se avisa en el registro.

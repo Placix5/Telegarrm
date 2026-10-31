@@ -18,8 +18,8 @@ class TelegramClient;
 
 namespace archive {
 
-// ¿Hay que leer el índice de este archivo? (D-057) Un ZIP de una serie que no dice su episodio en el
-// nombre (un pack o un comprimido sin marcador), con todas sus partes publicadas
+// ¿Hay que leer el índice de este archivo? (D-057, D-060) Un ZIP, RAR o 7z de una serie que no dice su
+// episodio en el nombre (un pack o un comprimido sin marcador), con todas sus partes publicadas
 bool shouldList(const Catalog::Item& item, const Catalog::Release& release, std::int64_t now);
 
 // Trozo de una parte que hay que pedir para tener los últimos `bytes` del archivo entero
@@ -28,13 +28,14 @@ struct PartRange {
     std::int64_t offset = 0;
     std::int64_t length = 0;
 };
-// En orden: de la parte más antigua a la última (el índice puede empezar en la penúltima)
-std::vector<PartRange> tailRanges(const std::vector<Catalog::Part>& parts, std::int64_t bytes);
+// Los trozos de cada parte que forman `length` bytes desde `offset` del archivo entero (sus partes, en
+// orden, una detrás de otra)
+std::vector<PartRange> spanRanges(const std::vector<Catalog::Part>& parts, std::int64_t offset, std::int64_t length);
 
 }  // namespace archive
 
-// Lee el índice de los comprimidos de las series (D-057): qué vídeos lleva cada ZIP, pidiendo a Telegram
-// solo su final (unos kB). En su propio hilo, de uno en uno, con la prioridad más baja; cuando aprende
+// Lee el índice de los comprimidos de las series (D-057, D-060): qué vídeos lleva cada ZIP, RAR o 7z,
+// pidiendo a Telegram solo unos kB (archive_index.hpp dice cuáles). En su propio hilo, de uno en uno, con la prioridad más baja; cuando aprende
 // algo, avisa para recalcular el catálogo de ese canal.
 class ArchiveLister {
 public:
@@ -57,8 +58,6 @@ private:
     bool pass();
     // Lee y guarda el índice de un archivo. false si no se pudo por la red o porque se está descargando
     bool list(const Catalog::Release& release);
-    // Los últimos `bytes` del archivo entero (de su última parte, o de las últimas). Vacío si falla.
-    std::string readTail(const Catalog::Release& release, std::int64_t bytes, std::string& error);
     std::string readRange(std::int64_t chatId, std::int64_t messageId, std::int64_t offset, std::int64_t length,
                           std::string& error);
     bool stopping();

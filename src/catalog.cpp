@@ -260,13 +260,17 @@ std::string repeatedEpisodeTitle(const std::vector<Release>& releases) {
     return "";
 }
 
+// Las partes se publican a veces desordenadas (part06, part05...): se ordenan por número
+void sortParts(Release& release) {
+    std::stable_sort(release.parts.begin(), release.parts.end(), [](const Catalog::Part& a, const Catalog::Part& b) {
+        return std::make_pair(a.number, a.messageId) < std::make_pair(b.number, b.messageId);
+    });
+}
+
 void finishBlock(Block& block) {
     const media::Ficha& ficha = block.ficha;
     for (Release& release : block.releases) {
-        // Las partes se publican a veces desordenadas (part06, part05...): se ordenan por número
-        std::stable_sort(release.parts.begin(), release.parts.end(), [](const Catalog::Part& a, const Catalog::Part& b) {
-            return std::make_pair(a.number, a.messageId) < std::make_pair(b.number, b.messageId);
-        });
+        sortParts(release);
         // Fichas de series en emisión: "Temporada 4" + "Episodio 8" y archivos sin marcador
         if (release.episode == 0 && ficha.episode > 0) {
             release.season = ficha.season > 0 ? ficha.season : 1;
@@ -788,7 +792,8 @@ std::vector<Block> buildBlocks(std::int64_t chatId, const std::string& channelTi
             block.channelTitle = channelTitle;
             // Vídeos de los comprimidos con el índice leído, si sigue siendo el mismo archivo (D-057)
             for (std::size_t i = 0; i < block.releases.size(); ++i) {
-                const Release& release = block.releases[i];
+                Release& release = block.releases[i];
+                sortParts(release);  // El índice se guarda con la primera parte
                 const auto listing = listings.find(release.parts.front().messageId);
                 if (release.archive && listing != listings.end() && listing->second.error.empty() &&
                     listing->second.archiveSize == release.size) {

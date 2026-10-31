@@ -16,7 +16,7 @@ Telegram ⇄ TDLib ⇄ TelegramClient (hilo receptor: respuestas y actualizacion
                      │   y mensajes nuevos al momento)               ├─► MetadataService ⇄ TMDB
                      │                                               │
                      ├─ ArchiveLister ─────► tabla archive_listings ─┤
-                     │  (final de los ZIP → qué vídeos llevan)       │
+                     │  (índice de ZIP/RAR/7z → qué vídeos llevan)   │
                      ├─ ReleaseProber ◄──── Tracker (seguimiento) ◄──┘
                      │  (primeros MB → ffprobe)    │
                      │                             ▼
@@ -50,7 +50,7 @@ El catálogo distingue dos tipos de canal, que detecta solo por los nombres de s
 | `MetadataService` | Busca en TMDB las obras nuevas del catálogo (D-029, D-030). Si cambia el criterio, vuelve a buscarlas todas, mostrando mientras los datos anteriores (D-048) | Cuando cambia el catálogo y cada 6 h |
 | `DownloadManager` | Cola de descargas, de una en una; importa cada una a la biblioteca (D-031, D-034) | Con algo en cola |
 | `Tracker` | Revisa las obras seguidas y pone en cola lo nuevo o mejor (D-035) | Cuando cambia el catálogo; cada 5 min si hay algo a medio publicar |
-| `ArchiveLister` | Lee el índice de los ZIP de las series sin episodio en el nombre, pidiendo solo su final, y recalcula el catálogo del canal cada 10 (D-057) | Cuando cambia el catálogo, de uno en uno con 3 s de pausa; cada 6 h |
+| `ArchiveLister` | Lee el índice de los ZIP, RAR y 7z de las series sin episodio en el nombre, pidiendo solo unos kB, y recalcula el catálogo del canal cada 10 (D-057, D-060) | Cuando cambia el catálogo, de uno en uno con 3 s de pausa; cada 6 h |
 
 `ReleaseProber` (D-042) no tiene hilo propio: lo llaman la API y el `Tracker`, y sus comprobaciones van de una en una. Las herramientas externas (7-Zip y ffprobe) se lanzan con `posix_spawn`, sin shell (D-018).
 
@@ -106,7 +106,7 @@ El catálogo distingue dos tipos de canal, que detecta solo por los nombres de s
 | `download_manager.cpp` | Cola de descargas, importación, sustitución de versiones, historial de descargas, revisión de la biblioteca (D-051) y borrado desde la web (D-052) |
 | `library.cpp` | Descompresión, ffprobe, nombres para Jellyfin, vídeos y contenido de la biblioteca (pestaña «Biblioteca», D-052) y borrado seguro |
 | `release_prober.cpp` | Calidad real de un archivo sin descargarlo entero |
-| `archive_index.cpp`, `archive_lister.cpp` | Índice de un ZIP a partir de su final y el hilo que lo pide a Telegram (D-057) |
+| `archive_index.cpp`, `archive_lister.cpp` | Qué lleva un ZIP (su final), un RAR (sus cabeceras) o un 7z (su índice, con 7-Zip), y el hilo que lo pide a Telegram (D-057, D-060) |
 | `tracker.cpp` | Seguimiento: reglas puras (`tracking::`) y su hilo (`Tracker`) |
 | `settings.cpp` | Ajustes, comprobación de rutas y lectura de claves por variable o archivo (D-054) |
 | `auth.cpp` | Contraseña de la web (scrypt), sesiones y límite de intentos (D-053) |
@@ -114,7 +114,7 @@ El catálogo distingue dos tipos de canal, que detecta solo por los nombres de s
 | `db_manager.cpp` | SQLite |
 | `signal_watcher.cpp` | Parada ordenada |
 
-Las reglas de decisión (parser, catálogo, seguimiento, episodios que faltan, nombres, borrado seguro, novedades) son funciones puras o casi. Se prueban en `tests/parser_tests.cpp` con ejemplos reales de los canales (729 comprobaciones; D-022). `tools/catalog_dump.cpp` calcula el catálogo de una copia de la BD para comparar un cambio del parser obra por obra (D-047) y, con `--tmdb`, la coincidencia de TMDB guardada y la del criterio actual (D-048).
+Las reglas de decisión (parser, catálogo, seguimiento, episodios que faltan, nombres, borrado seguro, novedades) son funciones puras o casi. Se prueban en `tests/parser_tests.cpp` con ejemplos reales de los canales (762 comprobaciones; D-022). `tools/catalog_dump.cpp` calcula el catálogo de una copia de la BD para comparar un cambio del parser obra por obra (D-047) y, con `--tmdb`, la coincidencia de TMDB guardada y la del criterio actual (D-048).
 
 ## Web
 

@@ -2,6 +2,12 @@
 
 Del más reciente al más antiguo. Los números D-0XX enlazan al [registro de decisiones](DECISIONS.md), que explica el porqué de cada cambio. Los canales reales de las pruebas aparecen con nombres genéricos (*Canal Principal*, Canal Anime).
 
+## RAR y 7z por dentro
+- Telegarrm también sabe qué vídeos lleva cada RAR y cada 7z de una serie sin descargarlo ([D-060](DECISIONS.md)): en los RAR va de cabecera en cabecera, y en los 7z lee su índice con 7-Zip. Solo pide unos kB de cada uno.
+- Packs de temporada en RAR por volúmenes («.part01.rar»): *Carrie*, *School Spirits*, *Crystal Lake*, *Código Lyoko* y los «1ª Temporada» de Canal Anime pasan a mostrar sus episodios exactos.
+- Los comprimidos con las partes publicadas al revés ya encuentran su índice: *Colombo* pasa de 36 a 43 episodios.
+- Tests: 762 comprobaciones.
+
 ## Mensajes borrados
 - Lo que se borra en un canal desaparece del catálogo ([D-059](DECISIONS.md)): al momento, por el aviso de Telegram, y lo que se borró con Telegarrm apagado (o antes de esta versión), en el repaso que hace en cada ronda, de lo más reciente a lo más antiguo (unos 3000 mensajes por canal cada 15 minutos).
 - Antes de quitar nada en el repaso, Telegram tiene que confirmar el borrado de uno de los mensajes; si no, o si faltan demasiados de golpe, no se quita nada.

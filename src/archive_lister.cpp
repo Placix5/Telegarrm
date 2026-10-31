@@ -9,6 +9,7 @@
 #include <system_error>
 
 #include "archive_index.hpp"
+#include "library.hpp"
 #include "telegram_client.hpp"
 #include "tracker.hpp"
 
@@ -16,22 +17,29 @@ namespace archive {
 
 bool shouldList(const Catalog::Item& item, const Catalog::Release& release, std::int64_t now) {
     return item.kind == "series" && release.archive && release.episode == 0 && release.size > 0 &&
-           !release.parts.empty() && isZipName(release.parts.front().fileName) &&
+           !release.parts.empty() && formatOf(release.parts.front().fileName) != Format::None &&
            tracking::releaseComplete(release, now);
 }
 
-std::vector<PartRange> tailRanges(const std::vector<Catalog::Part>& parts, std::int64_t bytes) {
+std::vector<PartRange> spanRanges(const std::vector<Catalog::Part>& parts, std::int64_t offset, std::int64_t length) {
     std::vector<PartRange> ranges;
-    std::int64_t remaining = bytes;
-    for (std::size_t i = parts.size(); i-- > 0 && remaining > 0;) {
-        const std::int64_t take = std::min(remaining, parts[i].size);
-        if (take > 0) {
-            ranges.insert(ranges.begin(), PartRange{i, parts[i].size - take, take});
-            remaining -= take;
+    std::int64_t start = 0;  // Dónde empieza cada parte en el archivo entero
+    for (std::size_t i = 0; i < parts.size() && length > 0; ++i) {
+        const std::int64_t end = start + parts[i].size;
+        if (offset < end) {
+            const std::int64_t from = std::max(offset, start) - start;
+            const std::int64_t take = std::min(length, parts[i].size - from);
+            if (take > 0) {
+                ranges.push_back(PartRange{i, from, take});
+                length -= take;
+                offset += take;
+            }
         }
+        start = end;
     }
     return ranges;
 }
+
 
 }  // namespace archive
 
@@ -210,55 +218,67 @@ bool ArchiveLister::list(const Catalog::Release& release) {
         }
     }
     std::string error;
-    std::string tail = readTail(release, std::min(release.size, archive::kZipTailBytes), error);
-    if (tail.empty()) {
-        std::cerr << "[Comprimidos] " << release.name << ": " << error << std::endl;
-        return false;
-    }
-    archive::ZipIndex index = archive::readZipIndex(tail);
-    if (index.needTail > 0 && index.needTail <= release.size) {
-        tail = readTail(release, index.needTail, error);
-        if (tail.empty()) {
-            std::cerr << "[Comprimidos] " << release.name << ": " << error << std::endl;
-            return false;
+    const archive::Reader read = [&](std::int64_t offset, std::int64_t length) -> std::optional<std::string> {
+        std::string data;
+        for (const archive::PartRange& range : archive::spanRanges(release.parts, offset, length)) {
+            const std::string piece =
+                readRange(release.chatId, release.parts[range.part].messageId, range.offset, range.length, error);
+            if (piece.empty()) {
+                return std::nullopt;
+            }
+            data += piece;
         }
-        index = archive::readZipIndex(tail);
+        if (static_cast<std::int64_t>(data.size()) != length) {
+            error = "No se pudo leer el archivo";
+            return std::nullopt;
+        }
+        return data;
+    };
+    archive::Listing result;
+    switch (archive::formatOf(release.parts.front().fileName)) {
+        case archive::Format::Zip:
+            result = archive::listZip(release.size, read);
+            break;
+        case archive::Format::Rar: {
+            std::vector<std::int64_t> sizes;
+            for (const Catalog::Part& part : release.parts) {
+                sizes.push_back(part.size);
+            }
+            result = archive::listRar(sizes, read);
+            break;
+        }
+        case archive::Format::SevenZip: {
+            std::error_code ec;
+            result = archive::listSevenZip(release.size, read, library::findSevenZip(),
+                                           std::filesystem::temp_directory_path(ec).string());
+            break;
+        }
+        case archive::Format::None:
+            return true;
+    }
+    if (result.readFailed) {
+        std::cerr << "[Comprimidos] " << release.name << ": " << (result.error.empty() ? error : result.error)
+                  << std::endl;
+        return false;
     }
 
     DbManager::ArchiveListing listing;
     listing.chatId = release.chatId;
     listing.messageId = release.parts.front().messageId;
     listing.archiveSize = release.size;
-    if (index.ok) {
-        for (const archive::Entry& entry : index.entries) {
+    if (result.ok) {
+        for (const archive::Entry& entry : result.entries) {
             listing.entries.emplace_back(entry.name, entry.size);
         }
-        std::cout << "[Comprimidos] " << release.name << ": " << archive::videoEntries(index.entries).size()
+        std::cout << "[Comprimidos] " << release.name << ": " << archive::videoEntries(result.entries).size()
                   << " vídeos" << std::endl;
     } else {
         // Un fallo del propio archivo se recuerda: no se vuelve a pedir mientras no cambie
-        listing.error = index.error.empty() ? "El índice del ZIP no cabe en lo leído" : index.error;
+        listing.error = result.error;
         std::cout << "[Comprimidos] " << release.name << ": " << listing.error << std::endl;
     }
     db_.saveArchiveListing(listing);
     return true;
-}
-
-std::string ArchiveLister::readTail(const Catalog::Release& release, std::int64_t bytes, std::string& error) {
-    std::string tail;
-    for (const archive::PartRange& range : archive::tailRanges(release.parts, bytes)) {
-        const std::string data =
-            readRange(release.chatId, release.parts[range.part].messageId, range.offset, range.length, error);
-        if (data.empty()) {
-            return "";
-        }
-        tail += data;
-    }
-    if (static_cast<std::int64_t>(tail.size()) != bytes) {
-        error = "No se pudo leer el final del archivo";
-        return "";
-    }
-    return tail;
 }
 
 std::string ArchiveLister::readRange(std::int64_t chatId, std::int64_t messageId, std::int64_t offset,

@@ -13,12 +13,14 @@
 #include <limits>
 #include <map>
 #include <memory>
+#include <optional>
 #include <set>
 #include <sstream>
 #include <string>
 #include <vector>
 
 #include <unistd.h>
+#include <zlib.h>
 
 #include "archive_index.hpp"
 #include "archive_lister.hpp"
@@ -2430,6 +2432,314 @@ DbManager::ArchiveListing listingOf(std::int64_t messageId, std::int64_t size, c
 
 }  // namespace
 
+// D-060: RAR y 7z. No hay `rar` para crear RAR de verdad: se construyen a mano (sin comprimir, con sus
+// CRC), y 7-Zip, que sí los lee, tiene que listar lo mismo que nosotros
+std::string le(std::uint64_t value, int bytes) {
+    std::string out;
+    for (int i = 0; i < bytes; ++i) {
+        out += static_cast<char>((value >> (8 * i)) & 0xFF);
+    }
+    return out;
+}
+
+std::uint32_t crcOf(const std::string& data) {
+    return static_cast<std::uint32_t>(
+        ::crc32(0, reinterpret_cast<const Bytef*>(data.data()), static_cast<uInt>(data.size())));
+}
+
+std::string vint(std::uint64_t value) {
+    std::string out;
+    do {
+        auto byte = static_cast<unsigned char>(value & 0x7F);
+        value >>= 7;
+        out += static_cast<char>(value ? byte | 0x80 : byte);
+    } while (value);
+    return out;
+}
+
+// Un archivo (o un trozo suyo) dentro de un volumen
+struct RarFile {
+    std::string name;
+    std::string data;        // Lo que va en este volumen
+    std::uint64_t unpacked;  // Tamaño del archivo entero
+    bool splitBefore = false;
+    bool splitAfter = false;
+    bool directory = false;
+};
+
+std::string rar5Block(const std::string& body) {
+    const std::string size = vint(body.size());
+    return le(crcOf(size + body), 4) + size + body;
+}
+
+std::string rar5Volume(const std::vector<RarFile>& files, int volume, bool last) {
+    std::string out("Rar!\x1a\x07\x01\x00", 8);
+    out += rar5Block(vint(1) + vint(0) + (volume == 0 ? vint(last ? 0 : 1) : vint(0x3) + vint(volume)));
+    for (const RarFile& file : files) {
+        const std::uint64_t headerFlags = (file.directory ? 0 : 0x2) | (file.splitBefore ? 0x8 : 0) | (file.splitAfter ? 0x10 : 0);
+        std::string body = vint(2) + vint(headerFlags);
+        if (!file.directory) {
+            body += vint(file.data.size());
+        }
+        body += vint(file.directory ? 0x1 : 0x4) + vint(file.directory ? 0 : file.unpacked) + vint(file.directory ? 0x10 : 0x20);
+        if (!file.directory) {
+            body += le(crcOf(file.data), 4);
+        }
+        body += vint(0) + vint(0) + vint(file.name.size()) + file.name;
+        out += rar5Block(body) + file.data;
+    }
+    out += rar5Block(vint(5) + vint(0) + vint(last ? 0 : 1));
+    return out;
+}
+
+std::string rar4Block(const std::string& body) {  // body: desde el tipo
+    return le(crcOf(body) & 0xFFFF, 2) + body;
+}
+
+// name4: el nombre tal cual va en la cabecera (con la marca de Unicode, el ASCII, un 0 y el codificado)
+std::string rar4Volume(const std::vector<std::pair<RarFile, bool>>& files, int volume, bool last) {
+    std::string out("Rar!\x1a\x07\x00", 7);
+    const std::uint64_t mainFlags = (last && volume == 0 ? 0 : 0x0001) | 0x0010 | (volume == 0 ? 0x0100 : 0);
+    out += rar4Block(std::string("\x73", 1) + le(mainFlags, 2) + le(13, 2) + le(0, 2) + le(0, 4));
+    for (const auto& [file, unicode] : files) {
+        std::uint64_t flags = 0x8000 | (file.splitBefore ? 0x01 : 0) | (file.splitAfter ? 0x02 : 0) |
+                              (file.directory ? 0xE0 : 0) | (unicode ? 0x200 : 0);
+        const std::string body = std::string("\x74", 1) + le(flags, 2) + le(32 + file.name.size(), 2) +
+                                 le(file.data.size(), 4) + le(file.unpacked, 4) + std::string("\x02", 1) +
+                                 le(crcOf(file.data), 4) + le(0x21, 4) + std::string("\x1d\x30", 2) +
+                                 le(file.name.size(), 2) + le(file.directory ? 0x10 : 0x20, 4) + file.name;
+        out += rar4Block(body) + file.data;
+    }
+    out += rar4Block(std::string("\x7b", 1) + le(0x4000 | (last ? 0 : 0x0001), 2) + le(7, 2));
+    return out;
+}
+
+// Nombre de RAR 4 en Unicode: ASCII aproximado, un 0 y cada carácter como byte (modo 0) o dos (modo 2)
+std::string rar4UnicodeName(const std::string& ascii, const std::vector<unsigned>& codes) {
+    std::string encoded(1, '\0');  // Byte alto: no se usa
+    for (std::size_t i = 0; i < codes.size(); i += 4) {
+        unsigned flags = 0;
+        std::string group;
+        for (std::size_t k = 0; k < 4; ++k) {
+            const unsigned mode = i + k < codes.size() && codes[i + k] > 0xFF ? 2 : 0;
+            flags |= mode << (6 - 2 * k);
+            if (i + k < codes.size()) {
+                group += static_cast<char>(codes[i + k] & 0xFF);
+                if (mode == 2) {
+                    group += static_cast<char>(codes[i + k] >> 8);
+                }
+            }
+        }
+        encoded += static_cast<char>(flags) + group;
+    }
+    return ascii + std::string(1, '\0') + encoded;
+}
+
+std::set<std::pair<std::string, std::int64_t>> entrySet(const std::vector<archive::Entry>& entries) {
+    std::set<std::pair<std::string, std::int64_t>> out;
+    for (const archive::Entry& entry : entries) {
+        out.insert({entry.name, entry.size});
+    }
+    return out;
+}
+
+// Lector sobre archivos locales (las partes, una detrás de otra), que cuenta lo que se le pide
+struct LocalReader {
+    std::vector<Catalog::Part> parts;
+    std::vector<std::string> data;
+    std::int64_t bytes = 0;
+    int reads = 0;
+
+    explicit LocalReader(const std::vector<std::filesystem::path>& files) {
+        for (std::size_t i = 0; i < files.size(); ++i) {
+            data.push_back(readWhole(files[i]));
+            parts.push_back({static_cast<std::int64_t>(i + 1), files[i].filename().string(),
+                             static_cast<std::int64_t>(data.back().size()), static_cast<int>(i + 1)});
+        }
+    }
+    std::int64_t size() const {
+        std::int64_t total = 0;
+        for (const auto& part : parts) {
+            total += part.size;
+        }
+        return total;
+    }
+    std::vector<std::int64_t> sizes() const {
+        std::vector<std::int64_t> out;
+        for (const auto& part : parts) {
+            out.push_back(part.size);
+        }
+        return out;
+    }
+    archive::Reader reader() {
+        return [this](std::int64_t offset, std::int64_t length) -> std::optional<std::string> {
+            ++reads;
+            bytes += length;
+            std::string out;
+            for (const archive::PartRange& range : archive::spanRanges(parts, offset, length)) {
+                out += data[range.part].substr(static_cast<std::size_t>(range.offset), static_cast<std::size_t>(range.length));
+            }
+            return out;
+        };
+    }
+};
+
+void testArchiveRarSevenZip() {
+    namespace fs = std::filesystem;
+    CHECK(archive::formatOf("Carrie - Temporada 1 (1080p).part01.rar") == archive::Format::Rar);
+    CHECK(archive::formatOf("Serie.RAR") == archive::Format::Rar && archive::formatOf("Serie.rar.001") == archive::Format::Rar);
+    CHECK(archive::formatOf("Kairo 1080p.7z.001") == archive::Format::SevenZip && archive::formatOf("x.7z") == archive::Format::SevenZip);
+    CHECK(archive::formatOf("x.zip.002") == archive::Format::Zip && archive::formatOf("x.mkv") == archive::Format::None);
+    // Trozos que hay que pedir de cada parte
+    const std::vector<Catalog::Part> parts = {{1, "a.part1.rar", 1000, 1}, {2, "a.part2.rar", 1000, 2}, {3, "a.part3.rar", 300, 3}};
+    const auto span = archive::spanRanges(parts, 900, 1200);
+    CHECK(span.size() == 3 && span[0].part == 0 && span[0].offset == 900 && span[0].length == 100 && span[1].length == 1000 &&
+          span[2].part == 2 && span[2].offset == 0 && span[2].length == 100);
+    CHECK(archive::spanRanges(parts, 2200, 500).size() == 1 && archive::spanRanges(parts, 2200, 500)[0].length == 100);
+    // La salida de «7z l -slt»
+    const auto listed = archive::parseSevenZipList(
+        "Path = Temporada 1\nSize = 0\nAttributes = D drwxr-xr-x\n\nPath = Temporada 1/Serie 1x01.mkv\nSize = 3000\n"
+        "Attributes = A -rw-r--r--\nCRC = \n\nPath = Leeme.txt\nSize = 5\nFolder = -\n");
+    CHECK(listed.size() == 2 && listed[0].name == "Temporada 1/Serie 1x01.mkv" && listed[0].size == 3000);
+
+    const fs::path base = fs::temp_directory_path() / ("telegarrm_rar7z_" + std::to_string(::getpid()));
+    fs::remove_all(base);
+    fs::create_directories(base);
+    const auto save = [&base](const std::string& name, const std::string& content) {
+        std::ofstream(base / name, std::ios::binary) << content;
+        return base / name;
+    };
+    const std::string first(200000, 'a');
+    const std::string second(150000, 'b');
+    const std::string third(120000, 'c');
+
+    // RAR 5 en dos volúmenes: un episodio entero, otro partido entre los dos, una carpeta y un .nfo
+    const fs::path v5a = save("Serie5.part1.rar", rar5Volume({{"Serie 1x01 ñ.mkv", first, first.size()},
+                                                              {"Serie 1x02.mkv", second.substr(0, 90000), second.size(), false, true}},
+                                                             0, false));
+    const fs::path v5b = save("Serie5.part2.rar",
+                              rar5Volume({{"Serie 1x02.mkv", second.substr(90000), second.size(), true, false},
+                                          {"Temporada 1", "", 0, false, false, true},
+                                          {"Temporada 1/Serie 1x03.mkv", third, third.size()},
+                                          {"Temporada 1/info.nfo", "hola", 4}},
+                                         1, true));
+    const std::set<std::pair<std::string, std::int64_t>> expected5 = {
+        {"Serie 1x01 ñ.mkv", 200000}, {"Serie 1x02.mkv", 150000}, {"Temporada 1/Serie 1x03.mkv", 120000}, {"Temporada 1/info.nfo", 4}};
+    LocalReader reader5({v5a, v5b});
+    const archive::Listing rar5 = archive::listRar(reader5.sizes(), reader5.reader());
+    CHECK(rar5.ok && entrySet(rar5.entries) == expected5);
+    CHECK(reader5.reads <= 8 && reader5.bytes < 100000);  // Solo las cabeceras, no los episodios
+    // El mismo RAR cortado en trozos (.rar.001...) en vez de en volúmenes
+    const std::string single5 = rar5Volume({{"Serie 1x01 ñ.mkv", first, first.size()}, {"Serie 1x02.mkv", second, second.size()}}, 0, true);
+    const fs::path c1 = save("Serie5.rar.001", single5.substr(0, 100000));
+    const fs::path c2 = save("Serie5.rar.002", single5.substr(100000));
+    LocalReader readerCut({c1, c2});
+    const archive::Listing cut = archive::listRar(readerCut.sizes(), readerCut.reader());
+    CHECK(cut.ok && cut.entries.size() == 2);
+
+    // RAR 4, con un nombre en Unicode (í, ñ y €) y otro en la página de códigos 437
+    const std::string unicodeName = rar4UnicodeName("Capitulo n E.mkv", {'C', 'a', 'p', 0xED, 't', 'u', 'l', 'o', ' ', 0xF1, ' ',
+                                                                          0x20AC, '.', 'm', 'k', 'v'});
+    const fs::path v4a = save("Serie4.part1.rar", rar4Volume({{{unicodeName, first, first.size()}, true},
+                                                              {{"Serie\\1x02.mkv", second.substr(0, 1000), second.size(), false, true}, false}},
+                                                             0, false));
+    const fs::path v4b = save("Serie4.part2.rar",
+                              rar4Volume({{{"Serie\\1x02.mkv", second.substr(1000), second.size(), true, false}, false},
+                                          {{"Serie", "", 0, false, false, true}, false},
+                                          {{"Cap\xa1tulo 3.mkv", third, third.size()}, false}},
+                                         1, true));
+    const std::set<std::pair<std::string, std::int64_t>> expected4 = {
+        {"Capítulo ñ €.mkv", 200000}, {"Serie/1x02.mkv", 150000}, {"Capítulo 3.mkv", 120000}};
+    LocalReader reader4({v4a, v4b});
+    const archive::Listing rar4 = archive::listRar(reader4.sizes(), reader4.reader());
+    CHECK(rar4.ok && entrySet(rar4.entries) == expected4);
+    CHECK(reader4.bytes < 100000);
+
+    // Lo que no es un RAR, uno cortado y uno con los nombres cifrados (RAR 5: cabecera de cifrado)
+    LocalReader notRar({save("falso.rar", std::string(5000, 'x'))});
+    CHECK(!archive::listRar(notRar.sizes(), notRar.reader()).ok && !archive::listRar(notRar.sizes(), notRar.reader()).readFailed);
+    LocalReader truncated({save("cortado.rar", rar5Volume({{"Serie 1x01.mkv", first, first.size()}}, 0, true).substr(0, 30))});
+    CHECK(!archive::listRar(truncated.sizes(), truncated.reader()).ok);
+    LocalReader encrypted({save("cifrado.rar", std::string("Rar!\x1a\x07\x01\x00", 8) + rar5Block(vint(4) + vint(0) + vint(0) + vint(0)) +
+                                                   std::string(300, 'z'))});
+    const archive::Listing secret = archive::listRar(encrypted.sizes(), encrypted.reader());
+    CHECK(!secret.ok && secret.error.find("cifrados") != std::string::npos);
+    // Una lectura que falla (la red) no es un fallo del archivo
+    const archive::Listing failed =
+        archive::listRar(reader5.sizes(), [](std::int64_t, std::int64_t) { return std::optional<std::string>(); });
+    CHECK(!failed.ok && failed.readFailed);
+
+    const std::string sevenZip = library::findSevenZip();
+    if (sevenZip.empty()) {
+        std::cout << "(7-Zip no está instalado: se omiten las pruebas de 7z)" << std::endl;
+        fs::remove_all(base);
+        return;
+    }
+    // 7-Zip lee nuestros RAR igual: están bien hechos
+    const auto sevenZipList = [&sevenZip](const fs::path& path) {
+        std::string output;
+        process::run({sevenZip, "l", "-slt", "-ba", "--", path.string()}, [&output](const std::string& chunk) { output += chunk; },
+                     nullptr);
+        return entrySet(archive::parseSevenZipList(output));
+    };
+    CHECK(sevenZipList(v5a) == expected5);
+    // Salvo el nombre sin Unicode, que 7-Zip deja en bruto y nosotros pasamos de la página de códigos OEM
+    auto listed4 = sevenZipList(v4a);
+    auto expectedUnicode4 = expected4;
+    expectedUnicode4.erase({"Capítulo 3.mkv", 120000});
+    CHECK(listed4.size() == 3 && listed4.erase({"Cap\xa1tulo 3.mkv", 120000}) == 1 && listed4 == expectedUnicode4);
+
+    // 7z hechos con 7-Zip: con el índice comprimido (lo normal), sin comprimir y en volúmenes (.7z.001...)
+    const fs::path source = base / "origen";
+    writeFile(source / "Temporada 1" / "Serie 1x01.mkv", 300000, 'a');
+    writeFile(source / "Temporada 1" / "Serie 1x02 ñ.mkv", 200000, 'b');
+    writeFile(source / "Léeme.txt", 10, 'c');
+    const std::set<std::pair<std::string, std::int64_t>> expected7 = {
+        {"Temporada 1/Serie 1x01.mkv", 300000}, {"Temporada 1/Serie 1x02 ñ.mkv", 200000}, {"Léeme.txt", 10}};
+    const auto pack = [&](const std::string& name, std::vector<std::string> options) {
+        std::vector<std::string> argv = {sevenZip, "a", "-bso0", "-bsp0"};
+        argv.insert(argv.end(), options.begin(), options.end());
+        argv.push_back((base / name).string());
+        argv.push_back((source / "Temporada 1").string());
+        argv.push_back((source / "Léeme.txt").string());
+        CHECK_EQ(process::run(argv, nullptr, nullptr).exitCode, 0);
+    };
+    pack("normal.7z", {"-mx1"});
+    pack("plano.7z", {"-mx0", "-mhc=off"});
+    pack("volumenes.7z", {"-mx0", "-v150k"});
+    pack("secreto.7z", {"-mx0", "-pclave", "-mhe=on"});
+    const std::string temp = fs::temp_directory_path().string();
+    for (const char* name : {"normal.7z", "plano.7z"}) {
+        LocalReader reader7({base / name});
+        const archive::Listing listing = archive::listSevenZip(reader7.size(), reader7.reader(), sevenZip, temp);
+        CHECK(listing.ok && entrySet(listing.entries) == expected7);
+        CHECK(reader7.reads <= 3 && reader7.bytes < 10000);
+    }
+    std::vector<fs::path> volumes;
+    for (const auto& entry : fs::directory_iterator(base)) {
+        if (entry.path().filename().string().rfind("volumenes.7z.", 0) == 0) {
+            volumes.push_back(entry.path());
+        }
+    }
+    std::sort(volumes.begin(), volumes.end());
+    CHECK(volumes.size() > 2);
+    LocalReader readerVolumes(volumes);
+    const archive::Listing split = archive::listSevenZip(readerVolumes.size(), readerVolumes.reader(), sevenZip, temp);
+    CHECK(split.ok && entrySet(split.entries) == expected7);
+    LocalReader readerSecret({base / "secreto.7z"});
+    const archive::Listing hidden = archive::listSevenZip(readerSecret.size(), readerSecret.reader(), sevenZip, temp);
+    CHECK(!hidden.ok && !hidden.readFailed && hidden.error.find("cifrados") != std::string::npos);
+    LocalReader readerNot({v5a});
+    CHECK(archive::listSevenZip(readerNot.size(), readerNot.reader(), sevenZip, temp).error == "No es un 7z");
+    // Sin dejar copias en el temporal
+    bool leftovers = false;
+    for (const auto& entry : fs::directory_iterator(temp)) {
+        leftovers = leftovers || entry.path().filename().string().rfind("telegarrm-indice-" + std::to_string(::getpid()), 0) == 0;
+    }
+    CHECK(!leftovers);
+    fs::remove_all(base);
+}
+
 void testArchiveIndex() {
     namespace fs = std::filesystem;
     // Nombres de dentro: con marcador, solo el número con la carpeta o el pack, y lo que no es episodio
@@ -2451,10 +2761,10 @@ void testArchiveIndex() {
 
     // Lo que hay que pedir para tener el final de un archivo troceado
     const std::vector<Catalog::Part> parts = {{1, "a.zip.001", 1000, 1}, {2, "a.zip.002", 1000, 2}, {3, "a.zip.003", 300, 3}};
-    const auto ranges = archive::tailRanges(parts, 500);
+    const auto ranges = archive::spanRanges(parts, 1800, 500);
     CHECK(ranges.size() == 2 && ranges[0].part == 1 && ranges[0].offset == 800 && ranges[0].length == 200 &&
           ranges[1].part == 2 && ranges[1].offset == 0 && ranges[1].length == 300);
-    CHECK(archive::tailRanges(parts, 100).size() == 1);
+    CHECK(archive::spanRanges(parts, 2200, 100).size() == 1);
 
     // El índice de ZIP reales, hechos con 7-Zip, leyendo solo su final
     const std::string sevenZip = library::findSevenZip();
@@ -2507,12 +2817,8 @@ void testArchiveIndex() {
         volumeParts.push_back({static_cast<std::int64_t>(i + 1), volumes[i].filename().string(),
                                static_cast<std::int64_t>(fs::file_size(volumes[i])), static_cast<int>(i + 1)});
     }
-    std::string tail;
-    for (const archive::PartRange& range : archive::tailRanges(volumeParts, 65536)) {
-        tail += readWhole(volumes[range.part]).substr(static_cast<std::size_t>(range.offset),
-                                                      static_cast<std::size_t>(range.length));
-    }
-    const archive::ZipIndex splitIndex = archive::readZipIndex(tail);
+    LocalReader splitReader(volumes);
+    const archive::Listing splitIndex = archive::listZip(splitReader.size(), splitReader.reader());
     CHECK(splitIndex.ok && splitIndex.entries.size() == 4);
 
     // Guardado en la BD
@@ -2564,6 +2870,10 @@ void testCatalogArchiveListings() {
         // El índice es de cuando el archivo tenía otro tamaño: no vale
         inTopic(photo(11, "Monk - Temporada 1 (1080p)"), 4),
         inTopic(video(12, "Monk - Temporada 01.zip", 999, "", "application/zip"), 4),
+        // Un pack en RAR con las partes publicadas al revés: el índice se guarda con la primera, la 15
+        inTopic(photo(13, "Carrie - Temporada 1 (1080p)"), 4),
+        inTopic(video(14, "Carrie - Temporada 1 (1080p).part02.rar", 500, "", "application/x-rar"), 4),
+        inTopic(video(15, "Carrie - Temporada 1 (1080p).part01.rar", 1000, "", "application/x-rar"), 4),
     };
     std::vector<std::string> adventure;
     for (int n = 1; n <= 25; ++n) {
@@ -2577,6 +2887,7 @@ void testCatalogArchiveListings() {
     channel.listings[8] = listingOf(8, 100, {"Futurama 8x02 (1080p).mkv"});
     channel.listings[10] = listingOf(10, 2000, {"Shin Chan 1x01.mkv"});
     channel.listings[12] = listingOf(12, 1000, {"Monk 1x01.mkv", "Monk 1x02.mkv"});
+    channel.listings[15] = listingOf(15, 1500, {"Carrie 1x01.mkv", "Carrie 1x02.mkv", "Carrie 1x03.mkv"});
     const std::vector<Catalog::Item> items = Catalog::buildItems({channel});
     const auto find = [&items](const std::string& title) -> const Catalog::Item* {
         for (const Catalog::Item& item : items) {
@@ -2605,9 +2916,14 @@ void testCatalogArchiveListings() {
     CHECK(monk && monk->releases.front().seasonPack && !monk->releases.front().listed &&
           monk->releases.front().packEpisodes.empty());
 
-    // Qué leer: los ZIP de las series sin episodio en el nombre, completos
-    if (girls && futurama && shinChan) {
+    const Catalog::Item* carrie = find("Carrie");
+    CHECK(carrie && carrie->episodeCount == 3 && carrie->releases.front().listed &&
+          carrie->releases.front().parts.front().messageId == 15);
+
+    // Qué leer: los comprimidos de las series sin episodio en el nombre, completos
+    if (girls && futurama && shinChan && carrie) {
         CHECK(archive::shouldList(*girls, girls->releases.front(), 2'000'000'000));
+        CHECK(archive::shouldList(*carrie, carrie->releases.front(), 2'000'000'000));
         CHECK(!archive::shouldList(*futurama, futurama->releases[0], 2'000'000'000));  // "8x01" en el nombre
         CHECK(!archive::shouldList(*shinChan, shinChan->releases.front(), 2'000'000'000));
     }
@@ -2860,6 +3176,7 @@ int main() {
     testSecrets();
     testSeasonPacks();
     testArchiveIndex();
+    testArchiveRarSevenZip();
     testCatalogArchiveListings();
     testTrackingPacks();
     testTrackingReposts();

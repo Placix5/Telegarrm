@@ -116,12 +116,11 @@ Por decidir con Plácido; ninguno está empezado.
 - **Copia de seguridad de `db/`**: la sesión de Telegram, la BD y las carátulas. Con cuidado: la sesión da acceso a la cuenta.
 
 ### Mejoras pendientes
-- Leer qué hay dentro de los RAR y los 7z (D-057): hoy solo los ZIP. En *Canal Principal* casi todos los de las series son ZIP; en Canal Anime, los packs «1ª Temporada.partN.rar» son RAR.
-- Comprobar en el servidor la lectura de los índices y una descarga real de un pack (D-057).
+- Comprobar en el servidor la lectura de los RAR y los 7z (D-060) y una descarga real de un pack (D-057).
 - Usar TMDB para separar *remakes* que el catálogo une (ej. *Vaiana* de 2016 y de 2026).
 - Calidad real de los MP4 que van dentro de un comprimido con el índice al final: hoy no se pueden leer sin descargarlos enteros (D-042).
 - Notificaciones (Telegram o correo) de lo descargado.
-- Vigilar ediciones y borrados de mensajes (`updateMessageContent`, `updateDeleteMessages`).
+- Vigilar las ediciones de mensajes (`updateMessageContent`); los borrados ya se vigilan (D-059).
 - Seguir una obra antes de que esté en el catálogo.
 - Renombrar los archivos de la biblioteca cuya etiqueta de calidad no coincide con el vídeo (importados antes de D-039).
 
